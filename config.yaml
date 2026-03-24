@@ -1,0 +1,3 @@
+server:
+  addr: ":8087"
+  data_dir: "./data"
