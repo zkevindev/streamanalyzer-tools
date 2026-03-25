@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Stream Analyzer</title>
+  <style>
+    *{box-sizing:border-box}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f5f5f5;padding:24px}
+    .container{max-width:980px;margin:0 auto}
+    h1{font-size:22px;margin:0 0 8px 0}
+    .muted{color:#6b7280;font-size:13px;margin-bottom:16px}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
+    .card{background:#fff;border-radius:10px;padding:18px;box-shadow:0 1px 3px rgba(0,0,0,.1)}
+    .card h2{font-size:16px;margin:0 0 8px 0}
+    .card p{margin:0 0 14px 0;color:#4b5563;font-size:13px;line-height:1.5}
+    a.btn{display:inline-block;background:#2563eb;color:#fff;text-decoration:none;padding:10px 14px;border-radius:8px;font-size:13px}
+    a.btn.secondary{background:#111827}
+    .toplinks{display:flex;gap:12px;align-items:center;margin:12px 0 18px 0;flex-wrap:wrap}
+    .toplinks a{color:#2563eb;text-decoration:none;font-size:13px}
+    .toplinks a:hover{text-decoration:underline}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Stream Analyzer</h1>
+    <div class="muted">请选择任务类型：实时分析（输入地址）或离线分析（上传文件）。</div>
+
+    <div class="toplinks">
+      <a href="/history">历史记录</a>
+    </div>
+
+    <div class="grid">
+      <div class="card">
+        <h2>实时分析</h2>
+        <p>输入 RTMP / HTTP-FLV 拉流地址，实时采集 DTS/PTS、码率、FPS、I 帧间隔等，并在网页上可视化。</p>
+        <a class="btn" href="/realtime">进入实时分析</a>
+      </div>
+      <div class="card">
+        <h2>离线分析</h2>
+        <p>上传 RTMP 单方向 raw（含握手）或 Wireshark pcap/pcapng，从抓包中提取 RTMP 链路并解析，输出 push/pull 子目录产物并可下载。</p>
+        <a class="btn secondary" href="/offline">进入离线分析</a>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
+

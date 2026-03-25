@@ -1,6 +1,6 @@
 # Stream Analyzer Tools
 
-音视频流分析工具，支持 RTMP / HTTP-FLV 拉流、DTS/PTS 分析、XLSX 持久化和网页实时可视化，兼容 Legacy FLV 与 Enhanced RTMP/FLV（E-RTMP）头部解析。
+音视频流分析工具：支持 RTMP / HTTP-FLV 拉流的实时分析、以及离线文件解析（raw / pcap），并将解析结果持久化到磁盘后在网页端可查看/下载。兼容 Legacy FLV 与 Enhanced RTMP/FLV（E-RTMP）头部解析。
 
 ## 功能特性
 
@@ -19,6 +19,8 @@
 - AV 同步偏差视图（`video_dts - nearest_audio_dts`），含分级着色（绿/黄/橙/红）
 - 码率/FPS 支持从拉流开始的全量展示（相对秒轴 + 缩放）
 - 图表表格支持全量数据展示（滚动查看）
+- 离线文件解析支持：仅支持 RTMP 协议（`raw` 单方向，含握手；`pcap` 自动提取 push/pull 方向），产物可在网页端下载查看（当前暂不支持 HTTP-FLV 等其它封装协议）
+- 离线解析任务支持状态轮询与历史记录（`pending/running/done/failed`）
 
 ## 项目结构
 
@@ -27,26 +29,33 @@
 ├── cmd/server/main.go
 ├── internal/
 │   ├── analyzer/
-│   │   ├── task.go
 │   │   ├── flv_client.go
-│   │   └── rtmp_client.go
+│   │   ├── rtmp_client.go
+│   │   └── task.go
 │   ├── codec/
+│   │   ├── aac.go
 │   │   ├── bitreader.go
 │   │   ├── h264.go
-│   │   ├── h265.go
-│   │   └── aac.go
+│   │   └── h265.go
 │   ├── handler/
 │   │   ├── handler.go
 │   │   ├── embed.go
-│   │   └── static/echarts_helpers.js
+│   │   └── static/
+│   │       ├── echarts_helpers.js
+│   │       └── index.html
 │   ├── models/models.go
+│   ├── offline/offline.go
+│   ├── pcaprtmp/pcaprtmp.go
+│   ├── rtmpraw/parser.go
 │   └── storage/csv.go
 ├── third-party/
 │   ├── go-rtmp/
 │   └── go-flv/
 ├── example/
+│   ├── http_flv_client/
 │   ├── rtmp_pull_client/
-│   └── http_flv_client/
+│   ├── parse_rtmp/
+│   └── parse_rtmp_from_wireshark/
 └── data/
 ```
 
@@ -61,6 +70,12 @@ go build -o bin/server ./cmd/server
 默认地址由 `config.yaml` 控制（当前默认 `:8087`），启动后访问：
 
 - [http://localhost:8087](http://localhost:8087)
+
+路由说明：
+- `GET /`：入口页（选择实时分析 or 离线分析）
+- `GET /realtime`：实时分析页面（输入 RTMP / HTTP-FLV 拉流地址）
+- `GET /offline`：离线分析页面（上传 raw/pcap 文件）
+- `GET /history`：历史记录页面
 
 ## API
 
@@ -88,6 +103,27 @@ go build -o bin/server ./cmd/server
 - `GET /api/task/:id/xlsx`
 
 说明：图表由前端基于 `/api/task/:id/data` 实时绘制，不再提供服务端图表 HTML 生成接口。
+
+### 离线文件分析接口
+
+离线任务使用 `multipart/form-data` 上传文件：
+
+- `POST /api/offline/tasks`
+
+表单字段：
+- `mode`：`raw` 或 `pcap`
+- `server_port`：pcap 模式下的 RTMP 服务器端口（可选，默认 1935）
+- `skip_bytes`：握手跳过字节数
+- `file`：上传文件（raw 或 pcap/pcapng）
+
+查询接口：
+- `GET /api/offline/tasks`：列出任务
+- `GET /api/offline/tasks/:id`：获取任务与 `summary.json`
+- `GET /api/offline/tasks/:id/files/*name`：下载离线产物文件（raw/video/audio/summary 等）
+
+`summary.json` 中包含每个 flow 的 `push/pull/raw` 方向与产物路径，网页端会据此渲染列表并提供下载链接。
+
+说明：离线模式当前仅解析 RTMP 协议，要求抓包/输入 raw 包含完整 RTMP 信令交互（至少 RTMP 握手 `S0+S1+S2` 与 RTMP chunk 流）。
 
 ## XLSX 格式
 

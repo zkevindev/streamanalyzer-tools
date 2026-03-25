@@ -15,6 +15,9 @@ type HEVCNALArray struct {
 type HEVCDecoderConfigurationRecord struct {
 	ConfigurationVersion uint8
 	NumOfArrays          uint8
+	// LengthSizeMinusOne is the NALU length field size (in bytes) minus one,
+	// used for length-prefixed NALU payloads in the stream.
+	LengthSizeMinusOne uint8
 	Arrays               []HEVCNALArray
 }
 
@@ -25,6 +28,9 @@ func ParseHEVCDecoderConfigurationRecord(payload []byte) (*HEVCDecoderConfigurat
 	rec := &HEVCDecoderConfigurationRecord{
 		ConfigurationVersion: payload[0],
 		NumOfArrays:          payload[22],
+		// In ISO/IEC 14496-15 hvcC, lengthSizeMinusOne is stored in the last 2 bits
+		// of byte 21.
+		LengthSizeMinusOne: payload[21] & 0x03,
 	}
 	off := 23
 	for i := 0; i < int(rec.NumOfArrays); i++ {

@@ -1,15 +1,20 @@
 package handler
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	"streamanalyzer/internal/analyzer"
+	"streamanalyzer/internal/offline"
 	"streamanalyzer/internal/models"
+	"streamanalyzer/internal/rtmpraw"
 	"streamanalyzer/internal/storage"
 
 	"github.com/gin-gonic/gin"
@@ -19,12 +24,14 @@ import (
 type Handler struct {
 	analyzer *analyzer.StreamAnalyzer
 	storage  *storage.CSVStorage
+	offline  *offline.Manager
 }
 
-func NewHandler(analyzer *analyzer.StreamAnalyzer, storage *storage.CSVStorage) *Handler {
+func NewHandler(analyzer *analyzer.StreamAnalyzer, storage *storage.CSVStorage, offlineMgr *offline.Manager) *Handler {
 	return &Handler{
 		analyzer: analyzer,
 		storage:  storage,
+		offline:  offlineMgr,
 	}
 }
 
@@ -39,10 +46,496 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 		api.GET("/task/:id/status", h.GetTaskStatus)
 		api.GET("/task/:id/data", h.GetTaskData)
 		api.GET("/task/:id/xlsx", h.DownloadXLSX)
+
+		offlineAPI := api.Group("/offline")
+		{
+			offlineAPI.POST("/tasks", h.CreateOfflineTask)
+			offlineAPI.GET("/tasks", h.ListOfflineTasks)
+			offlineAPI.GET("/tasks/:id", h.GetOfflineTask)
+			offlineAPI.GET("/tasks/:id/files/*name", h.DownloadOfflineFile)
+		}
 	}
 
-	r.GET("/", h.Index)
+	r.GET("/", h.HomePage)
+	r.GET("/realtime", h.Index)
 	r.GET("/history", h.HistoryPage)
+	r.GET("/offline", h.OfflinePage)
+}
+
+func (h *Handler) HomePage(c *gin.Context) {
+	c.Header("Content-Type", "text/html; charset=utf-8")
+	c.String(http.StatusOK, indexHTML)
+}
+
+func (h *Handler) CreateOfflineTask(c *gin.Context) {
+	if h.offline == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "offline manager not configured"})
+		return
+	}
+
+	mode := c.PostForm("mode")
+	var req models.OfflineTaskRequest
+	req.Mode = models.OfflineMode(mode)
+	if req.Mode != models.OfflineModeRaw && req.Mode != models.OfflineModePCAP {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid mode"})
+		return
+	}
+	if sp := c.PostForm("server_port"); sp != "" {
+		if v, err := strconv.Atoi(sp); err == nil && v > 0 && v <= 65535 {
+			req.ServerPort = uint16(v)
+		}
+	}
+	// Offline parsing currently assumes the input raw contains full RTMP handshake.
+	// The required length depends on capture direction:
+	// - C0+C1+C2 or S0+S1+S2 (both are 3073 bytes).
+	req.SkipBytes = rtmpraw.DefaultHandshakeSkipBytes
+
+	file, err := c.FormFile("file")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "file is required"})
+		return
+	}
+
+	task, inputPath, err := h.offline.CreateTask(&req, file.Filename)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if err := c.SaveUploadedFile(file, inputPath); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.offline.StartTask(task.ID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, task)
+}
+
+func (h *Handler) ListOfflineTasks(c *gin.Context) {
+	if h.offline == nil {
+		c.JSON(http.StatusOK, gin.H{"tasks": []*models.OfflineTask{}})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"tasks": h.offline.ListTasks()})
+}
+
+func (h *Handler) GetOfflineTask(c *gin.Context) {
+	if h.offline == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "offline manager not configured"})
+		return
+	}
+	taskID := c.Param("id")
+	task, err := h.offline.GetTask(taskID)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+	var summary *models.OfflineSummary
+	if task.SummaryPath != "" {
+		if b, err := os.ReadFile(task.SummaryPath); err == nil {
+			var s models.OfflineSummary
+			if err := json.Unmarshal(b, &s); err == nil {
+				summary = &s
+			}
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"task": task, "summary": summary})
+}
+
+func (h *Handler) DownloadOfflineFile(c *gin.Context) {
+	if h.offline == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "offline manager not configured"})
+		return
+	}
+	taskID := c.Param("id")
+	name := c.Param("name")
+	name = filepath.Clean(name)
+	name = filepath.ToSlash(name)
+	name = strings.TrimPrefix(name, "/")
+	if name == "" || strings.Contains(name, "..") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid file name"})
+		return
+	}
+
+	base := filepath.Join(h.offline.BaseDir(), "offline", taskID)
+	full := filepath.Join(base, name)
+	if !strings.HasPrefix(full, base+string(os.PathSeparator)) && full != base {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid path"})
+		return
+	}
+	if _, err := os.Stat(full); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "file not found"})
+		return
+	}
+	c.File(full)
+}
+
+func (h *Handler) OfflinePage(c *gin.Context) {
+	html := `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Offline RTMP Analyzer</title>
+  <style>
+    *{box-sizing:border-box} body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f5f5f5;padding:20px}
+    .container{max-width:1100px;margin:0 auto;background:#fff;padding:20px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.1)}
+    .row{display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-bottom:12px}
+    label{display:block;font-size:12px;color:#666;margin-bottom:6px}
+    input,select{padding:8px 10px;border:1px solid #ddd;border-radius:6px;min-width:220px}
+    button{background:#2563eb;color:#fff;border:0;padding:9px 14px;border-radius:6px;cursor:pointer}
+    button:disabled{background:#9ca3af}
+    table{width:100%;border-collapse:collapse;font-size:13px;margin-top:16px}
+    th,td{padding:10px;border-bottom:1px solid #eee;text-align:left;vertical-align:top}
+    th{background:#f9fafb;font-size:12px;color:#666}
+    .muted{color:#6b7280;font-size:12px}
+    .section{margin-top:16px}
+    .section h3{margin:0 0 8px 0;font-size:14px}
+    .kv{display:grid;grid-template-columns:160px 1fr;gap:8px 12px;font-size:13px}
+    .kv div{padding:6px 8px;border:1px solid #eee;border-radius:6px}
+    .kv .k{background:#f9fafb;color:#6b7280}
+    .pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;border:1px solid #e5e7eb;background:#f9fafb}
+    .pill.running{border-color:#bfdbfe;background:#eff6ff;color:#1d4ed8}
+    .pill.done{border-color:#bbf7d0;background:#f0fdf4;color:#166534}
+    .pill.failed{border-color:#fecaca;background:#fef2f2;color:#991b1b}
+    .actions a{margin-right:10px;display:inline-block;color:#2563eb;text-decoration:none;font-size:13px}
+    .actions a:hover{text-decoration:underline}
+    .small{font-size:12px}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="row" style="justify-content:space-between;align-items:center">
+      <div>
+        <div style="font-size:18px;font-weight:600">离线文件解析</div>
+        <div class="muted">上传 raw 或 pcap/pcapng，解析并生成 push/pull 子目录产物</div>
+      </div>
+      <div><a href="/" class="muted">返回首页</a></div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label>模式</label>
+        <select id="mode">
+          <option value="pcap">pcap/pcapng</option>
+          <option value="raw">raw（单方向，含握手）</option>
+        </select>
+      </div>
+      <div>
+        <label>serverPort（pcap）</label>
+        <input id="serverPort" type="number" value="1935" />
+      </div>
+      <div>
+        <label>文件</label>
+        <input id="file" type="file" />
+      </div>
+      <button id="btn" onclick="upload()">开始解析</button>
+      <div id="runHint" class="muted" style="min-width:240px"></div>
+    </div>
+    <div class="muted" style="margin-top:-2px;margin-bottom:10px;font-size:12px">
+      提示：离线解析要求输入包含完整 RTMP 握手（C0+C1+C2 或 S0+S1+S2，合计 3073 字节）。若缺失握手，可能会解析失败。
+    </div>
+
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th><th>mode</th><th>status</th><th>created</th><th>error</th><th>查看</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+
+    <div id="detail" style="margin-top:16px;display:none">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap">
+        <div style="font-weight:600">任务详情</div>
+        <div class="actions" id="taskActions"></div>
+      </div>
+
+      <div class="section">
+        <h3>解析信息</h3>
+        <div class="kv" id="taskKV"></div>
+      </div>
+
+      <div class="section">
+        <h3>Raw 解析结果（单方向）</h3>
+        <div class="muted" style="margin:6px 0" id="rawHint">仅 raw 模式展示</div>
+        <table class="small">
+          <thead>
+            <tr>
+              <th>flow</th><th>client → server</th><th>SYN</th><th>pkts</th><th>payload</th><th>dump</th><th>codec</th><th>产物</th><th>err</th>
+            </tr>
+          </thead>
+          <tbody id="flowRaw"></tbody>
+        </table>
+      </div>
+
+      <div class="section" id="pushSection">
+        <h3>推流列表（push）</h3>
+        <table class="small">
+          <thead>
+            <tr>
+              <th>flow</th><th>client → server</th><th>SYN</th><th>pkts</th><th>payload</th><th>dump</th><th>codec</th><th>产物</th><th>err</th>
+            </tr>
+          </thead>
+          <tbody id="flowPush"></tbody>
+        </table>
+      </div>
+
+      <div class="section" id="pullSection">
+        <h3>拉流列表（pull）</h3>
+        <table class="small">
+          <thead>
+            <tr>
+              <th>flow</th><th>client → server</th><th>SYN</th><th>pkts</th><th>payload</th><th>dump</th><th>codec</th><th>产物</th><th>err</th>
+            </tr>
+          </thead>
+          <tbody id="flowPull"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let currentId = null;
+    function setRunHint(msg){
+      const el = document.getElementById('runHint');
+      if(!el) return;
+      el.textContent = msg || '';
+    }
+    function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
+    async function upload(){
+      const f = document.getElementById('file').files[0];
+      if(!f){ alert('请选择文件'); return; }
+      const btn = document.getElementById('btn'); btn.disabled = true;
+      setRunHint('上传中…（文件较大时可能需要几十秒）');
+      const fd = new FormData();
+      fd.append('mode', document.getElementById('mode').value);
+      fd.append('server_port', document.getElementById('serverPort').value);
+      fd.append('file', f);
+      let res;
+      try{
+        res = await fetch('/api/offline/tasks', { method:'POST', body: fd });
+      }catch(e){
+        btn.disabled = false;
+        setRunHint('');
+        alert('请求失败：' + (e && e.message ? e.message : e));
+        return;
+      }
+      if(!res.ok){
+        btn.disabled = false;
+        setRunHint('');
+        alert(await res.text());
+        return;
+      }
+      const task = await res.json();
+      btn.disabled = false;
+      setRunHint('后端解析中…任务ID：' + (task.id||'-'));
+      await loadTasks();
+      if(task && task.id){
+        await show(task.id);
+        await waitUntilDone(task.id);
+      }
+    }
+    async function waitUntilDone(id){
+      // poll task until done/failed, max ~10 minutes
+      const deadline = Date.now() + 10*60*1000;
+      while(Date.now() < deadline){
+        await sleep(1000);
+        const res = await fetch('/api/offline/tasks/'+id);
+        if(!res.ok) continue;
+        const data = await res.json();
+        const st = (data.task && data.task.status) ? String(data.task.status) : '';
+        if(st === 'done'){
+          setRunHint('解析完成：' + id);
+          await loadTasks();
+          await show(id);
+          return;
+        }
+        if(st === 'failed'){
+          const err = (data.task && data.task.error) ? String(data.task.error) : 'unknown';
+          setRunHint('解析失败：' + id);
+          await loadTasks();
+          await show(id);
+          alert('解析失败：' + err);
+          return;
+        }
+      }
+      setRunHint('仍在解析中（超时停止自动提示）：' + id);
+    }
+    async function loadTasks(){
+      const res = await fetch('/api/offline/tasks');
+      const data = await res.json();
+      const tb = document.getElementById('tbody');
+      tb.innerHTML = '';
+      (data.tasks||[]).sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at))).forEach(t=>{
+        const tr = document.createElement('tr');
+        if(String(t.status).toLowerCase() === 'running'){
+          tr.style.background = '#eff6ff';
+        }
+        tr.innerHTML =
+          '<td><code>'+t.id+'</code></td>'+
+          '<td>'+t.mode+'</td>'+
+          '<td>'+t.status+'</td>'+
+          '<td>'+t.created_at+'</td>'+
+          '<td class=\"muted\">'+(t.error||'')+'</td>';
+        const tdBtn = document.createElement('td');
+        const btn = document.createElement('button');
+        btn.textContent = '查看';
+        btn.onclick = ()=>show(t.id);
+        tdBtn.appendChild(btn);
+        tr.appendChild(tdBtn);
+        tb.appendChild(tr);
+      });
+    }
+    function toRel(id, p){
+      if(!p) return '';
+      const key = '/offline/'+id+'/';
+      const idx = p.indexOf(key);
+      if(idx < 0) return '';
+      return p.slice(idx + key.length).replace(/^\/+/, '');
+    }
+    function fmtBytes(n){
+      if(n === undefined || n === null) return '-';
+      const v = Number(n);
+      if(!isFinite(v)) return String(n);
+      if(v < 1024) return v + ' B';
+      if(v < 1024*1024) return (v/1024).toFixed(2) + ' KB';
+      if(v < 1024*1024*1024) return (v/1024/1024).toFixed(2) + ' MB';
+      return (v/1024/1024/1024).toFixed(2) + ' GB';
+    }
+    function statusPill(s){
+      const span = document.createElement('span');
+      span.className = 'pill ' + String(s||'');
+      span.textContent = s || '-';
+      return span;
+    }
+    function kvLine(k, v){
+      const kk = document.createElement('div'); kk.className='k'; kk.textContent = k;
+      const vv = document.createElement('div'); vv.textContent = (v===undefined || v===null || v==='') ? '-' : String(v);
+      return [kk, vv];
+    }
+    function clearTbody(id){
+      const tb = document.getElementById(id);
+      tb.innerHTML = '';
+      return tb;
+    }
+    function addLink(container, href, label){
+      const a = document.createElement('a');
+      a.href = href;
+      a.textContent = label;
+      a.target = '_blank';
+      container.appendChild(a);
+      return a;
+    }
+    function addSep(container){
+      const span = document.createElement('span');
+      span.textContent = ' | ';
+      span.className = 'muted';
+      container.appendChild(span);
+    }
+    function renderFlows(taskId, flows, tbodyId, withDir){
+      const tb = clearTbody(tbodyId);
+      const base = '/api/offline/tasks/'+taskId+'/files/';
+      (flows||[]).forEach(f=>{
+        const tr = document.createElement('tr');
+        const client = (f.client_ip||'-')+':'+(f.client_port||'-');
+        const server = (f.server_ip||'-')+':'+(f.server_port||'-');
+        const links = document.createElement('div');
+        const rawRel = toRel(taskId, f.raw_path);
+        const vRel = toRel(taskId, f.video_path);
+        const aRel = toRel(taskId, f.audio_path);
+        let linkCount = 0;
+        if(rawRel){ if(linkCount++) addSep(links); addLink(links, base+rawRel, 'raw'); }
+        if(vRel){ if(linkCount++) addSep(links); addLink(links, base+vRel, 'video'); }
+        if(aRel){ if(linkCount++) addSep(links); addLink(links, base+aRel, 'audio'); }
+
+        const tdFlow = document.createElement('td'); tdFlow.textContent = 'flow'+String(f.flow_id).padStart(3,'0');
+        const tdAddr = document.createElement('td'); tdAddr.textContent = client + ' → ' + server;
+        const tdSyn = document.createElement('td'); tdSyn.textContent = (f.has_syn ? ('Y('+ (f.syn_count||0) +')') : 'N');
+        const tdPkts = document.createElement('td'); tdPkts.textContent = String(f.tcp_pkt_count ?? '-');
+        const tdPayload = document.createElement('td'); tdPayload.textContent = fmtBytes(f.payload_bytes);
+        tr.appendChild(tdFlow); tr.appendChild(tdAddr); tr.appendChild(tdSyn); tr.appendChild(tdPkts); tr.appendChild(tdPayload);
+        if(withDir){
+          const tdDir = document.createElement('td'); tdDir.textContent = f.direction || '-';
+          tr.appendChild(tdDir);
+        }
+        const tdDump = document.createElement('td'); tdDump.textContent = f.dump_raw_dir || '-';
+        const tdCodec = document.createElement('td'); tdCodec.textContent = f.video_codec || '-';
+        const tdLinks = document.createElement('td'); tdLinks.appendChild(links);
+        const tdErr = document.createElement('td'); tdErr.textContent = f.error || '';
+        tr.appendChild(tdDump); tr.appendChild(tdCodec); tr.appendChild(tdLinks); tr.appendChild(tdErr);
+        tb.appendChild(tr);
+      });
+    }
+    async function show(id){
+      currentId = id;
+      document.getElementById('detail').style.display = 'block';
+      const res = await fetch('/api/offline/tasks/'+id);
+      const data = await res.json();
+      const task = data.task || {};
+      const summary = data.summary || {};
+      const flows = (summary.flows || []);
+
+      // actions (artifacts)
+      const act = document.getElementById('taskActions');
+      act.innerHTML = '';
+      const base = '/api/offline/tasks/'+id+'/files/';
+      const inputRel = toRel(id, task.input_path);
+      const summaryRel = toRel(id, task.summary_path);
+      if(inputRel) addLink(act, base+inputRel, '下载 input');
+      addLink(act, base+'summary.txt', '下载 summary.txt');
+      if(summaryRel) addLink(act, base+summaryRel, '下载 summary.json');
+
+      // kv
+      const kv = document.getElementById('taskKV');
+      kv.innerHTML = '';
+      const lines = [];
+      lines.push(kvLine('task_id', task.id));
+      lines.push(kvLine('mode', task.mode));
+      lines.push(kvLine('status', task.status));
+      lines.push(kvLine('server_port', task.server_port));
+      lines.push(kvLine('input_name', task.input_name));
+      lines.push(kvLine('created_at', task.created_at));
+      lines.push(kvLine('started_at', task.started_at));
+      lines.push(kvLine('finished_at', task.finished_at));
+      lines.push(kvLine('flows', flows.length));
+      if(task.error) lines.push(kvLine('error', task.error));
+      lines.flat().forEach(n=>kv.appendChild(n));
+
+      const mode = String(task.mode||'').toLowerCase();
+      const rawSection = document.getElementById('flowRaw')?.closest('.section');
+      const pushSection = document.getElementById('pushSection');
+      const pullSection = document.getElementById('pullSection');
+      const rawHint = document.getElementById('rawHint');
+
+      const push = flows.filter(f=>String(f.direction).toLowerCase()==='push');
+      const pull = flows.filter(f=>String(f.direction).toLowerCase()==='pull');
+      const rawFlows = flows.filter(f=>String(f.direction).toLowerCase()==='raw');
+
+      // mode-specific visibility
+      if(mode === 'raw'){
+        if(rawSection) rawSection.style.display = '';
+        if(rawHint) rawHint.style.display = 'none';
+        if(pushSection) pushSection.style.display = 'none';
+        if(pullSection) pullSection.style.display = 'none';
+      }else{
+        if(rawSection) rawSection.style.display = 'none';
+        if(pushSection) pushSection.style.display = '';
+        if(pullSection) pullSection.style.display = '';
+      }
+
+      renderFlows(id, rawFlows, 'flowRaw', false);
+      renderFlows(id, push, 'flowPush', false);
+      renderFlows(id, pull, 'flowPull', false);
+    }
+    setInterval(loadTasks, 3000);
+    loadTasks();
+  </script>
+</body>
+</html>`
+	c.Header("Content-Type", "text/html")
+	c.String(http.StatusOK, html)
 }
 
 func (h *Handler) CreateTask(c *gin.Context) {
@@ -479,7 +972,12 @@ func (h *Handler) Index(c *gin.Context) {
     <div class="container">
         <div class="header">
             <h1>Stream Analyzer</h1>
-            <a href="/history" class="nav-link">历史记录</a>
+            <div style="display:flex; gap:12px; align-items:center;">
+                <a href="/" class="nav-link">入口</a>
+                <a href="/realtime" class="nav-link" style="font-weight:600;">实时分析</a>
+                <a href="/offline" class="nav-link">离线分析(上传文件)</a>
+                <a href="/history" class="nav-link">历史记录</a>
+            </div>
         </div>
         
         <div class="form-row">

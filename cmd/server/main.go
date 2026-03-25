@@ -9,6 +9,7 @@ import (
 
 	"streamanalyzer/internal/analyzer"
 	"streamanalyzer/internal/handler"
+	"streamanalyzer/internal/offline"
 	"streamanalyzer/internal/storage"
 
 	"github.com/gin-gonic/gin"
@@ -60,7 +61,9 @@ func main() {
 
 	streamAnalyzer := analyzer.NewStreamAnalyzer(xlsxStorage)
 
-	h := handler.NewHandler(streamAnalyzer, xlsxStorage)
+	offlineMgr := offline.NewManager(cfg.Server.DataDir)
+	offlineMgr.LoadExisting()
+	h := handler.NewHandler(streamAnalyzer, xlsxStorage, offlineMgr)
 
 	r := gin.Default()
 	h.RegisterRoutes(r)

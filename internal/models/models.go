@@ -67,3 +67,77 @@ type SecondStat struct {
 	VideoFPS     int     `json:"video_fps"`
 	AudioFPS     int     `json:"audio_fps"`
 }
+
+// =============================
+// Offline file analysis models
+
+type OfflineMode string
+
+const (
+	OfflineModeRaw  OfflineMode = "raw"
+	OfflineModePCAP OfflineMode = "pcap"
+)
+
+type OfflineStatus string
+
+const (
+	OfflineStatusPending OfflineStatus = "pending"
+	OfflineStatusRunning OfflineStatus = "running"
+	OfflineStatusDone    OfflineStatus = "done"
+	OfflineStatusFailed  OfflineStatus = "failed"
+)
+
+type OfflineTaskRequest struct {
+	Mode      OfflineMode `json:"mode" binding:"required"` // raw or pcap
+	ServerPort uint16     `json:"server_port"`            // only for pcap
+	SkipBytes  int        `json:"skip_bytes"`             // handshake bytes
+}
+
+type OfflineTask struct {
+	ID     string        `json:"id"`
+	Mode   OfflineMode   `json:"mode"`
+	Status OfflineStatus `json:"status"`
+
+	ServerPort uint16 `json:"server_port"`
+	SkipBytes   int    `json:"skip_bytes"`
+
+	InputName string `json:"input_name"`
+	InputPath string `json:"input_path"`
+
+	SummaryPath string `json:"summary_path"`
+	Error       string `json:"error,omitempty"`
+
+	CreatedAt  time.Time `json:"created_at"`
+	StartedAt  time.Time `json:"started_at,omitempty"`
+	FinishedAt time.Time `json:"finished_at,omitempty"`
+}
+
+type OfflineSummary struct {
+	TaskID string      `json:"task_id"`
+	Mode   OfflineMode `json:"mode"`
+	Flows  []OfflineFlowResult `json:"flows"`
+}
+
+type OfflineFlowResult struct {
+	FlowID int `json:"flow_id"`
+
+	HasSYN      bool `json:"has_syn"`
+	SYNCount    int  `json:"syn_count"`
+	TCPPktCount int  `json:"tcp_pkt_count"`
+	PayloadBytes int `json:"payload_bytes"`
+
+	ClientIP   string `json:"client_ip"`
+	ClientPort uint16 `json:"client_port"`
+	ServerIP   string `json:"server_ip"`
+	ServerPort uint16 `json:"server_port"`
+
+	Direction  string `json:"direction"`    // pull/push/raw
+	DumpRawDir string `json:"dump_raw_dir"` // server->client / client->server / single
+
+	RawPath   string `json:"raw_path,omitempty"`
+	VideoPath string `json:"video_path,omitempty"`
+	AudioPath string `json:"audio_path,omitempty"`
+
+	VideoCodec string `json:"video_codec,omitempty"`
+	Error      string `json:"error,omitempty"`
+}
