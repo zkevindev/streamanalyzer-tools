@@ -133,7 +133,8 @@ go build -o bin/server ./cmd/server
 `summary.json` 中包含每个 flow 的方向与产物路径。`flv` 模式会包含逐帧明细（DTS/PTS/长度/帧类型）；`ts` 模式会包含 `PAT/PMT/PES/NALU` 统计、PID 明细和 PES 明细，网页端会据此渲染统计卡片与表格。
 
 说明：
-- `raw/pcap` 模式解析 RTMP，要求输入包含完整 RTMP 握手与 chunk 流。
+- `raw` 模式解析 RTMP 单方向裸流，要求输入包含完整 RTMP 握手与 chunk 流。
+- `pcap` 模式从抓包中按端口识别 RTMP 会话，自动区分 push / pull 并导出对应产物。
 - `flv` 模式解析 FLV 文件，严格校验 FLV Header；若 Header 缺失或无效会直接报错。
 - `ts` 模式解析 MPEG-TS，支持 `PAT/PMT/PES` 与视频 NALU 粒度的分析展示。
 

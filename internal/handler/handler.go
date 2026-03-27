@@ -266,7 +266,7 @@ func (h *Handler) OfflinePage(c *gin.Context) {
         </div>
         <div>
           <h1>离线文件解析</h1>
-          <p class="page-desc">上传 raw 或 pcap/pcapng，解析并生成 push/pull 子目录产物</p>
+          <p class="page-desc">上传 raw / pcap/pcapng / flv / ts 文件，解析并生成分析产物与明细</p>
         </div>
       </div>
       <a href="/" class="back-link">
@@ -304,7 +304,7 @@ func (h *Handler) OfflinePage(c *gin.Context) {
         </button>
         <div id="runHint"></div>
       </div>
-      <p class="hint tip" id="modeHint">提示：离线解析要求输入包含完整 RTMP 握手（C0+C1+C2 或 S0+S1+S2，合计 3073 字节）。若缺失握手，可能会解析失败。</p>
+      <p class="hint tip" id="modeHint">提示：支持 raw / pcap / flv / ts 四种离线模式，请按文件类型选择对应模式。</p>
     </div>
 
     <div class="card">
@@ -476,8 +476,12 @@ func (h *Handler) OfflinePage(c *gin.Context) {
         hintEl.textContent = '提示：TS 模式会解析 PAT/PMT/PES，导出各 PID 对应的 ES 文件，并统计 NALU。';
       }else if(mode === 'flv'){
         hintEl.textContent = '提示：FLV 模式会解析音视频 Tag、metadata，并提取 video.annexb / audio.adts.aac。';
+      }else if(mode === 'pcap'){
+        hintEl.textContent = '提示：PCAP 模式会按 serverPort 识别 RTMP 会话并自动区分 push/pull。';
+      }else if(mode === 'raw'){
+        hintEl.textContent = '提示：RAW 模式要求输入包含完整 RTMP 握手（C0+C1+C2 或 S0+S1+S2，合计 3073 字节）。';
       }else{
-        hintEl.textContent = '提示：离线解析要求输入包含完整 RTMP 握手（C0+C1+C2 或 S0+S1+S2，合计 3073 字节）。若缺失握手，可能会解析失败。';
+        hintEl.textContent = '提示：支持 raw / pcap / flv / ts 四种离线模式，请按文件类型选择对应模式。';
       }
     }
     async function upload(){
