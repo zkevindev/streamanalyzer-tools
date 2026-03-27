@@ -23,10 +23,19 @@ type Options struct {
 type Output struct {
 	VideoWriter io.Writer
 	AudioWriter io.Writer
+	OnFrame     func(FrameInfo)
 }
 
 type Result struct {
 	VideoCodec string // "h264", "h265", or ""
+}
+
+type FrameInfo struct {
+	MediaType string // video/audio
+	DTS       int64
+	PTS       int64
+	FrameLen  int
+	FrameType string // I/P/B/- for audio
 }
 
 type chunkStreamState struct {
@@ -57,6 +66,8 @@ type mediaWriter struct {
 	h265PPSList [][]byte
 
 	aacASC []byte
+
+	onFrame func(FrameInfo)
 }
 
 // ParseRTMPRaw parses RTMP chunk stream payload from a single TCP direction raw capture.
@@ -77,6 +88,7 @@ func ParseRTMPRaw(r io.Reader, opt Options, out Output) (Result, error) {
 		audioOut:     out.AudioWriter,
 		avccNALUSize: 4,
 		hvcNALUSize:  4,
+		onFrame:      out.OnFrame,
 	}
 
 	err := parseRTMPChunks(r, w)
@@ -136,7 +148,7 @@ func parseRTMPChunks(r io.Reader, w *mediaWriter) error {
 					inChunkSize = chunkSize
 				}
 			} else if st.messageTypeID == 8 || st.messageTypeID == 9 {
-				if err := w.handleMessage(st.messageTypeID, payload); err != nil {
+				if err := w.handleMessage(st.messageTypeID, st.timestamp, payload); err != nil {
 					return err
 				}
 			}
@@ -294,18 +306,18 @@ func readAndApplyChunkMessageHeader(r io.Reader, fmtVal byte, st *chunkStreamSta
 	return nil
 }
 
-func (w *mediaWriter) handleMessage(typeID byte, payload []byte) error {
+func (w *mediaWriter) handleMessage(typeID byte, timestamp uint32, payload []byte) error {
 	switch typeID {
 	case 9:
-		return w.handleVideo(payload)
+		return w.handleVideo(timestamp, payload)
 	case 8:
-		return w.handleAudio(payload)
+		return w.handleAudio(timestamp, payload)
 	default:
 		return nil
 	}
 }
 
-func (w *mediaWriter) handleVideo(payload []byte) error {
+func (w *mediaWriter) handleVideo(timestamp uint32, payload []byte) error {
 	var video tag.VideoData
 	if err := tag.DecodeVideoData(bytes.NewReader(payload), &video); err != nil {
 		return nil
@@ -354,6 +366,16 @@ func (w *mediaWriter) handleVideo(payload []byte) error {
 				}
 			}
 			_, err = w.videoOut.Write(annexb)
+			if err == nil && w.onFrame != nil {
+				pts := int64(timestamp) + int64(video.CompositionTime)
+				w.onFrame(FrameInfo{
+					MediaType: "video",
+					DTS:       int64(timestamp),
+					PTS:       pts,
+					FrameLen:  len(annexb),
+					FrameType: frameTypeToString(video.FrameType),
+				})
+			}
 			return err
 		default:
 			return nil
@@ -417,6 +439,16 @@ func (w *mediaWriter) handleVideo(payload []byte) error {
 				}
 			}
 			_, err = w.videoOut.Write(annexb)
+			if err == nil && w.onFrame != nil {
+				pts := int64(timestamp) + int64(video.CompositionTime)
+				w.onFrame(FrameInfo{
+					MediaType: "video",
+					DTS:       int64(timestamp),
+					PTS:       pts,
+					FrameLen:  len(annexb),
+					FrameType: frameTypeToString(video.FrameType),
+				})
+			}
 			return err
 		default:
 			return nil
@@ -427,7 +459,7 @@ func (w *mediaWriter) handleVideo(payload []byte) error {
 	}
 }
 
-func (w *mediaWriter) handleAudio(payload []byte) error {
+func (w *mediaWriter) handleAudio(timestamp uint32, payload []byte) error {
 	var audio tag.AudioData
 	if err := tag.DecodeAudioData(bytes.NewReader(payload), &audio); err != nil {
 		return nil
@@ -460,9 +492,29 @@ func (w *mediaWriter) handleAudio(payload []byte) error {
 			return err
 		}
 		_, err = w.audioOut.Write(body)
+		if err == nil && w.onFrame != nil {
+			w.onFrame(FrameInfo{
+				MediaType: "audio",
+				DTS:       int64(timestamp),
+				PTS:       int64(timestamp),
+				FrameLen:  len(adts) + len(body),
+				FrameType: "-",
+			})
+		}
 		return err
 	default:
 		return nil
+	}
+}
+
+func frameTypeToString(ft tag.FrameType) string {
+	switch ft {
+	case tag.FrameTypeKeyFrame, tag.FrameTypeGeneratedKeyFrame:
+		return "I"
+	case tag.FrameTypeInterFrame, tag.FrameTypeDisposableInterFrame:
+		return "P"
+	default:
+		return "-"
 	}
 }
 
@@ -558,4 +610,3 @@ func buildADTSHeader(asc []byte, aacRawLen int) ([]byte, error) {
 	h[6] = 0xFC
 	return h, nil
 }
-

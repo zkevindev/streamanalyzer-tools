@@ -42,7 +42,7 @@ go run ./example/parse_rtmp \
 
 Notes:
 - `-skip` defaults to `1 + 1536 + 1536` bytes (S0+S1+S2).
-- 离线模式当前仅支持 RTMP 协议（包含握手与 RTMP chunk 交互），不支持直接解析 HTTP-FLV 等其它封装。
+- 该示例仅用于 RTMP raw（包含握手与 RTMP chunk 交互），不适用于 HTTP-FLV 或 TS。
 - Output video is H.264 AnnexB, audio is AAC ADTS.
 
 ## RTMP Wireshark PCAP Parser (push / pull)
@@ -59,4 +59,23 @@ go run ./example/parse_rtmp_from_wireshark \
 
 Notes:
 - It will output results under `outDir/push/` and `outDir/pull/` (plus `unknown` entries if direction can't be detected).
-- 同样仅支持 RTMP 协议：pcap 需要包含 RTMP 握手与 chunk 交互，才可以正常解析。
+- 该示例仅支持 RTMP 协议：pcap 需要包含 RTMP 握手与 chunk 交互，才可以正常解析。
+
+## MPEG-TS Parser (PAT / PMT / PES / NALU)
+
+Parse TS files with `go-astits`, export ES by PID, and print PES-level details including `PTS/DTS`.
+
+```bash
+go run ./example/parse_ts \
+  -i ./example/parse_ts/seg-00000.ts \
+  -o ./output \
+  -print-pat=true \
+  -print-pmt=true \
+  -print-pes=true \
+  -parse-nalu=true
+```
+
+Notes:
+- Supports parsing `PAT/PMT/PES` and exporting per-PID ES output files.
+- For video streams (H.264/H.265), it parses Annex-B NALU info (type/length/key).
+- End-of-stream (`astits: no more packets`) is treated as normal EOF.

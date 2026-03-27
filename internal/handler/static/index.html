@@ -255,7 +255,7 @@
         </svg>
       </div>
       <h1>Stream Analyzer</h1>
-      <p class="subtitle">请选择任务类型：实时分析（输入地址）或离线分析（上传文件）。</p>
+      <p class="subtitle">请选择任务类型：实时分析（输入地址）或离线分析（上传 raw/pcap/ts 文件）。</p>
       <a class="nav-link" href="/history">
         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
@@ -288,7 +288,7 @@
           </svg>
         </div>
         <h2>离线分析</h2>
-        <p>上传 RTMP 单方向 raw（含握手）或 Wireshark pcap/pcapng，从抓包中提取 RTMP 链路并解析，输出 push/pull 子目录产物并可下载。</p>
+        <p>支持上传 RTMP raw（含握手）、Wireshark pcap/pcapng，以及 MPEG-TS（.ts）。TS 模式可解析 PAT/PMT/PES、PTS/DTS 与视频 NALU 明细，并导出各 PID ES 文件。</p>
         <a class="btn secondary" href="/offline">
           进入离线分析
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">

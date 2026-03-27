@@ -76,7 +76,7 @@ func (h *Handler) CreateOfflineTask(c *gin.Context) {
 	mode := c.PostForm("mode")
 	var req models.OfflineTaskRequest
 	req.Mode = models.OfflineMode(mode)
-	if req.Mode != models.OfflineModeRaw && req.Mode != models.OfflineModePCAP {
+	if req.Mode != models.OfflineModeRaw && req.Mode != models.OfflineModePCAP && req.Mode != models.OfflineModeTS {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid mode"})
 		return
 	}
@@ -85,10 +85,12 @@ func (h *Handler) CreateOfflineTask(c *gin.Context) {
 			req.ServerPort = uint16(v)
 		}
 	}
-	// Offline parsing currently assumes the input raw contains full RTMP handshake.
+	// raw/pcap parsing assumes the input raw contains full RTMP handshake.
 	// The required length depends on capture direction:
 	// - C0+C1+C2 or S0+S1+S2 (both are 3073 bytes).
-	req.SkipBytes = rtmpraw.DefaultHandshakeSkipBytes
+	if req.Mode == models.OfflineModeRaw || req.Mode == models.OfflineModePCAP {
+		req.SkipBytes = rtmpraw.DefaultHandshakeSkipBytes
+	}
 
 	file, err := c.FormFile("file")
 	if err != nil {
@@ -230,6 +232,15 @@ func (h *Handler) OfflinePage(c *gin.Context) {
     .detail-title{font-size:1rem;font-weight:600}
     .section{margin-top:1.5rem}
     .section-title{font-size:.875rem;font-weight:600;margin-bottom:.75rem;color:var(--text)}
+    .stats-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:.75rem}
+    .stat-card{border:1px solid var(--border);border-radius:.625rem;padding:.75rem .875rem;background:#fafaf9}
+    .stat-card .k{font-size:.75rem;color:var(--text-muted)}
+    .stat-card .v{font-size:1.1rem;font-weight:700;margin-top:.2rem}
+    .collapse{border:1px solid var(--border);border-radius:.625rem;background:#fff}
+    .collapse summary{cursor:pointer;list-style:none;padding:.75rem .875rem;font-size:.8125rem;color:var(--text);font-weight:600}
+    .collapse summary::-webkit-details-marker{display:none}
+    .collapse summary::after{content:'▼';float:right;font-size:.7rem;color:var(--text-muted)}
+    .collapse[open] summary::after{content:'▲'}
     .kv{display:grid;grid-template-columns:160px 1fr;gap:.5rem;font-size:.8125rem}
     .kv>div{padding:.5rem .75rem;border:1px solid var(--border);border-radius:.5rem}
     .kv .k{background:#fafaf9;color:var(--text-muted)}
@@ -267,6 +278,7 @@ func (h *Handler) OfflinePage(c *gin.Context) {
           <select id="mode">
             <option value="pcap">pcap/pcapng</option>
             <option value="raw">raw（单方向，含握手）</option>
+            <option value="ts">ts（MPEG-TS）</option>
           </select>
         </div>
         <div class="form-group">
@@ -285,7 +297,7 @@ func (h *Handler) OfflinePage(c *gin.Context) {
         </button>
         <div id="runHint"></div>
       </div>
-      <p class="hint tip">提示：离线解析要求输入包含完整 RTMP 握手（C0+C1+C2 或 S0+S1+S2，合计 3073 字节）。若缺失握手，可能会解析失败。</p>
+      <p class="hint tip" id="modeHint">提示：离线解析要求输入包含完整 RTMP 握手（C0+C1+C2 或 S0+S1+S2，合计 3073 字节）。若缺失握手，可能会解析失败。</p>
     </div>
 
     <div class="card">
@@ -314,6 +326,27 @@ func (h *Handler) OfflinePage(c *gin.Context) {
           <div class="kv" id="taskKV"></div>
         </div>
 
+        <div class="section" id="tsStatsSection" style="display:none">
+          <div class="section-title">TS 解析统计</div>
+          <div class="stats-cards" id="tsStatsCards"></div>
+        </div>
+        <div class="section" id="tsPidSection" style="display:none">
+          <div class="section-title">TS PID 明细</div>
+          <details class="collapse" open>
+            <summary id="tsPidSummary">PID 明细</summary>
+            <div class="table-wrap" style="margin-top:0">
+              <table class="small">
+                <thead>
+                  <tr>
+                    <th>PID</th><th>stream_type</th><th>category</th><th>PES</th><th>NALU</th><th>bytes</th><th>输出文件</th>
+                  </tr>
+                </thead>
+                <tbody id="tsPidBody"></tbody>
+              </table>
+            </div>
+          </details>
+        </div>
+
         <div class="section" id="rawSection">
           <div class="section-title">Raw 解析结果（单方向）</div>
           <div class="hint" style="margin:.5rem 0" id="rawHint">仅 raw 模式展示</div>
@@ -326,6 +359,47 @@ func (h *Handler) OfflinePage(c *gin.Context) {
               </thead>
               <tbody id="flowRaw"></tbody>
             </table>
+          </div>
+        </div>
+
+        <div class="section" id="rawFrameSection" style="display:none">
+          <div class="section-title" id="mediaDetailMainTitle">媒体包明细</div>
+          <p id="rawFrameModeHint" class="hint tip" style="display:none"></p>
+
+          <div id="tsPesWrap" style="display:none">
+            <div class="section-title" style="font-size:.875rem;margin-top:.5rem">TS PES 明细</div>
+            <p id="tsPesTruncHint" class="hint tip" style="display:none"></p>
+            <details class="collapse" open>
+              <summary id="tsPesSummary">PES 包列表</summary>
+              <div class="table-wrap" style="margin-top:0;max-height:420px;overflow:auto">
+                <table class="small">
+                  <thead>
+                    <tr>
+                      <th>#</th><th>PID</th><th>prog</th><th>stream_type</th><th>cat</th><th>sid</th>
+                      <th>PTS(90k)</th><th>DTS(90k)</th><th>len</th><th>NALU#</th><th>NALU 摘要</th>
+                    </tr>
+                  </thead>
+                  <tbody id="tsPesBody"></tbody>
+                </table>
+              </div>
+            </details>
+          </div>
+
+          <div id="rawFrameWrap" style="display:none">
+            <div class="section-title" style="font-size:.875rem;margin-top:.5rem">Raw 逐帧明细（RTMP 裸流）</div>
+            <details id="rawFrameDetails" class="collapse" open>
+              <summary id="rawFrameSummary">音视频帧明细</summary>
+              <div class="table-wrap" style="margin-top:0;max-height:420px;overflow:auto">
+                <table class="small">
+                  <thead>
+                    <tr>
+                      <th>#</th><th>媒体</th><th>DTS</th><th>PTS</th><th>长度</th><th>帧类型</th>
+                    </tr>
+                  </thead>
+                  <tbody id="rawFrameBody"></tbody>
+                </table>
+              </div>
+            </details>
           </div>
         </div>
 
@@ -368,6 +442,21 @@ func (h *Handler) OfflinePage(c *gin.Context) {
       el.textContent = msg || '';
     }
     function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
+    function updateModeHint(){
+      const modeEl = document.getElementById('mode');
+      const hintEl = document.getElementById('modeHint');
+      const serverPortWrap = document.getElementById('serverPort').closest('.form-group');
+      if(!modeEl || !hintEl) return;
+      const mode = modeEl.value;
+      if(serverPortWrap){
+        serverPortWrap.style.display = (mode === 'pcap') ? '' : 'none';
+      }
+      if(mode === 'ts'){
+        hintEl.textContent = '提示：TS 模式会解析 PAT/PMT/PES，导出各 PID 对应的 ES 文件，并统计 NALU。';
+      }else{
+        hintEl.textContent = '提示：离线解析要求输入包含完整 RTMP 握手（C0+C1+C2 或 S0+S1+S2，合计 3073 字节）。若缺失握手，可能会解析失败。';
+      }
+    }
     async function upload(){
       const f = document.getElementById('file').files[0];
       if(!f){ alert('请选择文件'); return; }
@@ -475,6 +564,189 @@ func (h *Handler) OfflinePage(c *gin.Context) {
       const vv = document.createElement('div'); vv.textContent = (v===undefined || v===null || v==='') ? '-' : String(v);
       return [kk, vv];
     }
+    function renderTSStats(flows){
+      const section = document.getElementById('tsStatsSection');
+      const box = document.getElementById('tsStatsCards');
+      if(!section || !box) return;
+      const sum = (key) => (flows||[]).reduce((acc, f)=>acc + Number(f && f[key] ? f[key] : 0), 0);
+      const stats = [
+        {k:'PAT', v:sum('pat_count')},
+        {k:'PMT', v:sum('pmt_count')},
+        {k:'Program', v:sum('program_count')},
+        {k:'PES', v:sum('pes_count')},
+        {k:'NALU', v:sum('nalu_count')},
+        {k:'视频PID', v:sum('video_pid_count')},
+        {k:'音频PID', v:sum('audio_pid_count')}
+      ];
+      box.innerHTML = '';
+      stats.forEach(s=>{
+        const card = document.createElement('div');
+        card.className = 'stat-card';
+        const k = document.createElement('div');
+        k.className = 'k';
+        k.textContent = s.k;
+        const v = document.createElement('div');
+        v.className = 'v';
+        v.textContent = String(s.v);
+        card.appendChild(k);
+        card.appendChild(v);
+        box.appendChild(card);
+      });
+      section.style.display = '';
+    }
+    function renderTSPIDs(taskId, flows){
+      const section = document.getElementById('tsPidSection');
+      const body = document.getElementById('tsPidBody');
+      const summary = document.getElementById('tsPidSummary');
+      if(!section || !body || !summary) return;
+      const all = [];
+      (flows||[]).forEach(f=>{
+        const items = Array.isArray(f.pid_details) ? f.pid_details : [];
+        items.forEach(it=>all.push(it));
+      });
+      all.sort((a,b)=>Number(a.pid||0)-Number(b.pid||0));
+      body.innerHTML = '';
+      const base = '/api/offline/tasks/'+taskId+'/files/';
+      all.forEach(it=>{
+        const tr = document.createElement('tr');
+        const rel = toRel(taskId, it.output_path || '');
+        const linkCell = document.createElement('td');
+        if(rel){
+          const a = document.createElement('a');
+          a.href = base + rel;
+          a.target = '_blank';
+          a.textContent = rel;
+          linkCell.appendChild(a);
+        }else{
+          linkCell.textContent = '-';
+        }
+        tr.innerHTML =
+          '<td>'+String(it.pid ?? '-')+'</td>'+
+          '<td>'+String(it.stream_type || '-')+'</td>'+
+          '<td>'+String(it.category || '-')+'</td>'+
+          '<td>'+String(it.pes_count ?? 0)+'</td>'+
+          '<td>'+String(it.nalu_count ?? 0)+'</td>'+
+          '<td>'+fmtBytes(it.bytes ?? 0)+'</td>';
+        tr.appendChild(linkCell);
+        body.appendChild(tr);
+      });
+      summary.textContent = 'PID 明细（共 ' + all.length + ' 项）';
+      section.style.display = '';
+    }
+    function fmt90kTick(valid, base){
+      if(!valid) return 'N/A';
+      const v = Number(base);
+      if(!isFinite(v)) return 'N/A';
+      return v + ' (' + (v/90000).toFixed(3) + 's)';
+    }
+    function naluBriefLine(nalus){
+      if(!nalus || !nalus.length) return '-';
+      return nalus.slice(0, 10).map(function(n){
+        const name = n.type_name ? '(' + n.type_name + ')' : '';
+        return (n.codec || '') + ' t=' + String(n.type) + name + (n.key ? '*' : '');
+      }).join(', ');
+    }
+    function renderTSPESDetails(flows){
+      const section = document.getElementById('rawFrameSection');
+      const tsWrap = document.getElementById('tsPesWrap');
+      const rawWrap = document.getElementById('rawFrameWrap');
+      const body = document.getElementById('tsPesBody');
+      const summary = document.getElementById('tsPesSummary');
+      const trunc = document.getElementById('tsPesTruncHint');
+      const hint = document.getElementById('rawFrameModeHint');
+      const title = document.getElementById('mediaDetailMainTitle');
+      if(!section || !tsWrap || !rawWrap || !body || !summary) return;
+      if(hint){ hint.style.display = 'none'; hint.textContent = ''; }
+      if(title){ title.textContent = '媒体包明细'; }
+      rawWrap.style.display = 'none';
+      tsWrap.style.display = '';
+      const all = [];
+      (flows||[]).forEach(function(f){
+        const items = Array.isArray(f.pes_details) ? f.pes_details : [];
+        items.forEach(function(it){ all.push(it); });
+      });
+      const total = (flows && flows[0] && flows[0].pes_detail_total != null) ? Number(flows[0].pes_detail_total) : all.length;
+      let truncFlag = false;
+      (flows||[]).forEach(function(f){
+        if(f && f.pes_details_truncated) truncFlag = true;
+      });
+      if(trunc){
+        if(truncFlag){
+          trunc.style.display = '';
+          trunc.textContent = 'PES 明细已截断：共 ' + (isFinite(total)?total:all.length) + ' 个 PES，页面最多展示前 ' + all.length + ' 条（可在 summary.json 中调高后端上限）。';
+        }else{
+          trunc.style.display = 'none';
+          trunc.textContent = '';
+        }
+      }
+      body.innerHTML = '';
+      for(let i=0;i<all.length;i++){
+        const it = all[i] || {};
+        const tr = document.createElement('tr');
+        tr.innerHTML =
+          '<td>' + String(it.seq ?? (i+1)) + '</td>' +
+          '<td>' + String(it.pid ?? '-') + '</td>' +
+          '<td>' + String(it.program_number ?? '-') + '</td>' +
+          '<td>' + String(it.stream_type || '-') + '</td>' +
+          '<td>' + String(it.category || '-') + '</td>' +
+          '<td>0x' + Number(it.stream_id ?? 0).toString(16) + '</td>' +
+          '<td>' + fmt90kTick(it.pts_valid, it.pts_base) + '</td>' +
+          '<td>' + fmt90kTick(it.dts_valid, it.dts_base) + '</td>' +
+          '<td>' + fmtBytes(it.payload_len ?? 0) + '</td>' +
+          '<td>' + String(it.nalu_count ?? 0) + '</td>' +
+          '<td style="max-width:280px;word-break:break-all;font-size:.75rem">' + naluBriefLine(it.nalus) + '</td>';
+        body.appendChild(tr);
+      }
+      if(all.length === 0){
+        const tr = document.createElement('tr');
+        tr.innerHTML = '<td colspan="11" style="color:var(--text-muted)">暂无 PES 明细（请重新解析 TS 任务以生成 pes_details）。</td>';
+        body.appendChild(tr);
+      }
+      summary.textContent = 'PES 包列表（展示 ' + all.length + ' / ' + (isFinite(total)?total:all.length) + '）';
+      section.style.display = '';
+    }
+    function renderRawFrames(flows){
+      const section = document.getElementById('rawFrameSection');
+      const body = document.getElementById('rawFrameBody');
+      const summary = document.getElementById('rawFrameSummary');
+      const hint = document.getElementById('rawFrameModeHint');
+      const details = document.getElementById('rawFrameDetails');
+      const tsWrap = document.getElementById('tsPesWrap');
+      const rawWrap = document.getElementById('rawFrameWrap');
+      const title = document.getElementById('mediaDetailMainTitle');
+      if(!section || !body || !summary) return;
+      if(hint){ hint.style.display = 'none'; hint.textContent = ''; }
+      if(title){ title.textContent = '媒体包明细'; }
+      if(tsWrap){ tsWrap.style.display = 'none'; }
+      if(rawWrap){ rawWrap.style.display = ''; }
+      if(details){ details.style.display = ''; }
+      const all = [];
+      (flows||[]).forEach(f=>{
+        const items = Array.isArray(f.frame_details) ? f.frame_details : [];
+        items.forEach(it=>all.push(it));
+      });
+      body.innerHTML = '';
+      if(all.length === 0){
+        const tr = document.createElement('tr');
+        tr.innerHTML = '<td colspan="6" style="color:var(--text-muted)">暂无逐帧数据（旧任务或未解析出音视频的 raw 文件会为空）。请用「模式：raw」重新上传 RTMP 单方向裸流。</td>';
+        body.appendChild(tr);
+      }else{
+        for(let i=0;i<all.length;i++){
+          const it = all[i] || {};
+          const tr = document.createElement('tr');
+          tr.innerHTML =
+            '<td>' + (i+1) + '</td>' +
+            '<td>' + String(it.media_type || '-') + '</td>' +
+            '<td>' + String(it.dts ?? '-') + '</td>' +
+            '<td>' + String(it.pts ?? '-') + '</td>' +
+            '<td>' + fmtBytes(it.frame_len ?? 0) + '</td>' +
+            '<td>' + String(it.frame_type || '-') + '</td>';
+          body.appendChild(tr);
+        }
+      }
+      summary.textContent = '音视频帧明细（共 ' + all.length + ' 帧）';
+      section.style.display = '';
+    }
     function clearTbody(id){
       const tb = document.getElementById(id);
       tb.innerHTML = '';
@@ -502,13 +774,24 @@ func (h *Handler) OfflinePage(c *gin.Context) {
         const client = (f.client_ip||'-')+':'+(f.client_port||'-');
         const server = (f.server_ip||'-')+':'+(f.server_port||'-');
         const links = document.createElement('div');
+        const isTS = String(f.direction||'').toLowerCase() === 'ts';
         const rawRel = toRel(taskId, f.raw_path);
         const vRel = toRel(taskId, f.video_path);
         const aRel = toRel(taskId, f.audio_path);
+        const extras = Array.isArray(f.artifact_paths) ? f.artifact_paths : [];
         let linkCount = 0;
-        if(rawRel){ if(linkCount++) addSep(links); addLink(links, base+rawRel, 'raw'); }
+        // TS：产物列只保留 video / audio（与 PID 明细一致，避免 raw 与 artifact 重复）
+        if(!isTS && rawRel){ if(linkCount++) addSep(links); addLink(links, base+rawRel, 'raw'); }
         if(vRel){ if(linkCount++) addSep(links); addLink(links, base+vRel, 'video'); }
         if(aRel){ if(linkCount++) addSep(links); addLink(links, base+aRel, 'audio'); }
+        if(!isTS){
+          for(let i=0;i<extras.length;i++){
+            const rel = toRel(taskId, extras[i]);
+            if(!rel) continue;
+            if(linkCount++) addSep(links);
+            addLink(links, base+rel, 'artifact'+(i+1));
+          }
+        }
 
         const tdFlow = document.createElement('td'); tdFlow.textContent = 'flow'+String(f.flow_id).padStart(3,'0');
         const tdAddr = document.createElement('td'); tdAddr.textContent = client + ' → ' + server;
@@ -566,14 +849,19 @@ func (h *Handler) OfflinePage(c *gin.Context) {
       const pushSection = document.getElementById('pushSection');
       const pullSection = document.getElementById('pullSection');
       const rawHint = document.getElementById('rawHint');
+      const tsStatsSection = document.getElementById('tsStatsSection');
+      const tsPidSection = document.getElementById('tsPidSection');
+      const rawFrameSection = document.getElementById('rawFrameSection');
 
       const push = flows.filter(f=>String(f.direction).toLowerCase()==='push');
       const pull = flows.filter(f=>String(f.direction).toLowerCase()==='pull');
       const rawFlows = flows.filter(f=>String(f.direction).toLowerCase()==='raw');
+      const tsFlows = flows.filter(f=>String(f.direction).toLowerCase()==='ts');
 
-      if(mode === 'raw'){
+      if(mode === 'raw' || mode === 'ts'){
         if(rawSection) rawSection.style.display = '';
-        if(rawHint) rawHint.style.display = 'none';
+        if(rawHint) rawHint.style.display = '';
+        if(rawHint) rawHint.textContent = mode === 'ts' ? 'TS 模式展示单文件解析结果' : '仅 raw 模式展示';
         if(pushSection) pushSection.style.display = 'none';
         if(pullSection) pullSection.style.display = 'none';
       }else{
@@ -581,13 +869,29 @@ func (h *Handler) OfflinePage(c *gin.Context) {
         if(pushSection) pushSection.style.display = '';
         if(pullSection) pullSection.style.display = '';
       }
+      if(mode === 'ts'){
+        renderTSStats(tsFlows);
+        renderTSPIDs(id, tsFlows);
+        renderTSPESDetails(tsFlows);
+      }else if(mode === 'raw'){
+        if(tsStatsSection) tsStatsSection.style.display = 'none';
+        if(tsPidSection) tsPidSection.style.display = 'none';
+        renderRawFrames(rawFlows);
+      }else if(tsStatsSection){
+        tsStatsSection.style.display = 'none';
+        if(tsPidSection) tsPidSection.style.display = 'none';
+        if(rawFrameSection) rawFrameSection.style.display = 'none';
+      }
 
-      renderFlows(id, rawFlows, 'flowRaw', false);
+      renderFlows(id, mode === 'ts' ? tsFlows : rawFlows, 'flowRaw', false);
       renderFlows(id, push, 'flowPush', false);
       renderFlows(id, pull, 'flowPull', false);
     }
     setInterval(loadTasks, 3000);
     loadTasks();
+    const modeEl = document.getElementById('mode');
+    if(modeEl) modeEl.addEventListener('change', updateModeHint);
+    updateModeHint();
   </script>
 </body>
 </html>`

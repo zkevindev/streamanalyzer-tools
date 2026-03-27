@@ -76,6 +76,7 @@ type OfflineMode string
 const (
 	OfflineModeRaw  OfflineMode = "raw"
 	OfflineModePCAP OfflineMode = "pcap"
+	OfflineModeTS   OfflineMode = "ts"
 )
 
 type OfflineStatus string
@@ -88,9 +89,9 @@ const (
 )
 
 type OfflineTaskRequest struct {
-	Mode      OfflineMode `json:"mode" binding:"required"` // raw or pcap
-	ServerPort uint16     `json:"server_port"`            // only for pcap
-	SkipBytes  int        `json:"skip_bytes"`             // handshake bytes
+	Mode       OfflineMode `json:"mode" binding:"required"` // raw or pcap
+	ServerPort uint16      `json:"server_port"`             // only for pcap
+	SkipBytes  int         `json:"skip_bytes"`              // handshake bytes
 }
 
 type OfflineTask struct {
@@ -99,7 +100,7 @@ type OfflineTask struct {
 	Status OfflineStatus `json:"status"`
 
 	ServerPort uint16 `json:"server_port"`
-	SkipBytes   int    `json:"skip_bytes"`
+	SkipBytes  int    `json:"skip_bytes"`
 
 	InputName string `json:"input_name"`
 	InputPath string `json:"input_path"`
@@ -113,18 +114,18 @@ type OfflineTask struct {
 }
 
 type OfflineSummary struct {
-	TaskID string      `json:"task_id"`
-	Mode   OfflineMode `json:"mode"`
+	TaskID string              `json:"task_id"`
+	Mode   OfflineMode         `json:"mode"`
 	Flows  []OfflineFlowResult `json:"flows"`
 }
 
 type OfflineFlowResult struct {
 	FlowID int `json:"flow_id"`
 
-	HasSYN      bool `json:"has_syn"`
-	SYNCount    int  `json:"syn_count"`
-	TCPPktCount int  `json:"tcp_pkt_count"`
-	PayloadBytes int `json:"payload_bytes"`
+	HasSYN       bool `json:"has_syn"`
+	SYNCount     int  `json:"syn_count"`
+	TCPPktCount  int  `json:"tcp_pkt_count"`
+	PayloadBytes int  `json:"payload_bytes"`
 
 	ClientIP   string `json:"client_ip"`
 	ClientPort uint16 `json:"client_port"`
@@ -138,6 +139,64 @@ type OfflineFlowResult struct {
 	VideoPath string `json:"video_path,omitempty"`
 	AudioPath string `json:"audio_path,omitempty"`
 
-	VideoCodec string `json:"video_codec,omitempty"`
-	Error      string `json:"error,omitempty"`
+	ProgramCount  int `json:"program_count,omitempty"`
+	PATCount      int `json:"pat_count,omitempty"`
+	PMTCount      int `json:"pmt_count,omitempty"`
+	PESCount      int `json:"pes_count,omitempty"`
+	NALUCount     int `json:"nalu_count,omitempty"`
+	VideoPIDCount int `json:"video_pid_count,omitempty"`
+	AudioPIDCount int `json:"audio_pid_count,omitempty"`
+
+	VideoCodec   string               `json:"video_codec,omitempty"`
+	Error        string               `json:"error,omitempty"`
+	PIDDetails   []OfflinePIDDetail   `json:"pid_details,omitempty"`
+	FrameDetails []OfflineFrameDetail `json:"frame_details,omitempty"`
+
+	PESDetails          []OfflinePESDetail `json:"pes_details,omitempty"`
+	PESDetailTotal      int                `json:"pes_detail_total,omitempty"`
+	PESDetailsTruncated bool               `json:"pes_details_truncated,omitempty"`
+}
+
+type OfflinePIDDetail struct {
+	PID        uint16 `json:"pid"`
+	StreamType string `json:"stream_type,omitempty"`
+	Category   string `json:"category,omitempty"`
+	PESCount   int    `json:"pes_count,omitempty"`
+	NALUCount  int    `json:"nalu_count,omitempty"`
+	Bytes      int64  `json:"bytes,omitempty"`
+	OutputPath string `json:"output_path,omitempty"`
+}
+
+type OfflineFrameDetail struct {
+	MediaType string `json:"media_type,omitempty"` // video/audio
+	DTS       int64  `json:"dts,omitempty"`
+	PTS       int64  `json:"pts,omitempty"`
+	FrameLen  int    `json:"frame_len,omitempty"`
+	FrameType string `json:"frame_type,omitempty"` // I/P/B/- for audio
+}
+
+// OfflinePESDetail 对应 TS 每个 PES 包一行（与 example/parse_ts 输出字段对齐）。
+type OfflinePESDetail struct {
+	Seq           int                `json:"seq"`
+	PID           uint16             `json:"pid"`
+	ProgramNumber uint16             `json:"program_number,omitempty"`
+	StreamID      uint8              `json:"stream_id,omitempty"`
+	StreamType    string             `json:"stream_type,omitempty"`
+	Category      string             `json:"category,omitempty"`
+	PTSBase       int64              `json:"pts_base,omitempty"` // 90kHz 基准值，无 PTS 时为 0 且 PTSValid=false
+	PTSValid      bool               `json:"pts_valid,omitempty"`
+	DTSBase       int64              `json:"dts_base,omitempty"`
+	DTSValid      bool               `json:"dts_valid,omitempty"`
+	PayloadLen    int                `json:"payload_len"`
+	NALUCount     int                `json:"nalu_count,omitempty"`
+	NALUs         []OfflineNALUBrief `json:"nalus,omitempty"`
+}
+
+type OfflineNALUBrief struct {
+	Index    int    `json:"index"`
+	Codec    string `json:"codec,omitempty"` // H264 / H265
+	Type     int    `json:"type,omitempty"`
+	TypeName string `json:"type_name,omitempty"`
+	Len      int    `json:"len,omitempty"`
+	Key      bool   `json:"key,omitempty"`
 }
