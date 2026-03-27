@@ -28,6 +28,24 @@ Run with timeout and timezone:
 go run ./example/http_flv_client -url "http://127.0.0.1/live/stream.flv" -duration 30s -tz Asia/Shanghai
 ```
 
+## FLV File Parser (Tag / Metadata / Raw Extract)
+
+Parse a local FLV file, validate FLV header, print tag-level info (including metadata),
+and optionally extract raw video/audio.
+
+```bash
+go run ./example/parse_flv \
+  -i ./input.flv \
+  -video ./video.annexb \
+  -audio ./audio.adts.aac
+```
+
+Notes:
+- If FLV header is missing or invalid, parser exits with an error immediately.
+- Video extraction outputs Annex-B elementary stream.
+- Audio extraction currently focuses on AAC and outputs ADTS.
+- Omit `-video` / `-audio` to run in parse-only mode.
+
 ## RTMP Raw Parser (AnnexB / ADTS)
 
 Parse a single-direction RTMP raw TCP capture (contains S0+S1+S2 handshake by default).

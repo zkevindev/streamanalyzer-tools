@@ -77,6 +77,7 @@ const (
 	OfflineModeRaw  OfflineMode = "raw"
 	OfflineModePCAP OfflineMode = "pcap"
 	OfflineModeTS   OfflineMode = "ts"
+	OfflineModeFLV  OfflineMode = "flv"
 )
 
 type OfflineStatus string
@@ -149,6 +150,7 @@ type OfflineFlowResult struct {
 
 	VideoCodec   string               `json:"video_codec,omitempty"`
 	Error        string               `json:"error,omitempty"`
+	FLVMetadata  string               `json:"flv_metadata_json,omitempty"`
 	PIDDetails   []OfflinePIDDetail   `json:"pid_details,omitempty"`
 	FrameDetails []OfflineFrameDetail `json:"frame_details,omitempty"`
 

@@ -76,7 +76,7 @@ func (h *Handler) CreateOfflineTask(c *gin.Context) {
 	mode := c.PostForm("mode")
 	var req models.OfflineTaskRequest
 	req.Mode = models.OfflineMode(mode)
-	if req.Mode != models.OfflineModeRaw && req.Mode != models.OfflineModePCAP && req.Mode != models.OfflineModeTS {
+	if req.Mode != models.OfflineModeRaw && req.Mode != models.OfflineModePCAP && req.Mode != models.OfflineModeTS && req.Mode != models.OfflineModeFLV {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid mode"})
 		return
 	}
@@ -183,6 +183,7 @@ func (h *Handler) OfflinePage(c *gin.Context) {
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
   <style>
     *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
     :root{--bg:#fafaf9;--surface:#ffffff;--border:#e8e6e1;--text:#1a1918;--text-muted:#78716c;--accent:#d97757;--accent-hover:#c4684a;--accent-light:#fef3ec;--radius:1rem;--shadow:0 2px 12px rgba(0,0,0,.05);--shadow-md:0 4px 20px rgba(0,0,0,.08)}
@@ -241,12 +242,17 @@ func (h *Handler) OfflinePage(c *gin.Context) {
     .collapse summary::-webkit-details-marker{display:none}
     .collapse summary::after{content:'▼';float:right;font-size:.7rem;color:var(--text-muted)}
     .collapse[open] summary::after{content:'▲'}
+    .chart-grid{display:grid;grid-template-columns:1fr;gap:1rem}
+    .chart-box{border:1px solid var(--border);border-radius:.625rem;padding:.5rem;background:#fff}
+    .chart-title{font-size:.8125rem;color:var(--text-muted);margin:.25rem .5rem .5rem}
+    .chart{height:260px}
+    .meta-box{margin-top:.5rem;border:1px solid var(--border);border-radius:.625rem;background:#1f2937;color:#e5e7eb;padding:.75rem;max-height:260px;overflow:auto;font-size:.75rem;white-space:pre-wrap;word-break:break-all}
     .kv{display:grid;grid-template-columns:160px 1fr;gap:.5rem;font-size:.8125rem}
     .kv>div{padding:.5rem .75rem;border:1px solid var(--border);border-radius:.5rem}
     .kv .k{background:#fafaf9;color:var(--text-muted)}
     code{font-family:ui-monospace,monospace;font-size:.8125rem;background:#f3f4f6;padding:.125rem .375rem;border-radius:.25rem}
     .empty-state{text-align:center;padding:3rem;color:var(--text-muted);font-size:.875rem}
-    @media(max-width:640px){body{padding:1rem}.form-grid{grid-template-columns:1fr}.page-header{flex-direction:column}}
+    @media(max-width:640px){body{padding:1rem}.form-grid{grid-template-columns:1fr}.page-header{flex-direction:column}.chart-grid{grid-template-columns:1fr}}
   </style>
 </head>
 <body>
@@ -279,6 +285,7 @@ func (h *Handler) OfflinePage(c *gin.Context) {
             <option value="pcap">pcap/pcapng</option>
             <option value="raw">raw（单方向，含握手）</option>
             <option value="ts">ts（MPEG-TS）</option>
+            <option value="flv">flv（文件）</option>
           </select>
         </div>
         <div class="form-group">
@@ -324,6 +331,20 @@ func (h *Handler) OfflinePage(c *gin.Context) {
         <div class="section">
           <div class="section-title">解析信息</div>
           <div class="kv" id="taskKV"></div>
+        </div>
+
+        <div class="section" id="offlineChartSection" style="display:none">
+          <div class="section-title">时序分析</div>
+          <div class="chart-grid">
+            <div class="chart-box">
+              <div class="chart-title">I帧间隔</div>
+              <div id="chartIInterval" class="chart"></div>
+            </div>
+          </div>
+        </div>
+        <div class="section" id="flvMetadataSection" style="display:none">
+          <div class="section-title">FLV Metadata（onMetaData）</div>
+          <pre id="flvMetadataBox" class="meta-box">metadata: -</pre>
         </div>
 
         <div class="section" id="tsStatsSection" style="display:none">
@@ -453,6 +474,8 @@ func (h *Handler) OfflinePage(c *gin.Context) {
       }
       if(mode === 'ts'){
         hintEl.textContent = '提示：TS 模式会解析 PAT/PMT/PES，导出各 PID 对应的 ES 文件，并统计 NALU。';
+      }else if(mode === 'flv'){
+        hintEl.textContent = '提示：FLV 模式会解析音视频 Tag、metadata，并提取 video.annexb / audio.adts.aac。';
       }else{
         hintEl.textContent = '提示：离线解析要求输入包含完整 RTMP 握手（C0+C1+C2 或 S0+S1+S2，合计 3073 字节）。若缺失握手，可能会解析失败。';
       }
@@ -811,6 +834,106 @@ func (h *Handler) OfflinePage(c *gin.Context) {
         tb.appendChild(tr);
       });
     }
+    let iIntervalChart = null;
+    function destroyOfflineCharts(){
+      if(iIntervalChart){
+        try{ iIntervalChart.dispose(); }catch(_){}
+        iIntervalChart = null;
+      }
+    }
+    function pickTSDTS(item){
+      if(!item) return null;
+      if(item.dts_valid) return Number(item.dts_base);
+      return null;
+    }
+    function calcOfflineSeries(mode, flows){
+      const iIntervals = [];
+      if(mode === 'ts'){
+        const pes = [];
+        (flows || []).forEach(function(f){
+          const items = Array.isArray(f.pes_details) ? f.pes_details : [];
+          items.forEach(function(it){ pes.push(it); });
+        });
+        pes.sort(function(a,b){ return Number(a.seq || 0) - Number(b.seq || 0); });
+        let lastI = null;
+        pes.forEach(function(p){
+          const cat = String(p.category || '').toLowerCase();
+          const ts = pickTSDTS(p);
+          if(ts == null || !isFinite(ts)) return;
+          if(cat === 'video'){
+            const nalus = Array.isArray(p.nalus) ? p.nalus : [];
+            const isI = nalus.some(function(n){ return !!n.key; }) ||
+              nalus.some(function(n){ return String(n.type_name || '').toUpperCase() === 'IDR'; });
+            if(isI){
+              if(lastI != null) iIntervals.push((ts - lastI) / 90); // 90k tick -> ms
+              lastI = ts;
+            }
+          }
+        });
+      }else{
+        const frames = [];
+        (flows || []).forEach(function(f){
+          const items = Array.isArray(f.frame_details) ? f.frame_details : [];
+          items.forEach(function(it){ frames.push(it); });
+        });
+        let lastI = null;
+        frames.forEach(function(fr){
+          const media = String(fr.media_type || '').toLowerCase();
+          const dts = Number(fr.dts);
+          const ts = isFinite(dts) ? dts : null;
+          if(ts == null) return;
+          if(media === 'video'){
+            const ft = String(fr.frame_type || '').toUpperCase();
+            if(ft.startsWith('I')){
+              if(lastI != null) iIntervals.push(ts - lastI);
+              lastI = ts;
+            }
+          }
+        });
+      }
+      return { iIntervals };
+    }
+    function renderOfflineCharts(mode, flows){
+      const section = document.getElementById('offlineChartSection');
+      const iEl = document.getElementById('chartIInterval');
+      if(!section || !iEl) return;
+      destroyOfflineCharts();
+      if(typeof echarts === 'undefined'){
+        section.style.display = 'none';
+        return;
+      }
+      const series = calcOfflineSeries(mode, flows);
+      iIntervalChart = echarts.init(iEl);
+      iIntervalChart.setOption({
+        tooltip:{trigger:'axis'},
+        xAxis:{type:'category', data:series.iIntervals.map(function(_,i){ return i+1; }), name:'I间隔序号'},
+        yAxis:{type:'value', name:'ms'},
+        series:[{type:'line', smooth:true, data:series.iIntervals}]
+      });
+      section.style.display = '';
+    }
+    function renderFLVMetadata(flows){
+      const section = document.getElementById('flvMetadataSection');
+      const box = document.getElementById('flvMetadataBox');
+      if(!section || !box) return;
+      let raw = '';
+      (flows || []).forEach(function(f){
+        if(!raw && f && f.flv_metadata_json){
+          raw = String(f.flv_metadata_json);
+        }
+      });
+      if(!raw){
+        box.textContent = 'metadata: -';
+        section.style.display = 'none';
+        return;
+      }
+      try{
+        box.textContent = JSON.stringify(JSON.parse(raw), null, 2);
+      }catch(_){
+        box.textContent = raw;
+      }
+      section.style.display = '';
+    }
     async function show(id){
       currentId = id;
       document.getElementById('detail').style.display = 'block';
@@ -852,16 +975,18 @@ func (h *Handler) OfflinePage(c *gin.Context) {
       const tsStatsSection = document.getElementById('tsStatsSection');
       const tsPidSection = document.getElementById('tsPidSection');
       const rawFrameSection = document.getElementById('rawFrameSection');
+      const offlineChartSection = document.getElementById('offlineChartSection');
+      const flvMetadataSection = document.getElementById('flvMetadataSection');
 
       const push = flows.filter(f=>String(f.direction).toLowerCase()==='push');
       const pull = flows.filter(f=>String(f.direction).toLowerCase()==='pull');
-      const rawFlows = flows.filter(f=>String(f.direction).toLowerCase()==='raw');
+      const rawFlows = flows.filter(f=>String(f.direction).toLowerCase()==='raw' || String(f.direction).toLowerCase()==='flv');
       const tsFlows = flows.filter(f=>String(f.direction).toLowerCase()==='ts');
 
-      if(mode === 'raw' || mode === 'ts'){
+      if(mode === 'raw' || mode === 'ts' || mode === 'flv'){
         if(rawSection) rawSection.style.display = '';
         if(rawHint) rawHint.style.display = '';
-        if(rawHint) rawHint.textContent = mode === 'ts' ? 'TS 模式展示单文件解析结果' : '仅 raw 模式展示';
+        if(rawHint) rawHint.textContent = mode === 'ts' ? 'TS 模式展示单文件解析结果' : (mode === 'flv' ? 'FLV 模式展示单文件解析结果' : '仅 raw 模式展示');
         if(pushSection) pushSection.style.display = 'none';
         if(pullSection) pullSection.style.display = 'none';
       }else{
@@ -873,14 +998,25 @@ func (h *Handler) OfflinePage(c *gin.Context) {
         renderTSStats(tsFlows);
         renderTSPIDs(id, tsFlows);
         renderTSPESDetails(tsFlows);
-      }else if(mode === 'raw'){
+        renderOfflineCharts('ts', tsFlows);
+        if(flvMetadataSection) flvMetadataSection.style.display = 'none';
+      }else if(mode === 'raw' || mode === 'flv'){
         if(tsStatsSection) tsStatsSection.style.display = 'none';
         if(tsPidSection) tsPidSection.style.display = 'none';
         renderRawFrames(rawFlows);
+        renderOfflineCharts(mode, rawFlows);
+        if(mode === 'flv'){
+          renderFLVMetadata(rawFlows);
+        }else if(flvMetadataSection){
+          flvMetadataSection.style.display = 'none';
+        }
       }else if(tsStatsSection){
         tsStatsSection.style.display = 'none';
         if(tsPidSection) tsPidSection.style.display = 'none';
         if(rawFrameSection) rawFrameSection.style.display = 'none';
+        if(offlineChartSection) offlineChartSection.style.display = 'none';
+        if(flvMetadataSection) flvMetadataSection.style.display = 'none';
+        destroyOfflineCharts();
       }
 
       renderFlows(id, mode === 'ts' ? tsFlows : rawFlows, 'flowRaw', false);

@@ -1,6 +1,6 @@
 # Stream Analyzer Tools
 
-音视频流分析工具：支持 RTMP / HTTP-FLV 拉流的实时分析，以及离线文件解析（raw / pcap / MPEG-TS）。离线结果会持久化到磁盘并在网页端可查看/下载。兼容 Legacy FLV 与 Enhanced RTMP/FLV（E-RTMP）头部解析。
+音视频流分析工具：支持 RTMP / HTTP-FLV 拉流的实时分析，以及离线文件解析（raw / pcap / FLV / MPEG-TS）。离线结果会持久化到磁盘并在网页端可查看/下载。兼容 Legacy FLV 与 Enhanced RTMP/FLV（E-RTMP）头部解析。
 
 ## 功能特性
 
@@ -21,6 +21,7 @@
 - 图表表格支持全量数据展示（滚动查看）
 - 离线文件解析支持：
   - RTMP：`raw` 单方向（含握手）与 `pcap` 自动提取 push/pull 方向
+  - FLV：解析 FLV Header/Tag/metadata，提取 `video.annexb` 与 `audio.adts.aac`
   - MPEG-TS：解析 `PAT/PMT/PES`，导出各 PID 的 ES 文件，支持 `PTS/DTS` 与视频 NALU 明细展示
 - 离线解析任务支持状态轮询与历史记录（`pending/running/done/failed`）
 
@@ -46,7 +47,12 @@
 │   │       ├── echarts_helpers.js
 │   │       └── index.html
 │   ├── models/models.go
-│   ├── offline/offline.go
+│   ├── offline/
+│   │   ├── offline_manager.go
+│   │   ├── offline_raw.go
+│   │   ├── offline_pcap.go
+│   │   ├── offline_flv.go
+│   │   └── offline_ts.go
 │   ├── pcaprtmp/pcaprtmp.go
 │   ├── rtmpraw/parser.go
 │   └── storage/csv.go
@@ -77,7 +83,7 @@ go build -o bin/server ./cmd/server
 路由说明：
 - `GET /`：入口页（选择实时分析 or 离线分析）
 - `GET /realtime`：实时分析页面（输入 RTMP / HTTP-FLV 拉流地址）
-- `GET /offline`：离线分析页面（上传 raw/pcap/ts 文件）
+- `GET /offline`：离线分析页面（上传 raw/pcap/flv/ts 文件）
 - `GET /history`：历史记录页面
 
 ## API
@@ -114,20 +120,21 @@ go build -o bin/server ./cmd/server
 - `POST /api/offline/tasks`
 
 表单字段：
-- `mode`：`raw` / `pcap` / `ts`
+- `mode`：`raw` / `pcap` / `flv` / `ts`
 - `server_port`：pcap 模式下的 RTMP 服务器端口（可选，默认 1935）
 - `skip_bytes`：握手跳过字节数（raw/pcap 有效）
-- `file`：上传文件（raw / pcap/pcapng / ts）
+- `file`：上传文件（raw / pcap/pcapng / flv / ts）
 
 查询接口：
 - `GET /api/offline/tasks`：列出任务
 - `GET /api/offline/tasks/:id`：获取任务与 `summary.json`
 - `GET /api/offline/tasks/:id/files/*name`：下载离线产物文件（raw/video/audio/summary 等）
 
-`summary.json` 中包含每个 flow 的方向与产物路径。TS 模式还会包含 `PAT/PMT/PES/NALU` 统计、PID 明细和 PES 明细，网页端会据此渲染统计卡片与表格。
+`summary.json` 中包含每个 flow 的方向与产物路径。`flv` 模式会包含逐帧明细（DTS/PTS/长度/帧类型）；`ts` 模式会包含 `PAT/PMT/PES/NALU` 统计、PID 明细和 PES 明细，网页端会据此渲染统计卡片与表格。
 
 说明：
 - `raw/pcap` 模式解析 RTMP，要求输入包含完整 RTMP 握手与 chunk 流。
+- `flv` 模式解析 FLV 文件，严格校验 FLV Header；若 Header 缺失或无效会直接报错。
 - `ts` 模式解析 MPEG-TS，支持 `PAT/PMT/PES` 与视频 NALU 粒度的分析展示。
 
 ## XLSX 格式
