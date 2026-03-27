@@ -4,45 +4,299 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Stream Analyzer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
-    *{box-sizing:border-box}
-    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f5f5f5;padding:24px}
-    .container{max-width:980px;margin:0 auto}
-    h1{font-size:22px;margin:0 0 8px 0}
-    .muted{color:#6b7280;font-size:13px;margin-bottom:16px}
-    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:16px}
-    .card{background:#fff;border-radius:10px;padding:18px;box-shadow:0 1px 3px rgba(0,0,0,.1)}
-    .card h2{font-size:16px;margin:0 0 8px 0}
-    .card p{margin:0 0 14px 0;color:#4b5563;font-size:13px;line-height:1.5}
-    a.btn{display:inline-block;background:#2563eb;color:#fff;text-decoration:none;padding:10px 14px;border-radius:8px;font-size:13px}
-    a.btn.secondary{background:#111827}
-    .toplinks{display:flex;gap:12px;align-items:center;margin:12px 0 18px 0;flex-wrap:wrap}
-    .toplinks a{color:#2563eb;text-decoration:none;font-size:13px}
-    .toplinks a:hover{text-decoration:underline}
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    
+    :root{
+      --bg:#fafaf9;
+      --surface:#ffffff;
+      --border:#e8e6e1;
+      --text:#1a1918;
+      --text-muted:#78716c;
+      --accent:#d97757;
+      --accent-hover:#c4684a;
+      --radius:1.25rem;
+      --shadow:0 4px 24px rgba(0,0,0,.06),0 1px 2px rgba(0,0,0,.04);
+      --shadow-hover:0 8px 32px rgba(0,0,0,.1),0 2px 4px rgba(0,0,0,.06);
+    }
+
+    body{
+      font-family:'Outfit',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+      background:var(--bg);
+      color:var(--text);
+      min-h:100dvh;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      padding:2rem;
+      line-height:1.5;
+    }
+
+    .container{
+      max-width:860px;
+      width:100%;
+      margin:0 auto;
+    }
+
+    header{
+      text-align:center;
+      margin-bottom:3rem;
+      animation:fadeUp .6s ease-out;
+    }
+
+    .logo{
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      width:56px;
+      height:56px;
+      background:linear-gradient(135deg,var(--accent),#e8a090);
+      border-radius:14px;
+      margin-bottom:1.5rem;
+      box-shadow:0 4px 16px rgba(217,119,87,.3);
+    }
+
+    .logo svg{
+      width:28px;
+      height:28px;
+      color:#fff;
+    }
+
+    h1{
+      font-size:2rem;
+      font-weight:700;
+      letter-spacing:-.03em;
+      margin-bottom:.5rem;
+    }
+
+    .subtitle{
+      color:var(--text-muted);
+      font-size:.95rem;
+      max-width:42ch;
+      margin:0 auto;
+    }
+
+    .nav-link{
+      display:inline-flex;
+      align-items:center;
+      gap:.5rem;
+      color:var(--text-muted);
+      text-decoration:none;
+      font-size:.875rem;
+      margin-top:1.5rem;
+      padding:.5rem 1rem;
+      border-radius:8px;
+      transition:all .2s ease;
+    }
+
+    .nav-link:hover{
+      color:var(--text);
+      background:rgba(0,0,0,.04);
+    }
+
+    .nav-link svg{
+      width:16px;
+      height:16px;
+    }
+
+    .grid{
+      display:grid;
+      grid-template-columns:repeat(auto-fit,minmax(280px,1fr));
+      gap:1.25rem;
+    }
+
+    .card{
+      background:var(--surface);
+      border:1px solid var(--border);
+      border-radius:var(--radius);
+      padding:1.75rem;
+      box-shadow:var(--shadow);
+      transition:all .3s cubic-bezier(.16,1,.3,1);
+      position:relative;
+      overflow:hidden;
+      animation:fadeUp .6s ease-out backwards;
+    }
+
+    .card:nth-child(1){animation-delay:.1s}
+    .card:nth-child(2){animation-delay:.2s}
+
+    .card::before{
+      content:'';
+      position:absolute;
+      top:0;
+      left:0;
+      right:0;
+      height:3px;
+      background:linear-gradient(90deg,var(--accent),#e8a090);
+      opacity:0;
+      transition:opacity .3s ease;
+    }
+
+    .card:hover{
+      transform:translateY(-4px);
+      box-shadow:var(--shadow-hover);
+      border-color:transparent;
+    }
+
+    .card:hover::before{
+      opacity:1;
+    }
+
+    .card-icon{
+      width:44px;
+      height:44px;
+      border-radius:10px;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      margin-bottom:1.25rem;
+    }
+
+    .card:nth-child(1) .card-icon{
+      background:linear-gradient(135deg,#fef3ec,#fff);
+      color:var(--accent);
+    }
+
+    .card:nth-child(2) .card-icon{
+      background:linear-gradient(135deg,#f0f4ff,#fff);
+      color:#6a9bcc;
+    }
+
+    .card-icon svg{
+      width:22px;
+      height:22px;
+    }
+
+    .card h2{
+      font-size:1.125rem;
+      font-weight:600;
+      letter-spacing:-.02em;
+      margin-bottom:.625rem;
+    }
+
+    .card p{
+      color:var(--text-muted);
+      font-size:.875rem;
+      line-height:1.6;
+      margin-bottom:1.25rem;
+    }
+
+    .btn{
+      display:inline-flex;
+      align-items:center;
+      gap:.5rem;
+      background:var(--accent);
+      color:#fff;
+      text-decoration:none;
+      padding:.75rem 1.25rem;
+      border-radius:8px;
+      font-size:.875rem;
+      font-weight:500;
+      transition:all .2s ease;
+    }
+
+    .btn:hover{
+      background:var(--accent-hover);
+      transform:scale(1.02);
+    }
+
+    .btn:active{
+      transform:scale(.98);
+    }
+
+    .btn svg{
+      width:16px;
+      height:16px;
+    }
+
+    .btn.secondary{
+      background:#1a1918;
+    }
+
+    .btn.secondary:hover{
+      background:#2d2c2a;
+    }
+
+    @keyframes fadeUp{
+      from{
+        opacity:0;
+        transform:translateY(16px);
+      }
+      to{
+        opacity:1;
+        transform:translateY(0);
+      }
+    }
+
+    @media(max-width:640px){
+      body{
+        padding:1.5rem;
+        align-items:flex-start;
+        padding-top:3rem;
+      }
+      h1{
+        font-size:1.625rem;
+      }
+      .card{
+        padding:1.5rem;
+      }
+    }
   </style>
 </head>
 <body>
   <div class="container">
-    <h1>Stream Analyzer</h1>
-    <div class="muted">请选择任务类型：实时分析（输入地址）或离线分析（上传文件）。</div>
-
-    <div class="toplinks">
-      <a href="/history">历史记录</a>
-    </div>
+    <header>
+      <div class="logo">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M9.75 3.104v5.714a2.25 2.25 0 0 1-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 0 1 4.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19 14.5m-9.25-6.396a8.94 8.94 0 0 1 3.5 0m-3.5 6.396V9.75m0 0a2.25 2.25 0 0 1 2.25-2.25h.75m-2.25 0a2.25 2.25 0 0 0-2.25 2.25v.75m2.25 0c.037.528.18 1.026.408 1.494l3.94-3.94m0-4.98l-3.94 3.94c.228.464.371.966.408 1.494l3.94-3.94m0-4.98l3.94 3.94" />
+        </svg>
+      </div>
+      <h1>Stream Analyzer</h1>
+      <p class="subtitle">请选择任务类型：实时分析（输入地址）或离线分析（上传文件）。</p>
+      <a class="nav-link" href="/history">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+        </svg>
+        历史记录
+      </a>
+    </header>
 
     <div class="grid">
       <div class="card">
+        <div class="card-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75Z" />
+          </svg>
+        </div>
         <h2>实时分析</h2>
         <p>输入 RTMP / HTTP-FLV 拉流地址，实时采集 DTS/PTS、码率、FPS、I 帧间隔等，并在网页上可视化。</p>
-        <a class="btn" href="/realtime">进入实时分析</a>
+        <a class="btn" href="/realtime">
+          进入实时分析
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
+          </svg>
+        </a>
       </div>
+
       <div class="card">
+        <div class="card-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" />
+          </svg>
+        </div>
         <h2>离线分析</h2>
         <p>上传 RTMP 单方向 raw（含握手）或 Wireshark pcap/pcapng，从抓包中提取 RTMP 链路并解析，输出 push/pull 子目录产物并可下载。</p>
-        <a class="btn secondary" href="/offline">进入离线分析</a>
+        <a class="btn secondary" href="/offline">
+          进入离线分析
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
+          </svg>
+        </a>
       </div>
     </div>
   </div>
 </body>
 </html>
-
