@@ -1,6 +1,6 @@
 # Stream Analyzer Tools
 
-音视频流分析工具：支持 **RTMP / HTTP-FLV / HLS（m3u8 + MPEG-TS 切片）** 拉流的实时分析，以及离线文件解析（raw / pcap / FLV / MPEG-TS）。离线结果会持久化到磁盘并在网页端可查看/下载。兼容 Legacy FLV 与 Enhanced RTMP/FLV（E-RTMP）头部解析。
+音视频流分析工具：支持 **RTMP / HTTP-FLV / HLS（m3u8 + MPEG-TS 切片）** 拉流的实时分析，以及离线文件解析（raw / pcap / FLV / MPEG-TS / **MP4**）。离线结果会持久化到磁盘并在网页端可查看/下载。兼容 Legacy FLV 与 Enhanced RTMP/FLV（E-RTMP）头部解析。
 
 ## 功能特性
 
@@ -23,6 +23,7 @@
 - 离线文件解析支持：
   - RTMP：`raw` 单方向（含握手）与 `pcap` 自动提取 push/pull 方向
   - FLV：解析 FLV Header/Tag/metadata，提取 `video.annexb` 与 `audio.adts.aac`
+  - MP4：解析 `stsd`/`meta`/样例时间线，生成 `mp4/mp4_report.txt`，提取 `video.annexb` 与 `audio.adts.aac`（与 `example/parse_mp4` 共用 `internal/mp4parse`）
   - MPEG-TS：解析 `PAT/PMT/PES`，导出各 PID 的 ES 文件，支持 `PTS/DTS` 与视频 NALU 明细展示
 - 离线解析任务支持状态轮询与历史记录（`pending/running/done/failed`）
 
@@ -56,7 +57,10 @@
 │   │   ├── offline_raw.go
 │   │   ├── offline_pcap.go
 │   │   ├── offline_flv.go
+│   │   ├── offline_mp4.go
 │   │   └── offline_ts.go
+│   ├── mp4parse/
+│   │   └── mp4parse.go …（MP4 解析与导出，供离线任务与 example/parse_mp4 使用）
 │   ├── pcaprtmp/pcaprtmp.go
 │   ├── rtmpraw/parser.go
 │   └── storage/csv.go
@@ -69,7 +73,8 @@
 │   ├── parse_rtmp/
 │   ├── parse_rtmp_from_wireshark/
 │   ├── parse_ts/
-│   └── hls_client/
+│   ├── hls_client/
+│   └── parse_mp4/
 └── data/
 ```
 
@@ -86,10 +91,10 @@ go build -o bin/server ./cmd/server
 - [http://localhost:8087](http://localhost:8087)
 
 路由说明：
-- `GET /`：入口页（选择实时分析 or 离线分析）
-- `GET /realtime`：实时分析页面（输入 RTMP / HTTP-FLV / HLS m3u8 拉流地址）
-- `GET /offline`：离线分析页面（上传 raw/pcap/flv/ts 文件）
-- `GET /history`：历史记录页面
+- `GET /`：入口页（浏览器标题 **Stream Analyzer · 首页**；选择实时或离线分析）
+- `GET /realtime`：实时拉流分析（标题 **实时拉流分析 · Stream Analyzer**）
+- `GET /offline`：离线文件解析（标题 **离线文件解析 · Stream Analyzer**；支持 raw/pcap/flv/ts/mp4 等）
+- `GET /history`：历史记录（标题 **历史记录 · Stream Analyzer**）
 
 ## API
 
@@ -134,23 +139,24 @@ go build -o bin/server ./cmd/server
 - `POST /api/offline/tasks`
 
 表单字段：
-- `mode`：`raw` / `pcap` / `flv` / `ts`
-- `server_port`：pcap 模式下的 RTMP 服务器端口（可选，默认 1935）
+- `mode`：`raw` / `pcap` / `flv` / `ts` / `mp4`
+- `server_port`：**仅 `pcap` 模式**使用（RTMP 服务端口，可选，默认 1935）；其它模式请留空，后端会忽略
 - `skip_bytes`：握手跳过字节数（raw/pcap 有效）
-- `file`：上传文件（raw / pcap/pcapng / flv / ts）
+- `file`：上传文件（raw / pcap/pcapng / flv / ts / mp4）
 
 查询接口：
 - `GET /api/offline/tasks`：列出任务
 - `GET /api/offline/tasks/:id`：获取任务与 `summary.json`
 - `GET /api/offline/tasks/:id/files/*name`：下载离线产物文件（raw/video/audio/summary 等）
 
-`summary.json` 中包含每个 flow 的方向与产物路径。`flv` 模式会包含逐帧明细（DTS/PTS/长度/帧类型）；`ts` 模式会包含 `PAT/PMT/PES/NALU` 统计、PID 明细和 PES 明细，网页端会据此渲染统计卡片与表格。
+`summary.json` 中包含每个 flow 的方向与产物路径。`flv` / `mp4` 模式会包含逐帧明细（DTS/PTS/长度/帧类型）；每条 flow 的 **`video_codec` / `audio_codec`**（如 `h264`、`aac`）在网页「codec」列中合并为 `h264 / aac` 展示。`ts` 模式会包含 `PAT/PMT/PES/NALU` 统计、PID 明细和 PES 明细，网页端会据此渲染统计卡片与表格。
 
 说明：
 - `raw` 模式解析 RTMP 单方向裸流，要求输入包含完整 RTMP 握手与 chunk 流。
 - `pcap` 模式从抓包中按端口识别 RTMP 会话，自动区分 push / pull 并导出对应产物。
 - `flv` 模式解析 FLV 文件，严格校验 FLV Header；若 Header 缺失或无效会直接报错。
 - `ts` 模式解析 MPEG-TS，支持 `PAT/PMT/PES` 与视频 NALU 粒度的分析展示。
+- `mp4` 模式解析 MP4（`go-mp4`），产物在任务目录 `mp4/` 下；`artifact_paths` 含 `mp4_report.txt` 绝对路径，便于下载。
 
 ## XLSX 格式
 

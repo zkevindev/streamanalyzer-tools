@@ -112,6 +112,9 @@ func (m *Manager) runFLV(task *models.OfflineTask, taskDir string, summary *mode
 	if flow.VideoCodec == "" {
 		flow.VideoCodec = "unknown"
 	}
+	if len(ext.aacASC) >= 2 {
+		flow.AudioCodec = "aac"
+	}
 
 	cleanupEmptyFile(&flow.VideoPath)
 	cleanupEmptyFile(&flow.AudioPath)

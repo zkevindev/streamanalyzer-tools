@@ -113,6 +113,7 @@ const (
 	OfflineModePCAP OfflineMode = "pcap"
 	OfflineModeTS   OfflineMode = "ts"
 	OfflineModeFLV  OfflineMode = "flv"
+	OfflineModeMP4  OfflineMode = "mp4"
 )
 
 type OfflineStatus string
@@ -174,6 +175,8 @@ type OfflineFlowResult struct {
 	RawPath   string `json:"raw_path,omitempty"`
 	VideoPath string `json:"video_path,omitempty"`
 	AudioPath string `json:"audio_path,omitempty"`
+	// ArtifactPaths 额外产物（如 MP4 的 mp4_report.txt），绝对路径。
+	ArtifactPaths []string `json:"artifact_paths,omitempty"`
 
 	ProgramCount  int `json:"program_count,omitempty"`
 	PATCount      int `json:"pat_count,omitempty"`
@@ -184,6 +187,7 @@ type OfflineFlowResult struct {
 	AudioPIDCount int `json:"audio_pid_count,omitempty"`
 
 	VideoCodec   string               `json:"video_codec,omitempty"`
+	AudioCodec   string               `json:"audio_codec,omitempty"`
 	Error        string               `json:"error,omitempty"`
 	FLVMetadata  string               `json:"flv_metadata_json,omitempty"`
 	PIDDetails   []OfflinePIDDetail   `json:"pid_details,omitempty"`

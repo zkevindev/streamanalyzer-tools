@@ -210,6 +210,8 @@ func (m *Manager) run(taskID string) {
 		runErr = m.runTS(task, taskDir, summary)
 	case models.OfflineModeFLV:
 		runErr = m.runFLV(task, taskDir, summary)
+	case models.OfflineModeMP4:
+		runErr = m.runMP4(task, taskDir, summary)
 	default:
 		runErr = fmt.Errorf("unsupported mode: %s", task.Mode)
 	}

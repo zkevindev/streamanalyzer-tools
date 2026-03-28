@@ -76,13 +76,15 @@ func (h *Handler) CreateOfflineTask(c *gin.Context) {
 	mode := c.PostForm("mode")
 	var req models.OfflineTaskRequest
 	req.Mode = models.OfflineMode(mode)
-	if req.Mode != models.OfflineModeRaw && req.Mode != models.OfflineModePCAP && req.Mode != models.OfflineModeTS && req.Mode != models.OfflineModeFLV {
+	if req.Mode != models.OfflineModeRaw && req.Mode != models.OfflineModePCAP && req.Mode != models.OfflineModeTS && req.Mode != models.OfflineModeFLV && req.Mode != models.OfflineModeMP4 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid mode"})
 		return
 	}
-	if sp := c.PostForm("server_port"); sp != "" {
-		if v, err := strconv.Atoi(sp); err == nil && v > 0 && v <= 65535 {
-			req.ServerPort = uint16(v)
+	if req.Mode == models.OfflineModePCAP {
+		if sp := c.PostForm("server_port"); sp != "" {
+			if v, err := strconv.Atoi(sp); err == nil && v > 0 && v <= 65535 {
+				req.ServerPort = uint16(v)
+			}
 		}
 	}
 	// raw/pcap parsing assumes the input raw contains full RTMP handshake.
@@ -179,7 +181,7 @@ func (h *Handler) OfflinePage(c *gin.Context) {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>离线解析 - Stream Analyzer</title>
+  <title>离线文件解析 · Stream Analyzer</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -266,7 +268,7 @@ func (h *Handler) OfflinePage(c *gin.Context) {
         </div>
         <div>
           <h1>离线文件解析</h1>
-          <p class="page-desc">上传 raw / pcap/pcapng / flv / ts 文件，解析并生成分析产物与明细</p>
+          <p class="page-desc">上传 raw / pcap / flv / ts / mp4 等文件，解析并生成分析产物；任务详情中仅 pcap 模式显示 RTMP 端口，codec 列为视频/音频编码（如 h264 / aac）。</p>
         </div>
       </div>
       <a href="/" class="back-link">
@@ -286,6 +288,7 @@ func (h *Handler) OfflinePage(c *gin.Context) {
             <option value="raw">raw（单方向，含握手）</option>
             <option value="ts">ts（MPEG-TS）</option>
             <option value="flv">flv（文件）</option>
+            <option value="mp4">mp4（文件）</option>
           </select>
         </div>
         <div class="form-group">
@@ -304,7 +307,7 @@ func (h *Handler) OfflinePage(c *gin.Context) {
         </button>
         <div id="runHint"></div>
       </div>
-      <p class="hint tip" id="modeHint">提示：支持 raw / pcap / flv / ts 四种离线模式，请按文件类型选择对应模式。</p>
+      <p class="hint tip" id="modeHint">提示：支持 raw / pcap / flv / ts / mp4 等离线模式，请按文件类型选择对应模式。</p>
     </div>
 
     <div class="card">
@@ -369,7 +372,7 @@ func (h *Handler) OfflinePage(c *gin.Context) {
         </div>
 
         <div class="section" id="rawSection">
-          <div class="section-title">Raw 解析结果（单方向）</div>
+          <div class="section-title" id="offlineRawSectionTitle">单文件 / Raw 解析结果</div>
           <div class="hint" style="margin:.5rem 0" id="rawHint">仅 raw 模式展示</div>
           <div class="table-wrap">
             <table class="small">
@@ -407,7 +410,7 @@ func (h *Handler) OfflinePage(c *gin.Context) {
           </div>
 
           <div id="rawFrameWrap" style="display:none">
-            <div class="section-title" style="font-size:.875rem;margin-top:.5rem">Raw 逐帧明细（RTMP 裸流）</div>
+            <div class="section-title" style="font-size:.875rem;margin-top:.5rem" id="offlineRawFrameSubtitle">音视频逐帧明细</div>
             <details id="rawFrameDetails" class="collapse" open>
               <summary id="rawFrameSummary">音视频帧明细</summary>
               <div class="table-wrap" style="margin-top:0;max-height:420px;overflow:auto">
@@ -474,6 +477,8 @@ func (h *Handler) OfflinePage(c *gin.Context) {
       }
       if(mode === 'ts'){
         hintEl.textContent = '提示：TS 模式会解析 PAT/PMT/PES，导出各 PID 对应的 ES 文件，并统计 NALU。';
+      }else if(mode === 'mp4'){
+        hintEl.textContent = '提示：MP4 模式会解析 stsd/meta/样例时间线，写出 mp4_report.txt、video.annexb、audio.adts.aac。';
       }else if(mode === 'flv'){
         hintEl.textContent = '提示：FLV 模式会解析音视频 Tag、metadata，并提取 video.annexb / audio.adts.aac。';
       }else if(mode === 'pcap'){
@@ -481,7 +486,7 @@ func (h *Handler) OfflinePage(c *gin.Context) {
       }else if(mode === 'raw'){
         hintEl.textContent = '提示：RAW 模式要求输入包含完整 RTMP 握手（C0+C1+C2 或 S0+S1+S2，合计 3073 字节）。';
       }else{
-        hintEl.textContent = '提示：支持 raw / pcap / flv / ts 四种离线模式，请按文件类型选择对应模式。';
+        hintEl.textContent = '提示：支持 raw / pcap / flv / ts / mp4 等离线模式，请按文件类型选择对应模式。';
       }
     }
     async function upload(){
@@ -490,8 +495,9 @@ func (h *Handler) OfflinePage(c *gin.Context) {
       const btn = document.getElementById('btn'); btn.disabled = true;
       setRunHint('上传中…（文件较大时可能需要几十秒）');
       const fd = new FormData();
-      fd.append('mode', document.getElementById('mode').value);
-      fd.append('server_port', document.getElementById('serverPort').value);
+      const uploadMode = document.getElementById('mode').value;
+      fd.append('mode', uploadMode);
+      fd.append('server_port', uploadMode === 'pcap' ? document.getElementById('serverPort').value : '');
       fd.append('file', f);
       let res;
       try{
@@ -732,7 +738,7 @@ func (h *Handler) OfflinePage(c *gin.Context) {
       summary.textContent = 'PES 包列表（展示 ' + all.length + ' / ' + (isFinite(total)?total:all.length) + '）';
       section.style.display = '';
     }
-    function renderRawFrames(flows){
+    function renderRawFrames(mode, flows){
       const section = document.getElementById('rawFrameSection');
       const body = document.getElementById('rawFrameBody');
       const summary = document.getElementById('rawFrameSummary');
@@ -755,7 +761,16 @@ func (h *Handler) OfflinePage(c *gin.Context) {
       body.innerHTML = '';
       if(all.length === 0){
         const tr = document.createElement('tr');
-        tr.innerHTML = '<td colspan="6" style="color:var(--text-muted)">暂无逐帧数据（旧任务或未解析出音视频的 raw 文件会为空）。请用「模式：raw」重新上传 RTMP 单方向裸流。</td>';
+        let emptyMsg = '暂无逐帧数据。';
+        const m = String(mode||'').toLowerCase();
+        if(m === 'mp4'){
+          emptyMsg = '暂无逐帧数据（请确认 MP4 含可解析的音视频轨）。';
+        }else if(m === 'flv'){
+          emptyMsg = '暂无逐帧数据（请确认 FLV 含音视频 Tag）。';
+        }else{
+          emptyMsg = '暂无逐帧数据（旧任务或未解析出音视频的 raw 文件会为空）。请用「模式：raw」重新上传 RTMP 单方向裸流。';
+        }
+        tr.innerHTML = '<td colspan="6" style="color:var(--text-muted)">' + emptyMsg + '</td>';
         body.appendChild(tr);
       }else{
         for(let i=0;i<all.length;i++){
@@ -831,7 +846,15 @@ func (h *Handler) OfflinePage(c *gin.Context) {
           tr.appendChild(tdDir);
         }
         const tdDump = document.createElement('td'); tdDump.textContent = f.dump_raw_dir || '-';
-        const tdCodec = document.createElement('td'); tdCodec.textContent = f.video_codec || '-';
+        const codecLine = (function(){
+          const v = f.video_codec ? String(f.video_codec) : '';
+          const a = f.audio_codec ? String(f.audio_codec) : '';
+          if(v && a) return v + ' / ' + a;
+          if(v) return v;
+          if(a) return a;
+          return '-';
+        })();
+        const tdCodec = document.createElement('td'); tdCodec.textContent = codecLine;
         const tdLinks = document.createElement('td'); tdLinks.appendChild(links);
         const tdErr = document.createElement('td'); tdErr.textContent = f.error || '';
         tr.appendChild(tdDump); tr.appendChild(tdCodec); tr.appendChild(tdLinks); tr.appendChild(tdErr);
@@ -956,13 +979,14 @@ func (h *Handler) OfflinePage(c *gin.Context) {
       addLink(act, base+'summary.txt', '下载 summary.txt');
       if(summaryRel) addLink(act, base+summaryRel, '下载 summary.json');
 
+      const mode = String(task.mode||'').toLowerCase();
       const kv = document.getElementById('taskKV');
       kv.innerHTML = '';
       const lines = [];
       lines.push(kvLine('task_id', task.id));
       lines.push(kvLine('mode', task.mode));
       lines.push(kvLine('status', task.status));
-      lines.push(kvLine('server_port', task.server_port));
+      lines.push(kvLine('server_port', (mode === 'pcap' && task.server_port) ? task.server_port : '-'));
       lines.push(kvLine('input_name', task.input_name));
       lines.push(kvLine('created_at', task.created_at));
       lines.push(kvLine('started_at', task.started_at));
@@ -971,7 +995,6 @@ func (h *Handler) OfflinePage(c *gin.Context) {
       if(task.error) lines.push(kvLine('error', task.error));
       lines.flat().forEach(n=>kv.appendChild(n));
 
-      const mode = String(task.mode||'').toLowerCase();
       const rawSection = document.getElementById('rawSection');
       const pushSection = document.getElementById('pushSection');
       const pullSection = document.getElementById('pullSection');
@@ -984,13 +1007,32 @@ func (h *Handler) OfflinePage(c *gin.Context) {
 
       const push = flows.filter(f=>String(f.direction).toLowerCase()==='push');
       const pull = flows.filter(f=>String(f.direction).toLowerCase()==='pull');
-      const rawFlows = flows.filter(f=>String(f.direction).toLowerCase()==='raw' || String(f.direction).toLowerCase()==='flv');
+      const rawFlows = flows.filter(f=>{
+        const d = String(f.direction).toLowerCase();
+        return d === 'raw' || d === 'flv' || d === 'mp4';
+      });
       const tsFlows = flows.filter(f=>String(f.direction).toLowerCase()==='ts');
 
-      if(mode === 'raw' || mode === 'ts' || mode === 'flv'){
+      const rawSectionTitle = document.getElementById('offlineRawSectionTitle');
+      if(rawSectionTitle){
+        if(mode === 'mp4') rawSectionTitle.textContent = 'MP4 解析结果';
+        else if(mode === 'flv') rawSectionTitle.textContent = 'FLV 解析结果';
+        else if(mode === 'ts') rawSectionTitle.textContent = 'TS 解析结果';
+        else if(mode === 'raw') rawSectionTitle.textContent = 'Raw 解析结果（单方向）';
+        else rawSectionTitle.textContent = '单文件 / Raw 解析结果';
+      }
+      const rawFrameSub = document.getElementById('offlineRawFrameSubtitle');
+      if(rawFrameSub){
+        if(mode === 'mp4') rawFrameSub.textContent = '音视频逐帧明细（MP4，DTS/PTS 为毫秒）';
+        else if(mode === 'flv') rawFrameSub.textContent = '音视频逐帧明细（FLV）';
+        else if(mode === 'raw') rawFrameSub.textContent = 'Raw 逐帧明细（RTMP 裸流）';
+        else rawFrameSub.textContent = '音视频逐帧明细';
+      }
+
+      if(mode === 'raw' || mode === 'ts' || mode === 'flv' || mode === 'mp4'){
         if(rawSection) rawSection.style.display = '';
         if(rawHint) rawHint.style.display = '';
-        if(rawHint) rawHint.textContent = mode === 'ts' ? 'TS 模式展示单文件解析结果' : (mode === 'flv' ? 'FLV 模式展示单文件解析结果' : '仅 raw 模式展示');
+        if(rawHint) rawHint.textContent = mode === 'ts' ? 'TS 模式展示单文件解析结果' : ((mode === 'flv' || mode === 'mp4') ? (mode === 'mp4' ? 'MP4 模式展示单文件解析结果' : 'FLV 模式展示单文件解析结果') : '仅 raw 模式展示');
         if(pushSection) pushSection.style.display = 'none';
         if(pullSection) pullSection.style.display = 'none';
       }else{
@@ -1004,10 +1046,10 @@ func (h *Handler) OfflinePage(c *gin.Context) {
         renderTSPESDetails(tsFlows);
         renderOfflineCharts('ts', tsFlows);
         if(flvMetadataSection) flvMetadataSection.style.display = 'none';
-      }else if(mode === 'raw' || mode === 'flv'){
+      }else if(mode === 'raw' || mode === 'flv' || mode === 'mp4'){
         if(tsStatsSection) tsStatsSection.style.display = 'none';
         if(tsPidSection) tsPidSection.style.display = 'none';
-        renderRawFrames(rawFlows);
+        renderRawFrames(mode, rawFlows);
         renderOfflineCharts(mode, rawFlows);
         if(mode === 'flv'){
           renderFLVMetadata(rawFlows);
@@ -1369,7 +1411,7 @@ func (h *Handler) Index(c *gin.Context) {
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>实时分析 - Stream Analyzer</title>
+    <title>实时拉流分析 · Stream Analyzer</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -1857,7 +1899,7 @@ func (h *Handler) HistoryPage(c *gin.Context) {
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>历史记录 - Stream Analyzer</title>
+    <title>历史记录 · Stream Analyzer</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
