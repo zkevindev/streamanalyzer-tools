@@ -1259,7 +1259,93 @@ func (h *Handler) readTaskXLSXData(taskID string) (*models.ChartData, error) {
 		chartData.SecondStats = append(chartData.SecondStats, stat)
 	}
 
+	if idx, err := f.GetSheetIndex("hls"); err == nil && idx >= 0 {
+		hlsRows, err := f.GetRows("hls")
+		if err == nil && len(hlsRows) > 1 {
+			for ri := 1; ri < len(hlsRows); ri++ {
+				r := hlsRows[ri]
+				if len(r) < 19 {
+					continue
+				}
+				seq, _ := strconv.ParseUint(r[1], 10, 64)
+				dur, _ := strconv.ParseFloat(r[3], 64)
+				sz, _ := strconv.Atoi(r[4])
+				seg := models.ChartHLSSegment{
+					StreamID:         r[0],
+					Seq:              seq,
+					URI:              r[2],
+					DurationSec:      dur,
+					SizeBytes:        sz,
+					VideoPTSFirst90k: parseOptionalInt64(r[5]),
+					VideoPTSLast90k:  parseOptionalInt64(r[6]),
+					VideoDTSFirst90k: parseOptionalInt64(r[7]),
+					VideoDTSLast90k:  parseOptionalInt64(r[8]),
+					AudioPTSFirst90k: parseOptionalInt64(r[9]),
+					AudioPTSLast90k:  parseOptionalInt64(r[10]),
+					AudioDTSFirst90k: parseOptionalInt64(r[11]),
+					AudioDTSLast90k:  parseOptionalInt64(r[12]),
+				}
+				if r[13] != "" {
+					if d, err := strconv.ParseInt(r[13], 10, 64); err == nil {
+						seg.AVDiffPTS90k = d
+					}
+				}
+				seg.AVDiffValid = r[14] == "1"
+				seg.PATCount, _ = strconv.Atoi(r[15])
+				seg.PMTCount, _ = strconv.Atoi(r[16])
+				seg.PESCount, _ = strconv.Atoi(r[17])
+				seg.VideoPES, _ = strconv.Atoi(r[18])
+				if len(r) > 19 {
+					seg.AudioPES, _ = strconv.Atoi(r[19])
+				}
+				// 新列：av_diff_dts / iframe；旧文件 recorded_at 在 audio_pes 后一列
+				if len(r) >= 24 {
+					if r[20] != "" {
+						if d, err := strconv.ParseInt(r[20], 10, 64); err == nil {
+							seg.AVDiffDTS90k = d
+						}
+					}
+					seg.AVDiffDTSValid = r[21] == "1"
+					seg.IFrameIntervalsMs = parseSemicolonInt64s(r[22])
+				}
+				chartData.HLSSegments = append(chartData.HLSSegments, seg)
+			}
+		}
+	}
+
 	return chartData, nil
+}
+
+func parseOptionalInt64(s string) int64 {
+	if s == "" {
+		return -1
+	}
+	n, err := strconv.ParseInt(s, 10, 64)
+	if err != nil {
+		return -1
+	}
+	return n
+}
+
+func parseSemicolonInt64s(s string) []int64 {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil
+	}
+	parts := strings.Split(s, ";")
+	out := make([]int64, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		n, err := strconv.ParseInt(p, 10, 64)
+		if err != nil {
+			continue
+		}
+		out = append(out, n)
+	}
+	return out
 }
 
 func (h *Handler) DownloadXLSX(c *gin.Context) {
@@ -1342,6 +1428,13 @@ func (h *Handler) Index(c *gin.Context) {
         .chart-table th.video{color:#2563eb}
         .chart-table th.audio{color:#059669}
         .metadata-box{background:#1a1918;color:#e2e8f0;border-radius:.75rem;padding:1rem;font-size:.75rem;max-height:180px;overflow:auto;margin-top:1rem;white-space:pre-wrap;word-break:break-all}
+        .hls-wrap{margin-top:1rem}
+        .hls-wrap .hint{font-size:.8125rem;color:var(--text-muted);margin-bottom:.75rem}
+        .hls-table-wrap{overflow:auto;max-height:420px;border:1px solid var(--border);border-radius:var(--radius)}
+        .hls-table-wrap table{font-size:.72rem}
+        .hls-table-wrap th,.hls-table-wrap td{padding:.45rem .5rem;vertical-align:top}
+        .hls-table-wrap th{background:#fafaf9;position:sticky;top:0}
+        .hls-uri{max-width:220px;word-break:break-all}
         @media(max-width:768px){.form-grid{grid-template-columns:1fr}}
         @media(max-width:640px){body{padding:1rem}.stats-grid{grid-template-columns:repeat(3,1fr)}}
     </style>
@@ -1359,13 +1452,14 @@ func (h *Handler) Index(c *gin.Context) {
             <div class="form-grid">
                 <div class="form-group">
                     <label>Stream URL</label>
-                    <input type="text" id="streamUrl" placeholder="rtmp://example.com/live/stream 或 http://example.com/live.flv">
+                    <input type="text" id="streamUrl" placeholder="rtmp://... / http://...flv / https://...m3u8">
                 </div>
                 <div class="form-group">
                     <label>Type</label>
                     <select id="streamType">
                         <option value="http-flv">HTTP-FLV</option>
                         <option value="rtmp">RTMP</option>
+                        <option value="hls">HLS (TS)</option>
                     </select>
                 </div>
                 <button class="btn" onclick="startTask()">
@@ -1395,7 +1489,7 @@ func (h *Handler) Index(c *gin.Context) {
                     <button class="btn secondary" onclick="closeChart()">关闭</button>
                 </div>
                 <div id="statsGrid" class="stats-grid"></div>
-                <div class="chart-tabs">
+                <div id="flvChartTabs" class="chart-tabs">
                     <button type="button" class="active" data-chart="timestamp" onclick="showChart('timestamp')">DTS</button>
                     <button type="button" data-chart="length" onclick="showChart('length')">数据长度</button>
                     <button type="button" data-chart="iframe" onclick="showChart('iframe')">I帧间隔</button>
@@ -1410,6 +1504,28 @@ func (h *Handler) Index(c *gin.Context) {
                 <div id="chartTable" class="chart-table" style="display:none">
                     <table><thead id="tableHead"></thead><tbody id="tableBody"></tbody></table>
                 </div>
+                <div id="hlsSection" class="hls-wrap" style="display:none">
+                    <p class="hint">HLS（TS）任务按<strong>切片</strong>展示：URI、playlist 编号、时长，以及切片内解析出的音视频 PTS/DTS（90kHz）与首帧 PTS 差（AV）。多路 variant 时以 <code>stream_id</code> 区分。</p>
+                    <p class="hint" style="margin-top:.35rem">以下为<strong>新增</strong>图表（按切片序号横轴）；与上方 FLV/RTMP 帧级图表独立，不影响原表格。</p>
+                    <div id="hlsChartTabs" class="chart-tabs" style="margin-bottom:1rem">
+                        <button type="button" class="active" data-hls-chart="hls-ts" onclick="showHlsChart('hls-ts')">时间戳(PTS/DTS)</button>
+                        <button type="button" data-hls-chart="hls-avdts" onclick="showHlsChart('hls-avdts')">AV DTS差</button>
+                        <button type="button" data-hls-chart="hls-iframe" onclick="showHlsChart('hls-iframe')">I帧间隔</button>
+                    </div>
+                    <div id="hlsMainChart" class="chart-frame" style="height:380px;margin-bottom:1rem"></div>
+                    <div class="hls-table-wrap">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>stream</th><th>#</th><th>时长(s)</th><th>大小</th>
+                                    <th>V-PTS</th><th>V-DTS</th><th>A-PTS</th><th>A-DTS</th>
+                                    <th>AVΔPTS</th><th>PAT/PMT/PES</th><th>切片 URI</th>
+                                </tr>
+                            </thead>
+                            <tbody id="hlsSegBody"></tbody>
+                        </table>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -1417,9 +1533,11 @@ func (h *Handler) Index(c *gin.Context) {
     <script>` + echartsHelpersJS + `</script>
     <script>
         let currentTaskId = null;
+        let currentTaskType = '';
         let refreshInterval = null;
         let currentData = null;
         let currentChartType = 'timestamp';
+        let currentHlsChartType = 'hls-ts';
         const stoppingTasks = new Set();
 
         async function startTask() {
@@ -1461,18 +1579,111 @@ func (h *Handler) Index(c *gin.Context) {
                     '<td>' + t.type.toUpperCase() + '</td>' +
                     '<td><span class="pill ' + status + '">' + t.status + '</span></td>' +
                     '<td class="actions"><button class="btn stop" onclick="stopTask(\'' + t.id + '\')">停止</button>' +
-                    '<button class="btn" onclick="selectTask(\'' + t.id + '\')">分析</button></td>';
+                    '<button class="btn" onclick="selectTask(\'' + t.id + '\',\'' + t.type + '\')">分析</button></td>';
                 tbody.appendChild(tr);
             });
         }
 
-        async function selectTask(id) {
+        function isHlsAnalysisMode(d) {
+            if (currentTaskType === 'hls') return true;
+            if (d && Array.isArray(d.hls_segments) && d.hls_segments.length > 0) return true;
+            return false;
+        }
+
+        function setFlvChartVisible(show) {
+            const tabs = document.getElementById('flvChartTabs');
+            const chart = document.getElementById('mainChart');
+            const meta = document.getElementById('metadataBox');
+            const tbl = document.getElementById('chartTable');
+            const hls = document.getElementById('hlsSection');
+            if (tabs) tabs.style.display = show ? 'flex' : 'none';
+            if (chart) chart.style.display = show ? 'block' : 'none';
+            if (meta) meta.style.display = show ? 'block' : 'none';
+            if (tbl && !show) tbl.style.display = 'none';
+            if (hls) hls.style.display = show ? 'none' : 'block';
+        }
+
+        function fmt90kTick(v) {
+            if (v === undefined || v === null || v < 0) return '-';
+            const n = Number(v);
+            if (!isFinite(n)) return '-';
+            return n + ' (' + (n / 90000).toFixed(3) + 's)';
+        }
+
+        function fmtAvDiff90k(s) {
+            if (!s || !s.av_diff_valid) return '-';
+            const d = Number(s.av_diff_pts_90k);
+            if (!isFinite(d)) return '-';
+            return d + ' (' + (d / 90).toFixed(2) + 'ms)';
+        }
+
+        function renderHLSSegments(d) {
+            const body = document.getElementById('hlsSegBody');
+            const grid = document.getElementById('statsGrid');
+            if (!body) return;
+            const rows = (d && d.hls_segments) ? d.hls_segments : [];
+            if (grid) {
+                const streams = new Set();
+                rows.forEach(function (x) { if (x.stream_id) streams.add(x.stream_id); });
+                grid.style.display = 'grid';
+                grid.innerHTML =
+                    '<div class="stat-item"><div class="stat-value">' + rows.length + '</div><div class="stat-label">TS 切片数</div></div>' +
+                    '<div class="stat-item"><div class="stat-value">' + streams.size + '</div><div class="stat-label">Media 路数</div></div>';
+            }
+            body.innerHTML = '';
+            if (!rows.length) {
+                const tr = document.createElement('tr');
+                tr.innerHTML = '<td colspan="11" style="color:#78716c">暂无切片数据（任务刚启动或尚未拉到 .ts）。</td>';
+                body.appendChild(tr);
+                if (typeof renderHLSChart === 'function') {
+                    renderHLSChart(currentHlsChartType, [], 'hlsMainChart');
+                }
+                return;
+            }
+            rows.forEach(function (s) {
+                const tr = document.createElement('tr');
+                const sid = (s.stream_id || '-').replace(/</g, '');
+                const uri = (s.uri || '').replace(/</g, '');
+                tr.innerHTML =
+                    '<td title="' + sid + '">' + (sid.length > 28 ? sid.slice(0, 28) + '…' : sid) + '</td>' +
+                    '<td>' + String(s.seq) + '</td>' +
+                    '<td>' + (s.duration_sec != null ? Number(s.duration_sec).toFixed(3) : '-') + '</td>' +
+                    '<td>' + (s.size_bytes != null ? s.size_bytes : '-') + '</td>' +
+                    '<td>' + fmt90kTick(s.video_pts_first_90k) + ' → ' + fmt90kTick(s.video_pts_last_90k) + '</td>' +
+                    '<td>' + fmt90kTick(s.video_dts_first_90k) + ' → ' + fmt90kTick(s.video_dts_last_90k) + '</td>' +
+                    '<td>' + fmt90kTick(s.audio_pts_first_90k) + ' → ' + fmt90kTick(s.audio_pts_last_90k) + '</td>' +
+                    '<td>' + fmt90kTick(s.audio_dts_first_90k) + ' → ' + fmt90kTick(s.audio_dts_last_90k) + '</td>' +
+                    '<td>' + fmtAvDiff90k(s) + '</td>' +
+                    '<td>' + (s.pat_count || 0) + '/' + (s.pmt_count || 0) + '/' + (s.pes_count || 0) + '<br/><span style="font-size:.65rem;color:#78716c">vPES ' + (s.video_pes || 0) + ' / aPES ' + (s.audio_pes || 0) + '</span></td>' +
+                    '<td class="hls-uri">' + uri + '</td>';
+                body.appendChild(tr);
+            });
+            if (typeof renderHLSChart === 'function') {
+                renderHLSChart(currentHlsChartType, rows, 'hlsMainChart');
+            }
+        }
+
+        function showHlsChart(type) {
+            currentHlsChartType = type;
+            document.querySelectorAll('#hlsChartTabs button[data-hls-chart]').forEach(function (b) {
+                b.classList.toggle('active', b.getAttribute('data-hls-chart') === type);
+            });
+            if (currentData && isHlsAnalysisMode(currentData) && currentData.hls_segments) {
+                renderHLSChart(type, currentData.hls_segments, 'hlsMainChart');
+            }
+        }
+
+        async function selectTask(id, type) {
             if (typeof disposeMainChart === 'function') disposeMainChart();
+            if (typeof disposeHLSChart === 'function') disposeHLSChart();
             currentTaskId = id;
+            currentTaskType = type || '';
             document.getElementById('chartSection').style.display = 'block';
             document.getElementById('currentTaskTitle').textContent = id.substring(5,15) + '...';
             await refreshData();
-            showChart('timestamp');
+            if (!isHlsAnalysisMode(currentData)) {
+                showChart('timestamp');
+            }
             document.getElementById('chartSection').scrollIntoView({behavior:'smooth'});
             if (refreshInterval) clearInterval(refreshInterval);
             refreshInterval = setInterval(refreshData, 5000);
@@ -1480,9 +1691,11 @@ func (h *Handler) Index(c *gin.Context) {
 
         function closeChart() {
             if (typeof disposeMainChart === 'function') disposeMainChart();
+            if (typeof disposeHLSChart === 'function') disposeHLSChart();
             document.getElementById('chartSection').style.display = 'none';
             if (refreshInterval) clearInterval(refreshInterval);
             currentTaskId = null;
+            currentTaskType = '';
         }
 
         async function refreshData() {
@@ -1490,9 +1703,15 @@ func (h *Handler) Index(c *gin.Context) {
             const res = await fetch('/api/task/' + currentTaskId + '/data');
             const data = await res.json();
             currentData = data;
-            updateStats(data);
-            if (currentChartType) updateChartTable(currentChartType);
-            if (typeof renderClientChart === 'function' && currentData) renderClientChart(currentChartType, currentData, 'mainChart');
+            if (isHlsAnalysisMode(data)) {
+                setFlvChartVisible(false);
+                renderHLSSegments(data);
+            } else {
+                setFlvChartVisible(true);
+                updateStats(data);
+                if (currentChartType) updateChartTable(currentChartType);
+                if (typeof renderClientChart === 'function' && currentData) renderClientChart(currentChartType, currentData, 'mainChart');
+            }
         }
 
         function updateStats(d) {
@@ -1543,14 +1762,15 @@ func (h *Handler) Index(c *gin.Context) {
         }
 
         function showChart(type) {
+            if (isHlsAnalysisMode(currentData)) return;
             currentChartType = type;
-            document.querySelectorAll('.chart-tabs button[data-chart]').forEach(function(b){b.classList.toggle('active',b.getAttribute('data-chart')===type);});
+            document.querySelectorAll('#flvChartTabs button[data-chart]').forEach(function(b){b.classList.toggle('active',b.getAttribute('data-chart')===type);});
             if (currentData && typeof renderClientChart === 'function') renderClientChart(type, currentData, 'mainChart');
             updateChartTable(type);
         }
 
         function updateChartTable(type) {
-            if (!currentData) return;
+            if (!currentData || isHlsAnalysisMode(currentData)) return;
             const d = currentData;
             const tableDiv = document.getElementById('chartTable');
             const thead = document.getElementById('tableHead');
@@ -1694,6 +1914,13 @@ func (h *Handler) HistoryPage(c *gin.Context) {
         .chart-table th.video{color:#2563eb}
         .chart-table th.audio{color:#059669}
         .metadata-box{background:#1a1918;color:#e2e8f0;border-radius:.75rem;padding:1rem;font-size:.75rem;max-height:180px;overflow:auto;margin-top:1rem;white-space:pre-wrap;word-break:break-all}
+        .hls-wrap{margin-top:1rem}
+        .hls-wrap .hint{font-size:.8125rem;color:var(--text-muted);margin-bottom:.75rem}
+        .hls-table-wrap{overflow:auto;max-height:420px;border:1px solid var(--border);border-radius:var(--radius)}
+        .hls-table-wrap table{font-size:.72rem}
+        .hls-table-wrap th,.hls-table-wrap td{padding:.45rem .5rem;vertical-align:top}
+        .hls-table-wrap th{background:#fafaf9;position:sticky;top:0}
+        .hls-uri{max-width:220px;word-break:break-all}
         @media(max-width:640px){body{padding:1rem}.stats-grid{grid-template-columns:repeat(3,1fr)}}
     </style>
 </head>
@@ -1725,7 +1952,7 @@ func (h *Handler) HistoryPage(c *gin.Context) {
                     <button class="btn secondary" onclick="closeAnalysis()">关闭</button>
                 </div>
                 <div id="statsGrid" class="stats-grid"></div>
-                <div class="chart-tabs">
+                <div id="flvChartTabs" class="chart-tabs">
                     <button type="button" class="active" data-chart="timestamp" onclick="showChart('timestamp')">DTS</button>
                     <button type="button" data-chart="length" onclick="showChart('length')">数据长度</button>
                     <button type="button" data-chart="iframe" onclick="showChart('iframe')">I帧间隔</button>
@@ -1740,6 +1967,28 @@ func (h *Handler) HistoryPage(c *gin.Context) {
                 <div id="chartTable" class="chart-table" style="display:none">
                     <table><thead id="tableHead"></thead><tbody id="tableBody"></tbody></table>
                 </div>
+                <div id="hlsSection" class="hls-wrap" style="display:none">
+                    <p class="hint">HLS（TS）任务按<strong>切片</strong>展示：URI、编号、时长，以及切片内音视频 PTS/DTS（90kHz）与首帧 PTS 差（AV）。</p>
+                    <p class="hint" style="margin-top:.35rem">以下为<strong>新增</strong>图表（按切片序号横轴）；与 FLV/RTMP 帧级图表独立。</p>
+                    <div id="hlsChartTabs" class="chart-tabs" style="margin-bottom:1rem">
+                        <button type="button" class="active" data-hls-chart="hls-ts" onclick="showHlsChart('hls-ts')">时间戳(PTS/DTS)</button>
+                        <button type="button" data-hls-chart="hls-avdts" onclick="showHlsChart('hls-avdts')">AV DTS差</button>
+                        <button type="button" data-hls-chart="hls-iframe" onclick="showHlsChart('hls-iframe')">I帧间隔</button>
+                    </div>
+                    <div id="hlsMainChart" class="chart-frame" style="height:380px;margin-bottom:1rem"></div>
+                    <div class="hls-table-wrap">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>stream</th><th>#</th><th>时长(s)</th><th>大小</th>
+                                    <th>V-PTS</th><th>V-DTS</th><th>A-PTS</th><th>A-DTS</th>
+                                    <th>AVΔPTS</th><th>PAT/PMT/PES</th><th>切片 URI</th>
+                                </tr>
+                            </thead>
+                            <tbody id="hlsSegBody"></tbody>
+                        </table>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
@@ -1747,10 +1996,101 @@ func (h *Handler) HistoryPage(c *gin.Context) {
     <script>` + echartsHelpersJS + `</script>
     <script>
         let currentTaskId = null;
+        let currentTaskType = '';
         let currentData = null;
         let currentChartType = 'timestamp';
+        let currentHlsChartType = 'hls-ts';
         const stoppingTasks = new Set();
         let chartRefreshInterval = null;
+
+        function isHlsAnalysisMode(d) {
+            if (currentTaskType === 'hls') return true;
+            if (d && Array.isArray(d.hls_segments) && d.hls_segments.length > 0) return true;
+            return false;
+        }
+
+        function setFlvChartVisible(show) {
+            const tabs = document.getElementById('flvChartTabs');
+            const chart = document.getElementById('mainChart');
+            const meta = document.getElementById('metadataBox');
+            const tbl = document.getElementById('chartTable');
+            const hls = document.getElementById('hlsSection');
+            if (tabs) tabs.style.display = show ? 'flex' : 'none';
+            if (chart) chart.style.display = show ? 'block' : 'none';
+            if (meta) meta.style.display = show ? 'block' : 'none';
+            if (tbl && !show) tbl.style.display = 'none';
+            if (hls) hls.style.display = show ? 'none' : 'block';
+        }
+
+        function fmt90kTick(v) {
+            if (v === undefined || v === null || v < 0) return '-';
+            const n = Number(v);
+            if (!isFinite(n)) return '-';
+            return n + ' (' + (n / 90000).toFixed(3) + 's)';
+        }
+
+        function fmtAvDiff90k(s) {
+            if (!s || !s.av_diff_valid) return '-';
+            const d = Number(s.av_diff_pts_90k);
+            if (!isFinite(d)) return '-';
+            return d + ' (' + (d / 90).toFixed(2) + 'ms)';
+        }
+
+        function renderHLSSegments(d) {
+            const body = document.getElementById('hlsSegBody');
+            const grid = document.getElementById('statsGrid');
+            if (!body) return;
+            const rows = (d && d.hls_segments) ? d.hls_segments : [];
+            if (grid) {
+                const streams = new Set();
+                rows.forEach(function (x) { if (x.stream_id) streams.add(x.stream_id); });
+                grid.style.display = 'grid';
+                grid.innerHTML =
+                    '<div class="stat-item"><div class="stat-value">' + rows.length + '</div><div class="stat-label">TS 切片数</div></div>' +
+                    '<div class="stat-item"><div class="stat-value">' + streams.size + '</div><div class="stat-label">Media 路数</div></div>';
+            }
+            body.innerHTML = '';
+            if (!rows.length) {
+                const tr = document.createElement('tr');
+                tr.innerHTML = '<td colspan="11" style="color:#78716c">暂无切片数据（任务刚启动或尚未拉到 .ts）。</td>';
+                body.appendChild(tr);
+                if (typeof renderHLSChart === 'function') {
+                    renderHLSChart(currentHlsChartType, [], 'hlsMainChart');
+                }
+                return;
+            }
+            rows.forEach(function (s) {
+                const tr = document.createElement('tr');
+                const sid = (s.stream_id || '-').replace(/</g, '');
+                const uri = (s.uri || '').replace(/</g, '');
+                tr.innerHTML =
+                    '<td title="' + sid + '">' + (sid.length > 28 ? sid.slice(0, 28) + '…' : sid) + '</td>' +
+                    '<td>' + String(s.seq) + '</td>' +
+                    '<td>' + (s.duration_sec != null ? Number(s.duration_sec).toFixed(3) : '-') + '</td>' +
+                    '<td>' + (s.size_bytes != null ? s.size_bytes : '-') + '</td>' +
+                    '<td>' + fmt90kTick(s.video_pts_first_90k) + ' → ' + fmt90kTick(s.video_pts_last_90k) + '</td>' +
+                    '<td>' + fmt90kTick(s.video_dts_first_90k) + ' → ' + fmt90kTick(s.video_dts_last_90k) + '</td>' +
+                    '<td>' + fmt90kTick(s.audio_pts_first_90k) + ' → ' + fmt90kTick(s.audio_pts_last_90k) + '</td>' +
+                    '<td>' + fmt90kTick(s.audio_dts_first_90k) + ' → ' + fmt90kTick(s.audio_dts_last_90k) + '</td>' +
+                    '<td>' + fmtAvDiff90k(s) + '</td>' +
+                    '<td>' + (s.pat_count || 0) + '/' + (s.pmt_count || 0) + '/' + (s.pes_count || 0) + '<br/><span style="font-size:.65rem;color:#78716c">vPES ' + (s.video_pes || 0) + ' / aPES ' + (s.audio_pes || 0) + '</span></td>' +
+                    '<td class="hls-uri">' + uri + '</td>';
+                body.appendChild(tr);
+            });
+            if (typeof renderHLSChart === 'function') {
+                renderHLSChart(currentHlsChartType, rows, 'hlsMainChart');
+            }
+        }
+
+        function showHlsChart(type) {
+            currentHlsChartType = type;
+            document.querySelectorAll('#hlsChartTabs button[data-hls-chart]').forEach(function (b) {
+                b.classList.toggle('active', b.getAttribute('data-hls-chart') === type);
+            });
+            if (currentData && isHlsAnalysisMode(currentData) && currentData.hls_segments) {
+                renderHLSChart(type, currentData.hls_segments, 'hlsMainChart');
+            }
+        }
 
         async function loadAllTasks() {
             const res = await fetch('/api/task/all');
@@ -1771,7 +2111,7 @@ func (h *Handler) HistoryPage(c *gin.Context) {
                     '<td class="actions">' +
                     (t.status === 'running'
                         ? '<button class="btn stop" onclick="stopTask(\'' + t.id + '\')">停止</button>'
-                        : '<button class="btn" onclick="analyzeTask(\'' + t.id + '\')">分析</button>' +
+                        : '<button class="btn" onclick="analyzeTask(\'' + t.id + '\',\'' + t.type + '\')">分析</button>' +
                           '<button class="btn success" onclick="downloadXLSXById(\'' + t.id + '\')">XLSX</button>') +
                     '</td>';
                 tbody.appendChild(tr);
@@ -1796,13 +2136,17 @@ func (h *Handler) HistoryPage(c *gin.Context) {
             }
         }
         
-        async function analyzeTask(id) {
+        async function analyzeTask(id, type) {
             if (typeof disposeMainChart === 'function') disposeMainChart();
+            if (typeof disposeHLSChart === 'function') disposeHLSChart();
             currentTaskId = id;
+            currentTaskType = type || '';
             document.getElementById('analysisSection').style.display = 'block';
             document.getElementById('currentTaskTitle').textContent = id.substring(5,15) + '...';
             await loadChartData();
-            showChart('timestamp');
+            if (!isHlsAnalysisMode(currentData)) {
+                showChart('timestamp');
+            }
             loadAllTasks();
             document.getElementById('analysisSection').scrollIntoView({ behavior: 'smooth' });
             if (chartRefreshInterval) clearInterval(chartRefreshInterval);
@@ -1811,10 +2155,12 @@ func (h *Handler) HistoryPage(c *gin.Context) {
         
         function closeAnalysis() {
             if (typeof disposeMainChart === 'function') disposeMainChart();
+            if (typeof disposeHLSChart === 'function') disposeHLSChart();
             document.getElementById('analysisSection').style.display = 'none';
             if (chartRefreshInterval) clearInterval(chartRefreshInterval);
             chartRefreshInterval = null;
             currentTaskId = null;
+            currentTaskType = '';
             loadAllTasks();
         }
         
@@ -1823,11 +2169,17 @@ func (h *Handler) HistoryPage(c *gin.Context) {
             const res = await fetch('/api/task/' + currentTaskId + '/data');
             const d = await res.json();
             currentData = d;
-            updateStats(d);
-            if (typeof renderClientChart === 'function' && currentData) {
-                renderClientChart(currentChartType, currentData, 'mainChart');
+            if (isHlsAnalysisMode(d)) {
+                setFlvChartVisible(false);
+                renderHLSSegments(d);
+            } else {
+                setFlvChartVisible(true);
+                updateStats(d);
+                if (typeof renderClientChart === 'function' && currentData) {
+                    renderClientChart(currentChartType, currentData, 'mainChart');
+                }
+                updateChartTable(currentChartType);
             }
-            updateChartTable(currentChartType);
         }
         
         function updateStats(d) {
@@ -1904,8 +2256,9 @@ func (h *Handler) HistoryPage(c *gin.Context) {
         }
         
         function showChart(type) {
+            if (isHlsAnalysisMode(currentData)) return;
             currentChartType = type;
-            document.querySelectorAll('.chart-tabs button[data-chart]').forEach(function(b) {
+            document.querySelectorAll('#flvChartTabs button[data-chart]').forEach(function(b) {
                 b.classList.toggle('active', b.getAttribute('data-chart') === type);
             });
             if (currentData && typeof renderClientChart === 'function') {
@@ -1915,7 +2268,7 @@ func (h *Handler) HistoryPage(c *gin.Context) {
         }
         
         function updateChartTable(type) {
-            if (!currentData) return;
+            if (!currentData || isHlsAnalysisMode(currentData)) return;
             const d = currentData;
             const tableDiv = document.getElementById('chartTable');
             const thead = document.getElementById('tableHead');

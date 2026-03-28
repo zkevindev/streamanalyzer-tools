@@ -1,10 +1,11 @@
 # Stream Analyzer Tools
 
-音视频流分析工具：支持 RTMP / HTTP-FLV 拉流的实时分析，以及离线文件解析（raw / pcap / FLV / MPEG-TS）。离线结果会持久化到磁盘并在网页端可查看/下载。兼容 Legacy FLV 与 Enhanced RTMP/FLV（E-RTMP）头部解析。
+音视频流分析工具：支持 **RTMP / HTTP-FLV / HLS（m3u8 + MPEG-TS 切片）** 拉流的实时分析，以及离线文件解析（raw / pcap / FLV / MPEG-TS）。离线结果会持久化到磁盘并在网页端可查看/下载。兼容 Legacy FLV 与 Enhanced RTMP/FLV（E-RTMP）头部解析。
 
 ## 功能特性
 
-- 支持 `http-flv` 与 `rtmp` 两种任务类型
+- 支持 `http-flv`、`rtmp` 与 **`hls`** 三种实时任务类型（HLS 为 **TS 切片维度**，与 FLV/RTMP 的帧级秒级图表不同）
+- **HLS 实时分析**：拉取 media playlist，逐 `.ts` 切片统计 URI、playlist 序号、时长、体积；从 PES 解析音视频 **PTS/DTS（90 kHz）**、PAT/PMT/PES 计数；切片内首视频 PTS 与首音频 PTS 之差（AV）。若 PES 头仅有 PTS、无 DTS 字段，则展示时 **DTS 按与 PTS 相同处理**（常见于 HLS 切片）
 - 支持 Legacy 与 Enhanced（ExHeader/FourCC）两种 FLV 头部模式
 - 帧级数据采集：`DTS` / `PTS` / 帧类型 / GOP / 码率 / 接收 FPS
 - 秒级聚合：每秒心跳行（无数据秒也会记录，便于发现抖动/断流）
@@ -34,7 +35,10 @@
 │   ├── analyzer/
 │   │   ├── flv_client.go
 │   │   ├── rtmp_client.go
+│   │   ├── hls_task.go
 │   │   └── task.go
+│   ├── hls/
+│   │   └── client.go
 │   ├── codec/
 │   │   ├── aac.go
 │   │   ├── bitreader.go
@@ -64,7 +68,8 @@
 │   ├── rtmp_pull_client/
 │   ├── parse_rtmp/
 │   ├── parse_rtmp_from_wireshark/
-│   └── parse_ts/
+│   ├── parse_ts/
+│   └── hls_client/
 └── data/
 ```
 
@@ -82,7 +87,7 @@ go build -o bin/server ./cmd/server
 
 路由说明：
 - `GET /`：入口页（选择实时分析 or 离线分析）
-- `GET /realtime`：实时分析页面（输入 RTMP / HTTP-FLV 拉流地址）
+- `GET /realtime`：实时分析页面（输入 RTMP / HTTP-FLV / HLS m3u8 拉流地址）
 - `GET /offline`：离线分析页面（上传 raw/pcap/flv/ts 文件）
 - `GET /history`：历史记录页面
 
@@ -99,7 +104,16 @@ go build -o bin/server ./cmd/server
 }
 ```
 
-`type` 支持：`http-flv` / `rtmp`
+`type` 支持：`http-flv` / `rtmp` / `hls`（填 **master 或 media** 的 m3u8 URL；当前为 **TS** 切片，不支持带 `#EXT-X-MAP` 的 fMP4）
+
+**HLS 示例：**
+
+```json
+{
+  "url": "https://example.com/live/stream.m3u8",
+  "type": "hls"
+}
+```
 
 ### 其它接口
 
@@ -145,6 +159,22 @@ go build -o bin/server ./cmd/server
 - `stream`：全量帧/秒心跳混合记录（用于后续聚合）
 - `video`：视频子集
 - `audio`：音频子集
+- `hls`：**仅 HLS 任务写入**，每个 TS 切片一行（`FLV/RTMP` 任务该表为空表头）
+
+`hls` 表字段（节选）：
+
+| 字段 | 说明 |
+|---|---|
+| `stream_id` | media playlist URL（多码率时用于区分 variant） |
+| `seq` / `uri` / `duration_s` / `size_b` | playlist 序号、切片绝对 URL、EXTINF 时长、字节数 |
+| `v_pts_f_90k` ~ `a_dts_l_90k` | 切片内音视频 PTS/DTS 首尾值（90 kHz tick） |
+| `av_diff_pts_90k` / `av_diff_ok` | 首视频 PTS − 首音频 PTS；两者均有首 PTS 时为真 |
+| `av_diff_dts_90k` / `av_diff_dts_ok` | 首视频 DTS − 首音频 DTS（无 DTS 字段时按 PTS 兜底） |
+| `iframe_intv_ms` | 切片内相邻 IDR 的间隔（毫秒），分号分隔；由 H.264/HEVC NAL 检测 |
+| `pat` / `pmt` / `pes` / `video_pes` / `audio_pes` | 传输层与 ES 包计数 |
+| `recorded_at` | 写入时间 |
+
+实时页 / 历史页在 HLS 任务下除表格外，另有 **ECharts 切片图**（时间戳四线、AV DTS 差、I 帧间隔柱状），横轴为切片序号（按 playlist `#` 排序）。
 
 `stream` 表字段：
 
@@ -167,7 +197,11 @@ go build -o bin/server ./cmd/server
 
 ## 前端展示
 
-前端会展示并映射以下信息：
+**FLV / RTMP** 任务：ECharts 图表 + 明细表（DTS/PTS、码率、FPS、AV 偏差等）。
+
+**HLS** 任务：以 **TS 切片表格**为主（与上类任务的帧级图表不同），展示每片 URI、序号、时长、90 kHz PTS/DTS、AV 差、PAT/PMT/PES 等；历史记录页对已完成 HLS 任务同样支持该视图。
+
+其它共性：
 
 - 视频/音频 codec（如 `7 -> H.264/AVC`, `12 -> H.265/HEVC`, `10 -> AAC`）
 - 分辨率、采样率、声道
@@ -200,7 +234,8 @@ go build -o bin/server ./cmd/server
 
 ## 可视化说明
 
-- `DTS` 图：按真实时间戳作为 X 轴，视频/音频在同一时间轴对齐展示
+- **HLS** 任务：无上述 FLV 图表，页面以 **TS 切片表**为主（见「前端展示」）
+- `DTS` 图：按真实时间戳作为 X 轴，视频/音频在同一时间轴对齐展示（**FLV/RTMP**）
 - `Bitrate/FPS` 图：按相对秒（从 `T+0s`）全量展示，支持滑动缩放
 - `AV偏差` 图：偏差定义为 `video_dts - nearest_audio_dts`
   - `|diff| <= 20ms`：优秀（绿）
@@ -220,6 +255,7 @@ go build -o bin/server ./cmd/server
 ```bash
 go run ./example/rtmp_pull_client -url "rtmp://127.0.0.1/live/stream"
 go run ./example/http_flv_client -url "http://127.0.0.1/live/stream.flv"
+go run ./example/hls_client -url "https://example.com/live/stream.m3u8"
 ```
 
 ## 第三方源码替换

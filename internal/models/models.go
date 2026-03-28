@@ -5,7 +5,7 @@ import "time"
 type Task struct {
 	ID        string    `json:"id"`
 	URL       string    `json:"url"`
-	Type      string    `json:"type"`   // rtmp or http-flv
+	Type      string    `json:"type"`   // rtmp, http-flv, hls
 	Status    string    `json:"status"` // running, stopped, error
 	StartTime time.Time `json:"start_time"`
 	EndTime   time.Time `json:"end_time,omitempty"`
@@ -34,7 +34,40 @@ type StreamInfo struct {
 
 type TaskRequest struct {
 	URL  string `json:"url" binding:"required"`
-	Type string `json:"type" binding:"required"` // rtmp or http-flv
+	Type string `json:"type" binding:"required"` // rtmp, http-flv, hls
+}
+
+// ChartHLSSegment 实时 HLS（TS）任务：按切片维度展示。
+type ChartHLSSegment struct {
+	TaskID string `json:"-"`
+
+	StreamID    string  `json:"stream_id"`
+	Seq         uint64  `json:"seq"`
+	URI         string  `json:"uri"`
+	DurationSec float64 `json:"duration_sec"`
+	SizeBytes   int     `json:"size_bytes"`
+
+	VideoPTSFirst90k int64 `json:"video_pts_first_90k"`
+	VideoPTSLast90k  int64 `json:"video_pts_last_90k"`
+	VideoDTSFirst90k int64 `json:"video_dts_first_90k"`
+	VideoDTSLast90k  int64 `json:"video_dts_last_90k"`
+	AudioPTSFirst90k int64 `json:"audio_pts_first_90k"`
+	AudioPTSLast90k  int64 `json:"audio_pts_last_90k"`
+	AudioDTSFirst90k int64 `json:"audio_dts_first_90k"`
+	AudioDTSLast90k  int64 `json:"audio_dts_last_90k"`
+
+	AVDiffPTS90k int64 `json:"av_diff_pts_90k"`
+	AVDiffValid  bool  `json:"av_diff_valid"`
+
+	AVDiffDTS90k   int64   `json:"av_diff_dts_90k"`
+	AVDiffDTSValid bool    `json:"av_diff_dts_valid"`
+	IFrameIntervalsMs []int64 `json:"iframe_intervals_ms,omitempty"`
+
+	PATCount int `json:"pat_count"`
+	PMTCount int `json:"pmt_count"`
+	PESCount int `json:"pes_count"`
+	VideoPES int `json:"video_pes"`
+	AudioPES int `json:"audio_pes"`
 }
 
 type ChartData struct {
@@ -56,6 +89,8 @@ type ChartData struct {
 	SecondStats     []*SecondStat `json:"second_stats"`
 	VideoFrameRate  float64       `json:"video_frame_rate"`
 	MetadataJSON    string        `json:"metadata_json"`
+
+	HLSSegments []ChartHLSSegment `json:"hls_segments,omitempty"`
 }
 
 type SecondStat struct {

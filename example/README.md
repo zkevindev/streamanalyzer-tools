@@ -28,6 +28,20 @@ Run with timeout and timezone:
 go run ./example/http_flv_client -url "http://127.0.0.1/live/stream.flv" -duration 30s -tz Asia/Shanghai
 ```
 
+## HLS Client (m3u8 / TS segments)
+
+拉取 HLS playlist，逐 **MPEG-TS** 切片解析（与实时分析 `type: hls` 使用同一 `internal/hls` 逻辑）。不支持带 `#EXT-X-MAP` 的 fMP4。
+
+```bash
+go run ./example/hls_client -url "http://127.0.0.1/live/stream.m3u8"
+```
+
+限时运行：
+
+```bash
+go run ./example/hls_client -url "http://127.0.0.1/live/stream.m3u8" -duration 30s
+```
+
 ## FLV File Parser (Tag / Metadata / Raw Extract)
 
 Parse a local FLV file, validate FLV header, print tag-level info (including metadata),

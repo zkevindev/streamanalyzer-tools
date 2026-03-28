@@ -343,4 +343,219 @@
 
     chart.setOption(option, true);
   };
+
+  window.ensureHLSChart = function (domId) {
+    const dom = document.getElementById(domId || 'hlsMainChart');
+    if (!dom || typeof echarts === 'undefined') return null;
+    if (!window.__streamAnalyzerHLSChart) {
+      window.__streamAnalyzerHLSChart = echarts.init(dom);
+      window.addEventListener('resize', function () {
+        if (window.__streamAnalyzerHLSChart) window.__streamAnalyzerHLSChart.resize();
+      });
+    }
+    return window.__streamAnalyzerHLSChart;
+  };
+
+  window.disposeHLSChart = function () {
+    if (window.__streamAnalyzerHLSChart) {
+      window.__streamAnalyzerHLSChart.dispose();
+      window.__streamAnalyzerHLSChart = null;
+    }
+  };
+
+  function tick90kToMs(t) {
+    if (t === undefined || t === null || t < 0) return null;
+    const n = Number(t);
+    if (!isFinite(n)) return null;
+    return n / 90;
+  }
+
+  /**
+   * HLS：按切片绘制（与 FLV 帧级图表独立）。
+   * @param {'hls-ts'|'hls-avdts'|'hls-iframe'} type
+   * @param {Array} segments - hls_segments
+   * @param {string} domId
+   */
+  window.renderHLSChart = function (type, segments, domId) {
+    const chart = window.ensureHLSChart(domId);
+    if (!chart) return;
+    if (!segments || segments.length === 0) {
+      chart.clear();
+      chart.setOption({ title: { text: '暂无切片数据', left: 'center', top: 'middle' } });
+      return;
+    }
+    const sorted = segments.slice().sort(function (a, b) {
+      return (Number(a.seq) || 0) - (Number(b.seq) || 0);
+    });
+    const xCat = sorted.map(function (_, i) {
+      return String(i);
+    });
+
+    function axisTipFormatter(params) {
+      if (!params || !params.length) return '';
+      const idx = params[0].dataIndex;
+      const seg = sorted[idx];
+      if (!seg) return '';
+      let h = 'playlist#' + seg.seq + '<br/>';
+      if (seg.uri) {
+        const u = String(seg.uri);
+        h += (u.length > 96 ? u.slice(0, 96) + '…' : u) + '<br/>';
+      }
+      for (let i = 0; i < params.length; i++) {
+        const p = params[i];
+        const v = p.value;
+        if (v === null || v === undefined || (typeof v === 'number' && Number.isNaN(v))) continue;
+        h +=
+          p.marker +
+          p.seriesName +
+          ': ' +
+          (typeof v === 'number' ? v.toFixed(2) : v) +
+          ' ms<br/>';
+      }
+      return h;
+    }
+
+    let option = {};
+
+    switch (type) {
+      case 'hls-ts':
+        option = {
+          title: { text: '切片时间戳（首帧 PTS/DTS，ms）', left: 'center' },
+          tooltip: { trigger: 'axis', formatter: axisTipFormatter },
+          legend: { data: ['视频PTS', '视频DTS', '音频PTS', '音频DTS'], top: 28 },
+          grid: baseGrid(),
+          xAxis: { type: 'category', name: '切片序号（0起）', data: xCat },
+          yAxis: { type: 'value', name: 'ms', scale: true },
+          dataZoom: [
+            { type: 'inside', start: 0, end: 100 },
+            { type: 'slider', start: 0, end: 100, height: 18 },
+          ],
+          series: [
+            {
+              name: '视频PTS',
+              type: 'line',
+              data: sorted.map(function (s) {
+                return tick90kToMs(s.video_pts_first_90k);
+              }),
+              showSymbol: sorted.length < 80,
+            },
+            {
+              name: '视频DTS',
+              type: 'line',
+              data: sorted.map(function (s) {
+                return tick90kToMs(s.video_dts_first_90k);
+              }),
+              showSymbol: sorted.length < 80,
+            },
+            {
+              name: '音频PTS',
+              type: 'line',
+              data: sorted.map(function (s) {
+                return tick90kToMs(s.audio_pts_first_90k);
+              }),
+              showSymbol: sorted.length < 80,
+            },
+            {
+              name: '音频DTS',
+              type: 'line',
+              data: sorted.map(function (s) {
+                return tick90kToMs(s.audio_dts_first_90k);
+              }),
+              showSymbol: sorted.length < 80,
+            },
+          ],
+        };
+        break;
+      case 'hls-avdts':
+        option = {
+          title: { text: 'AV DTS 差（首帧 V-DTS − A-DTS，ms）', left: 'center' },
+          tooltip: {
+            trigger: 'axis',
+            formatter: function (params) {
+              if (!params || !params.length) return '';
+              const idx = params[0].dataIndex;
+              const seg = sorted[idx];
+              if (!seg) return '';
+              const v = params[0].value;
+              const lv = avSyncLevel(v);
+              let h = 'playlist#' + seg.seq + '<br/>偏差: ' + (v != null && !Number.isNaN(v) ? v.toFixed(2) : '-') + ' ms<br/>';
+              h += '等级: <span style="color:' + lv.color + ';">' + lv.label + '</span>';
+              return h;
+            },
+          },
+          legend: { data: ['AV DTS差'], top: 28 },
+          grid: baseGrid(),
+          xAxis: { type: 'category', name: '切片序号（0起）', data: xCat },
+          yAxis: { type: 'value', name: 'ms', scale: true },
+          dataZoom: [
+            { type: 'inside', start: 0, end: 100 },
+            { type: 'slider', start: 0, end: 100, height: 18 },
+          ],
+          series: [
+            {
+              name: 'AV DTS差',
+              type: 'line',
+              data: sorted.map(function (s) {
+                if (!s.av_diff_dts_valid) return null;
+                return Number(s.av_diff_dts_90k) / 90;
+              }),
+              showSymbol: sorted.length < 80,
+              markLine: {
+                symbol: 'none',
+                lineStyle: { type: 'dashed', color: '#9ca3af' },
+                data: [{ yAxis: 0, name: '0ms' }],
+              },
+            },
+          ],
+        };
+        break;
+      case 'hls-iframe':
+        option = {
+          title: { text: '切片内 I 帧间隔（相邻 IDR，ms）', left: 'center' },
+          tooltip: {
+            trigger: 'axis',
+            formatter: function (params) {
+              if (!params || !params.length) return '';
+              const idx = params[0].dataIndex;
+              const seg = sorted[idx];
+              if (!seg) return '';
+              const arr = seg.iframe_intervals_ms || [];
+              let h = 'playlist#' + seg.seq + '<br/>';
+              h += arr.length ? '全部间隔: ' + arr.join(', ') + ' ms' : '无足够 IDR（切片内少于 2 个关键帧）';
+              return h;
+            },
+          },
+          grid: baseGrid(),
+          xAxis: { type: 'category', name: '切片序号（0起）', data: xCat },
+          yAxis: { type: 'value', name: 'ms', scale: true },
+          dataZoom: [
+            { type: 'inside', start: 0, end: 100 },
+            { type: 'slider', start: 0, end: 100, height: 18 },
+          ],
+          series: [
+            {
+              name: '最大间隔',
+              type: 'bar',
+              data: sorted.map(function (s) {
+                const arr = s.iframe_intervals_ms || [];
+                if (!arr.length) return null;
+                let m = Number(arr[0]);
+                for (let i = 1; i < arr.length; i++) {
+                  const n = Number(arr[i]);
+                  if (n > m) m = n;
+                }
+                return m;
+              }),
+            },
+          ],
+        };
+        break;
+      default:
+        option = {
+          title: { text: '未知 HLS 图表', left: 'center' },
+        };
+    }
+
+    chart.setOption(option, true);
+  };
 })();

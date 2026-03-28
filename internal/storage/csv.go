@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+	"time"
 
 	"streamanalyzer/internal/models"
 
@@ -42,11 +44,13 @@ func (s *CSVStorage) CreateTaskCSV(taskID string) error {
 	streamSheet := "stream"
 	videoSheet := "video"
 	audioSheet := "audio"
+	hlsSheet := "hls"
 	if defaultSheet != streamSheet {
 		f.SetSheetName(defaultSheet, streamSheet)
 	}
 	f.NewSheet(videoSheet)
 	f.NewSheet(audioSheet)
+	f.NewSheet(hlsSheet)
 
 	if err := writeSheetHeader(f, streamSheet, []string{
 		"dts", "video_len", "audio_len", "video_width", "video_height",
@@ -69,6 +73,18 @@ func (s *CSVStorage) CreateTaskCSV(taskID string) error {
 		return err
 	}
 
+	if err := writeSheetHeader(f, hlsSheet, []string{
+		"stream_id", "seq", "uri", "duration_s", "size_b",
+		"v_pts_f_90k", "v_pts_l_90k", "v_dts_f_90k", "v_dts_l_90k",
+		"a_pts_f_90k", "a_pts_l_90k", "a_dts_f_90k", "a_dts_l_90k",
+		"av_diff_pts_90k", "av_diff_ok",
+		"pat", "pmt", "pes", "video_pes", "audio_pes",
+		"av_diff_dts_90k", "av_diff_dts_ok", "iframe_intv_ms",
+		"recorded_at",
+	}); err != nil {
+		return err
+	}
+
 	if err := f.SaveAs(filename); err != nil {
 		return err
 	}
@@ -79,6 +95,7 @@ func (s *CSVStorage) CreateTaskCSV(taskID string) error {
 		streamSheet: 2,
 		videoSheet:  2,
 		audioSheet:  2,
+		hlsSheet:    2,
 	}
 	return nil
 }
@@ -158,6 +175,90 @@ func (s *CSVStorage) WriteStreamInfo(info *models.StreamInfo) error {
 		rows["audio"]++
 	}
 
+	return nil
+}
+
+func int64OrEmpty(v int64) string {
+	if v < 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d", v)
+}
+
+func joinInt64SliceSemicolon(vs []int64) string {
+	if len(vs) == 0 {
+		return ""
+	}
+	parts := make([]string, len(vs))
+	for i, v := range vs {
+		parts[i] = fmt.Sprintf("%d", v)
+	}
+	return strings.Join(parts, ";")
+}
+
+// WriteHLSSegment 写入 HLS TS 切片一行（实时 HLS 任务使用）。
+func (s *CSVStorage) WriteHLSSegment(seg *models.ChartHLSSegment) error {
+	if seg == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	f, ok := s.files[seg.TaskID]
+	if !ok {
+		return fmt.Errorf("task %s not found", seg.TaskID)
+	}
+	rows := s.rows[seg.TaskID]
+	sheet := "hls"
+
+	avOk := "0"
+	if seg.AVDiffValid {
+		avOk = "1"
+	}
+	avDiff := ""
+	if seg.AVDiffValid {
+		avDiff = fmt.Sprintf("%d", seg.AVDiffPTS90k)
+	}
+	avDtsOk := "0"
+	if seg.AVDiffDTSValid {
+		avDtsOk = "1"
+	}
+	avDtsDiff := ""
+	if seg.AVDiffDTSValid {
+		avDtsDiff = fmt.Sprintf("%d", seg.AVDiffDTS90k)
+	}
+	iframeJoined := joinInt64SliceSemicolon(seg.IFrameIntervalsMs)
+
+	row := []string{
+		seg.StreamID,
+		fmt.Sprintf("%d", seg.Seq),
+		seg.URI,
+		fmt.Sprintf("%.6f", seg.DurationSec),
+		fmt.Sprintf("%d", seg.SizeBytes),
+		int64OrEmpty(seg.VideoPTSFirst90k),
+		int64OrEmpty(seg.VideoPTSLast90k),
+		int64OrEmpty(seg.VideoDTSFirst90k),
+		int64OrEmpty(seg.VideoDTSLast90k),
+		int64OrEmpty(seg.AudioPTSFirst90k),
+		int64OrEmpty(seg.AudioPTSLast90k),
+		int64OrEmpty(seg.AudioDTSFirst90k),
+		int64OrEmpty(seg.AudioDTSLast90k),
+		avDiff,
+		avOk,
+		fmt.Sprintf("%d", seg.PATCount),
+		fmt.Sprintf("%d", seg.PMTCount),
+		fmt.Sprintf("%d", seg.PESCount),
+		fmt.Sprintf("%d", seg.VideoPES),
+		fmt.Sprintf("%d", seg.AudioPES),
+		avDtsDiff,
+		avDtsOk,
+		iframeJoined,
+		time.Now().Format("2006-01-02 15:04:05"),
+	}
+	if err := writeRow(f, sheet, rows[sheet], row); err != nil {
+		return err
+	}
+	rows[sheet]++
 	return nil
 }
 

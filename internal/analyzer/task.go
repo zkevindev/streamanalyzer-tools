@@ -110,6 +110,8 @@ func (s *StreamAnalyzer) runTask(ctx context.Context, at *analyzeTask) {
 		s.runRTMPTask(ctx, at)
 	case "http-flv":
 		s.runHTTPFLVTask(ctx, at)
+	case "hls":
+		s.runHLSTask(ctx, at)
 	default:
 		fmt.Printf("Unknown task type: %s\n", at.Type)
 	}
