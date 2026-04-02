@@ -10,6 +10,8 @@ package rtmp
 import (
 	"bytes"
 	"context"
+	"io"
+	"sync"
 	"time"
 
 	"github.com/pkg/errors"
@@ -25,6 +27,10 @@ type Stream struct {
 	transactions *transactions
 	handler      *streamHandler
 	cmsg         ChunkMessage
+	m            sync.Mutex
+	closed       bool
+	playResultCh chan error
+	playResolved bool
 
 	conn *Conn
 }
@@ -64,6 +70,13 @@ func (s *Stream) WriteUserCtrl(chunkStreamID int, timestamp uint32, msg *message
 func (s *Stream) Connect(
 	body *message.NetConnectionConnect,
 ) (*message.NetConnectionConnectResult, error) {
+	return s.ConnectContext(context.Background(), body)
+}
+
+func (s *Stream) ConnectContext(
+	ctx context.Context,
+	body *message.NetConnectionConnect,
+) (*message.NetConnectionConnectResult, error) {
 	transactionID := int64(1) // Always 1 (7.2.1.1)
 	t, err := s.transactions.Create(transactionID)
 	if err != nil {
@@ -85,12 +98,15 @@ func (s *Stream) Connect(
 		return nil, err
 	}
 
-	// TODO: support timeout
-	timeoutCtx := context.TODO()
 	select {
-	case <-timeoutCtx.Done():
-		return nil, timeoutCtx.Err()
+	case <-s.conn.streamer.Done():
+		return nil, normalizeConnectionError(s.conn.streamer.Err())
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	case <-t.doneCh:
+		if t.lastErr != nil {
+			return nil, normalizeConnectionError(t.lastErr)
+		}
 		amfDec := message.NewAMFDecoder(t.body, t.encoding)
 
 		var value message.AMFConvertible
@@ -134,6 +150,10 @@ func (s *Stream) ReplyConnect(
 }
 
 func (s *Stream) CreateStream(body *message.NetConnectionCreateStream, chunkSize uint32) (*message.NetConnectionCreateStreamResult, error) {
+	return s.CreateStreamContext(context.Background(), body, chunkSize)
+}
+
+func (s *Stream) CreateStreamContext(ctx context.Context, body *message.NetConnectionCreateStream, chunkSize uint32) (*message.NetConnectionCreateStreamResult, error) {
 	oldChunkSize := s.conn.streamer.selfState.chunkSize
 	if chunkSize > 0 && chunkSize != oldChunkSize {
 		logrus.Infof("Changing chunkSize %d->%d", oldChunkSize, chunkSize)
@@ -165,13 +185,15 @@ func (s *Stream) CreateStream(body *message.NetConnectionCreateStream, chunkSize
 		return nil, err
 	}
 
-	// TODO: support timeout
-	// TODO: check result
-	timeoutCtx := context.TODO()
 	select {
-	case <-timeoutCtx.Done():
-		return nil, timeoutCtx.Err()
+	case <-s.conn.streamer.Done():
+		return nil, normalizeConnectionError(s.conn.streamer.Err())
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	case <-t.doneCh:
+		if t.lastErr != nil {
+			return nil, normalizeConnectionError(t.lastErr)
+		}
 		amfDec := message.NewAMFDecoder(t.body, t.encoding)
 
 		var value message.AMFConvertible
@@ -248,6 +270,8 @@ func (s *Stream) Play(body *message.NetStreamPlay) error {
 		body = &message.NetStreamPlay{}
 	}
 
+	s.initPlayResult()
+
 	chunkStreamID := 3
 	return s.writeCommandMessage(
 		chunkStreamID, 0,
@@ -272,11 +296,101 @@ func (s *Stream) NotifyStatus(
 
 func (s *Stream) Close() error {
 	s.assumeClosed()
-	return nil // TODO: implement
+
+	if s.streamID == ControlStreamID {
+		return nil
+	}
+
+	ctrlStream, err := s.conn.streams.At(ControlStreamID)
+	if err == nil {
+		_ = ctrlStream.DeleteStream(&message.NetStreamDeleteStream{StreamID: s.streamID})
+	}
+
+	if err := s.conn.streams.Delete(s.streamID); err != nil {
+		return nil
+	}
+
+	return nil
 }
 
 func (s *Stream) assumeClosed() {
-	// TODO: implement
+	s.m.Lock()
+	defer s.m.Unlock()
+
+	if s.closed {
+		return
+	}
+	s.closed = true
+	if s.playResultCh != nil && !s.playResolved {
+		s.playResolved = true
+		s.playResultCh <- ErrClientClosed
+		close(s.playResultCh)
+	}
+}
+
+func (s *Stream) initPlayResult() {
+	s.m.Lock()
+	defer s.m.Unlock()
+
+	s.playResolved = false
+	s.playResultCh = make(chan error, 1)
+}
+
+func (s *Stream) waitPlayResult(ctx context.Context) error {
+	s.m.Lock()
+	ch := s.playResultCh
+	s.m.Unlock()
+
+	if ch == nil {
+		return nil
+	}
+
+	select {
+	case <-s.conn.streamer.Done():
+		return normalizeConnectionError(s.conn.streamer.Err())
+	case <-ctx.Done():
+		return ctx.Err()
+	case err, ok := <-ch:
+		if !ok {
+			return nil
+		}
+		return err
+	}
+}
+
+func (s *Stream) notifyConnectionError(err error) {
+	s.resolvePlayResult(normalizeConnectionError(err))
+}
+
+func (s *Stream) notifyPlayStatus(status *message.NetStreamOnStatus) {
+	if status == nil {
+		return
+	}
+
+	switch status.InfoObject.Code {
+	case message.NetStreamOnStatusCodePlayStart:
+		s.resolvePlayResult(nil)
+	case message.NetStreamOnStatusCodePlayFailed:
+		s.resolvePlayResult(&PlayRejectedError{
+			Code:        status.InfoObject.Code,
+			Description: status.InfoObject.Description,
+		})
+	case message.NetStreamOnStatusCodePlayComplete:
+		s.resolvePlayResult(io.EOF)
+	}
+}
+
+func (s *Stream) resolvePlayResult(err error) {
+	s.m.Lock()
+	defer s.m.Unlock()
+
+	if s.playResultCh == nil || s.playResolved {
+		return
+	}
+
+	s.playResolved = true
+	s.playResultCh <- err
+	close(s.playResultCh)
 }
 
 func (s *Stream) writeCommandMessage(

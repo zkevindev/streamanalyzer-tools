@@ -8,6 +8,9 @@
 package rtmp
 
 import (
+	"context"
+	stderrors "errors"
+	"io"
 	"net"
 	"sync"
 
@@ -63,6 +66,10 @@ func (cc *ClientConn) LastError() error {
 }
 
 func (cc *ClientConn) Connect(body *message.NetConnectionConnect) error {
+	return cc.ConnectContext(nil, body)
+}
+
+func (cc *ClientConn) ConnectContext(ctx context.Context, body *message.NetConnectionConnect) error {
 	if err := cc.controllable(); err != nil {
 		return err
 	}
@@ -72,7 +79,11 @@ func (cc *ClientConn) Connect(body *message.NetConnectionConnect) error {
 		return err
 	}
 
-	result, err := stream.Connect(body)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	result, err := stream.ConnectContext(ctx, body)
 	if err != nil {
 		return err // TODO: wrap an error
 	}
@@ -84,6 +95,10 @@ func (cc *ClientConn) Connect(body *message.NetConnectionConnect) error {
 }
 
 func (cc *ClientConn) CreateStream(body *message.NetConnectionCreateStream, chunkSize uint32) (*Stream, error) {
+	return cc.CreateStreamContext(nil, body, chunkSize)
+}
+
+func (cc *ClientConn) CreateStreamContext(ctx context.Context, body *message.NetConnectionCreateStream, chunkSize uint32) (*Stream, error) {
 	if err := cc.controllable(); err != nil {
 		return nil, err
 	}
@@ -93,7 +108,11 @@ func (cc *ClientConn) CreateStream(body *message.NetConnectionCreateStream, chun
 		return nil, err
 	}
 
-	result, err := stream.CreateStream(body, chunkSize)
+	if ctx == nil {
+		ctx = context.Background()
+	}
+
+	result, err := stream.CreateStreamContext(ctx, body, chunkSize)
 	if err != nil {
 		return nil, err // TODO: wrap an error
 	}
@@ -134,7 +153,9 @@ func (cc *ClientConn) DeleteStream(body *message.NetStreamDeleteStream) error {
 
 func (cc *ClientConn) startHandleMessageLoop() {
 	if err := cc.conn.handleMessageLoop(); err != nil {
+		err = normalizeConnectionError(err)
 		cc.setLastError(err)
+		cc.conn.streams.notifyError(err)
 	}
 }
 
@@ -148,4 +169,17 @@ func (cc *ClientConn) setLastError(err error) {
 func (cc *ClientConn) controllable() error {
 	err := cc.LastError()
 	return errors.Wrap(err, "Client is in error state")
+}
+
+func normalizeConnectionError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if stderrors.Is(err, ErrClosed) || stderrors.Is(err, ErrClientClosed) {
+		return ErrClientClosed
+	}
+	if stderrors.Is(err, io.EOF) || stderrors.Is(err, io.ErrUnexpectedEOF) || stderrors.Is(err, net.ErrClosed) {
+		return ErrServerDisconnected
+	}
+	return err
 }

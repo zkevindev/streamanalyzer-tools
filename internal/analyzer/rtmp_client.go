@@ -184,7 +184,7 @@ func (d *RTMPDecoder) Decode(flvTag *tag.FlvTag) error {
 	if d.doneCh == nil {
 		tag, ok := <-d.streamCh
 		if !ok || tag == nil {
-			return io.EOF
+			return d.decodeClosedErr()
 		}
 		*flvTag = *tag
 		return nil
@@ -193,13 +193,25 @@ func (d *RTMPDecoder) Decode(flvTag *tag.FlvTag) error {
 	select {
 	case tag, ok := <-d.streamCh:
 		if !ok || tag == nil {
-			return io.EOF
+			return d.decodeClosedErr()
 		}
 		*flvTag = *tag
 		return nil
 	case <-d.doneCh:
 		return context.Canceled
 	}
+}
+
+func (d *RTMPDecoder) decodeClosedErr() error {
+	if d.conn == nil || d.conn.ClientConn == nil {
+		return io.EOF
+	}
+
+	if err := d.conn.LastError(); err != nil && err != rtmp.ErrClientClosed {
+		return err
+	}
+
+	return io.EOF
 }
 
 func (d *RTMPDecoder) Close() error {

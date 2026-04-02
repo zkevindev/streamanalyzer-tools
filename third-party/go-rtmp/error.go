@@ -16,6 +16,8 @@ import (
 )
 
 var ErrClosed = errors.New("Server is closed")
+var ErrClientClosed = errors.New("client is closed")
+var ErrServerDisconnected = errors.New("server disconnected")
 
 type ConnectRejectedError struct {
 	TransactionID int64
@@ -41,4 +43,13 @@ func (err *CreateStreamRejectedError) Error() string {
 		err.TransactionID,
 		err.Result,
 	)
+}
+
+type PlayRejectedError struct {
+	Code        message.NetStreamOnStatusCode
+	Description string
+}
+
+func (err *PlayRejectedError) Error() string {
+	return fmt.Sprintf("Play is rejected: Code = %s, Description = %s", err.Code, err.Description)
 }

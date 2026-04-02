@@ -112,7 +112,7 @@ func DialAndPlay(ctx context.Context, rawURL string, handler Handler, opts *Play
 			VideoFunction: 1,
 		},
 	}
-	if err := cc.Connect(connect); err != nil {
+	if err := cc.ConnectContext(ctx, connect); err != nil {
 		return nil, nil, nil, errors.Wrap(err, "failed to connect")
 	}
 
@@ -123,7 +123,7 @@ func DialAndPlay(ctx context.Context, rawURL string, handler Handler, opts *Play
 		start = opts.Start
 	}
 
-	stream, err := cc.CreateStream(nil, chunkSize)
+	stream, err := cc.CreateStreamContext(ctx, nil, chunkSize)
 	if err != nil {
 		return nil, nil, nil, errors.Wrap(err, "failed to create stream")
 	}
@@ -134,6 +134,15 @@ func DialAndPlay(ctx context.Context, rawURL string, handler Handler, opts *Play
 	}); err != nil {
 		_ = stream.Close()
 		return nil, nil, nil, errors.Wrap(err, "failed to send play command")
+	}
+
+	waitCtx := ctx
+	if waitCtx == nil {
+		waitCtx = context.Background()
+	}
+	if err := stream.waitPlayResult(waitCtx); err != nil {
+		_ = stream.Close()
+		return nil, nil, nil, errors.Wrap(err, "failed to start play")
 	}
 
 	if ctx != nil {

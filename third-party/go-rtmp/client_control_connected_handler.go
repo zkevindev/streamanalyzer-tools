@@ -69,6 +69,7 @@ func (h *clientControlConnectedHandler) onCommand(
 	case *message.NetStreamOnStatus:
 		h.sh.Logger().Infof("OnStatus: Level = %s, Code = %s, Description = %s",
 			cmd.InfoObject.Level, cmd.InfoObject.Code, cmd.InfoObject.Description)
+		h.sh.stream.notifyPlayStatus(cmd)
 		return nil
 
 	default:

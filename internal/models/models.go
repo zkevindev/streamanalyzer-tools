@@ -6,7 +6,7 @@ type Task struct {
 	ID        string    `json:"id"`
 	URL       string    `json:"url"`
 	Type      string    `json:"type"`   // rtmp, http-flv, hls
-	Status    string    `json:"status"` // running, stopped, error
+	Status    string    `json:"status"` // running, stopped, failed
 	StartTime time.Time `json:"start_time"`
 	EndTime   time.Time `json:"end_time,omitempty"`
 }
@@ -59,8 +59,8 @@ type ChartHLSSegment struct {
 	AVDiffPTS90k int64 `json:"av_diff_pts_90k"`
 	AVDiffValid  bool  `json:"av_diff_valid"`
 
-	AVDiffDTS90k   int64   `json:"av_diff_dts_90k"`
-	AVDiffDTSValid bool    `json:"av_diff_dts_valid"`
+	AVDiffDTS90k      int64   `json:"av_diff_dts_90k"`
+	AVDiffDTSValid    bool    `json:"av_diff_dts_valid"`
 	IFrameIntervalsMs []int64 `json:"iframe_intervals_ms,omitempty"`
 
 	PATCount int `json:"pat_count"`

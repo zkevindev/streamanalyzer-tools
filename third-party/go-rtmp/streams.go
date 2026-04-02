@@ -90,3 +90,13 @@ func (ss *streams) At(streamID uint32) (*Stream, error) {
 
 	return stream, nil
 }
+
+func (ss *streams) notifyError(err error) {
+	ss.m.Lock()
+	defer ss.m.Unlock()
+
+	for _, stream := range ss.streams {
+		stream.transactions.FailAll(err)
+		stream.notifyConnectionError(err)
+	}
+}

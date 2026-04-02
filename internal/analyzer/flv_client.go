@@ -33,47 +33,42 @@ func newHTTPFLVDecoder(resp *http.Response) (*httpFLVDecoder, error) {
 	}, nil
 }
 
-func (s *StreamAnalyzer) runHTTPFLVTask(ctx context.Context, at *analyzeTask) {
+func (s *StreamAnalyzer) runHTTPFLVTask(ctx context.Context, at *analyzeTask) error {
 	client := &http.Client{Timeout: 0}
 
 	req, err := http.NewRequestWithContext(ctx, "GET", at.URL, nil)
 	if err != nil {
-		fmt.Printf("HTTP FLV request error: %v\n", err)
-		return
+		return &taskStartupError{err: err}
 	}
 	req.Header.Set("User-Agent", "FLVAnalyzer/1.0")
 
 	resp, err := client.Do(req)
 	if err != nil {
-		fmt.Printf("HTTP FLV do error: %v\n", err)
-		return
+		return &taskStartupError{err: err}
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		fmt.Printf("HTTP FLV status: %d\n", resp.StatusCode)
-		return
+		return &taskStartupError{err: fmt.Errorf("http flv status: %d", resp.StatusCode)}
 	}
 
 	decoder, err := newHTTPFLVDecoder(resp)
 	if err != nil {
-		fmt.Printf("FLV decoder error: %v\n", err)
-		return
+		return &taskStartupError{err: err}
 	}
 	defer resp.Body.Close()
 
-	s.readFLVStream(ctx, decoder, at)
+	return s.readFLVStream(ctx, decoder, at)
 }
 
-func (s *StreamAnalyzer) readFLVStream(ctx context.Context, decoder FlvDecoder, at *analyzeTask) {
+func (s *StreamAnalyzer) readFLVStream(ctx context.Context, decoder FlvDecoder, at *analyzeTask) error {
 	for {
 		flvTag := &tag.FlvTag{}
 		if err := decoder.Decode(flvTag); err != nil {
 			if shouldStopDecode(err) || ctx.Err() != nil {
-				return
+				return err
 			}
-			fmt.Printf("FLV decode error: %v\n", err)
-			return
+			return err
 		}
 
 		s.handleFLVTag(flvTag, at)
@@ -82,15 +77,14 @@ func (s *StreamAnalyzer) readFLVStream(ctx context.Context, decoder FlvDecoder, 
 
 // RTMP path: go-rtmp first parses RTMP chunk messages, then OnAudio/OnVideo
 // decodes message payload into FLV audio/video tags.
-func (s *StreamAnalyzer) readRTMPStream(ctx context.Context, decoder *RTMPDecoder, at *analyzeTask) {
+func (s *StreamAnalyzer) readRTMPStream(ctx context.Context, decoder *RTMPDecoder, at *analyzeTask) error {
 	for {
 		flvTag := &tag.FlvTag{}
 		if err := decoder.Decode(flvTag); err != nil {
 			if shouldStopDecode(err) || ctx.Err() != nil {
-				return
+				return err
 			}
-			fmt.Printf("RTMP decode error: %v\n", err)
-			return
+			return err
 		}
 
 		s.handleFLVTag(flvTag, at)

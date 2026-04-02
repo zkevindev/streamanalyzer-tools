@@ -1614,7 +1614,7 @@ func (h *Handler) Index(c *gin.Context) {
             if (!data.tasks.length) {empty.style.display='block'; return;}
             empty.style.display='none';
             data.tasks.forEach(t => {
-                const status = t.status === 'running' ? 'running' : 'stopped';
+                const status = t.status || 'stopped';
                 const tr = document.createElement('tr');
                 tr.innerHTML = '<td><span class="task-id">' + t.id.substring(5,15) + '...</span></td>' +
                     '<td>' + t.url + '</td>' +
@@ -2143,7 +2143,7 @@ func (h *Handler) HistoryPage(c *gin.Context) {
             if (!data.tasks.length) {empty.style.display='block'; return;}
             empty.style.display='none';
             data.tasks.forEach(t => {
-                const status = t.status === 'running' ? 'running' : 'stopped';
+                const status = t.status || 'stopped';
                 const tr = document.createElement('tr');
                 if (currentTaskId === t.id) tr.classList.add('active');
                 tr.innerHTML = '<td><span class="task-id">' + t.id.substring(5,15) + '...</span></td>' +

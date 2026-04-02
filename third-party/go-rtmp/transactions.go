@@ -23,6 +23,7 @@ type transaction struct {
 	body        *bytes.Buffer
 	lastErr     error
 	doneCh      chan struct{}
+	doneOnce    sync.Once
 }
 
 func (t *transaction) Reply(commandName string, encoding message.EncodingType, body io.Reader) {
@@ -31,7 +32,16 @@ func (t *transaction) Reply(commandName string, encoding message.EncodingType, b
 	t.body = new(bytes.Buffer)
 	_, err := io.Copy(t.body, body)
 	t.lastErr = err
-	close(t.doneCh)
+	t.doneOnce.Do(func() {
+		close(t.doneCh)
+	})
+}
+
+func (t *transaction) Fail(err error) {
+	t.lastErr = err
+	t.doneOnce.Do(func() {
+		close(t.doneCh)
+	})
 }
 
 type transactions struct {
@@ -82,4 +92,14 @@ func (ts *transactions) At(transactionID int64) (*transaction, error) {
 	}
 
 	return t, nil
+}
+
+func (ts *transactions) FailAll(err error) {
+	ts.m.Lock()
+	defer ts.m.Unlock()
+
+	for id, t := range ts.transactions {
+		t.Fail(err)
+		delete(ts.transactions, id)
+	}
 }

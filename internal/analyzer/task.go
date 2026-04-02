@@ -15,6 +15,7 @@ import (
 	"streamanalyzer/internal/storage"
 
 	"github.com/yutopp/go-flv/tag"
+	gortmp "github.com/yutopp/go-rtmp"
 )
 
 type StreamAnalyzer struct {
@@ -40,6 +41,18 @@ type analyzeTask struct {
 	videoFrameRate  float64
 	audioSampleRate int
 	audioChannels   int
+}
+
+type taskStartupError struct {
+	err error
+}
+
+func (e *taskStartupError) Error() string {
+	return e.err.Error()
+}
+
+func (e *taskStartupError) Unwrap() error {
+	return e.err
 }
 
 func NewStreamAnalyzer(csvStorage *storage.CSVStorage) *StreamAnalyzer {
@@ -88,6 +101,8 @@ func (s *StreamAnalyzer) StartTask(ctx context.Context, taskReq *models.TaskRequ
 func (s *StreamAnalyzer) runTask(ctx context.Context, at *analyzeTask) {
 	go s.runTaskAggregator(ctx, at)
 
+	status := "stopped"
+
 	defer func() {
 		at.cancel()
 		close(at.streamCh)
@@ -98,22 +113,28 @@ func (s *StreamAnalyzer) runTask(ctx context.Context, at *analyzeTask) {
 			ID:      at.ID,
 			URL:     at.URL,
 			Type:    at.Type,
-			Status:  "stopped",
+			Status:  status,
 			EndTime: time.Now(),
 		}
 		delete(s.tasks, at.ID)
 		s.mu.Unlock()
 	}()
 
+	var err error
 	switch at.Type {
 	case "rtmp":
-		s.runRTMPTask(ctx, at)
+		err = s.runRTMPTask(ctx, at)
 	case "http-flv":
-		s.runHTTPFLVTask(ctx, at)
+		err = s.runHTTPFLVTask(ctx, at)
 	case "hls":
-		s.runHLSTask(ctx, at)
+		err = s.runHLSTask(ctx, at)
 	default:
-		fmt.Printf("Unknown task type: %s\n", at.Type)
+		err = fmt.Errorf("unknown task type: %s", at.Type)
+	}
+
+	status = classifyTaskStatus(ctx, err)
+	if err != nil && !errors.Is(err, context.Canceled) {
+		fmt.Printf("task=%s ended status=%s err=%v\n", at.ID, status, err)
 	}
 }
 
@@ -204,19 +225,37 @@ func (s *StreamAnalyzer) runTaskAggregator(ctx context.Context, at *analyzeTask)
 	}
 }
 
-func (s *StreamAnalyzer) runRTMPTask(ctx context.Context, at *analyzeTask) {
+func (s *StreamAnalyzer) runRTMPTask(ctx context.Context, at *analyzeTask) error {
 	decoder, err := NewRTMPDecoder(ctx, at.URL)
 	if err != nil {
-		fmt.Printf("RTMP decoder error: %v\n", err)
-		return
+		return &taskStartupError{err: err}
 	}
 	defer decoder.Close()
 
-	s.readRTMPStream(ctx, decoder, at)
+	return s.readRTMPStream(ctx, decoder, at)
 }
 
 func shouldStopDecode(err error) bool {
 	return errors.Is(err, io.EOF) || errors.Is(err, context.Canceled)
+}
+
+func classifyTaskStatus(ctx context.Context, err error) string {
+	var startupErr *taskStartupError
+
+	switch {
+	case err == nil:
+		return "stopped"
+	case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+		return "stopped"
+	case errors.As(err, &startupErr):
+		return "failed"
+	case errors.Is(err, io.EOF), errors.Is(err, gortmp.ErrServerDisconnected), errors.Is(err, gortmp.ErrClientClosed):
+		return "stopped"
+	case ctx.Err() != nil:
+		return "stopped"
+	default:
+		return "failed"
+	}
 }
 
 func (s *StreamAnalyzer) handleFLVTag(flvTag *tag.FlvTag, at *analyzeTask) {
