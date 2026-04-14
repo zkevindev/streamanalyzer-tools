@@ -63,7 +63,7 @@ func (m *Manager) runFLV(task *models.OfflineTask, taskDir string, summary *mode
 	for {
 		var flvTag tag.FlvTag
 		err = decoder.Decode(&flvTag)
-		if errors.Is(err, io.EOF) {
+		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 			break
 		}
 		if err != nil {

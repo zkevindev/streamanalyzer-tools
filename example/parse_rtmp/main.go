@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"streamanalyzer/internal/codec"
 
@@ -48,8 +49,8 @@ type mediaWriter struct {
 
 func main() {
 	input := flag.String("in", "example/parse_rtmp/tcp8.raw", "RTMP raw tcp capture path")
-	video := flag.String("video", "example/parse_rtmp/video.h264", "output H264 AnnexB path")
-	audio := flag.String("audio", "example/parse_rtmp/audio.aac", "output AAC(ADTS) path")
+	video := flag.String("video", "video.h264", "output H264 AnnexB path")
+	audio := flag.String("audio", "audio.aac", "output AAC(ADTS) path")
 	skip := flag.Int("skip", handshakeSkip, "bytes to skip before chunk stream parse (default assumes raw contains S0+S1+S2)")
 	flag.Parse()
 
@@ -72,13 +73,13 @@ func run(inputPath, videoPath, audioPath string, skip int) error {
 		}
 	}
 
-	videoOut, err := os.Create(videoPath)
+	videoOut, err := createOutputFile(videoPath)
 	if err != nil {
 		return err
 	}
 	defer videoOut.Close()
 
-	audioOut, err := os.Create(audioPath)
+	audioOut, err := createOutputFile(audioPath)
 	if err != nil {
 		return err
 	}
@@ -91,12 +92,24 @@ func run(inputPath, videoPath, audioPath string, skip int) error {
 		hvcNALUSize:  4,
 	}
 
-	if err := parseRTMPChunks(f, w); err != nil && !errors.Is(err, io.EOF) {
+	if err := parseRTMPChunks(f, w); err != nil &&
+		!errors.Is(err, io.EOF) &&
+		!errors.Is(err, io.ErrUnexpectedEOF) {
 		return err
 	}
 
 	fmt.Printf("done: video=%s audio=%s\n", videoPath, audioPath)
 	return nil
+}
+
+func createOutputFile(path string) (*os.File, error) {
+	dir := filepath.Dir(path)
+	if dir != "." {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			return nil, fmt.Errorf("create output dir failed (%s): %w", dir, err)
+		}
+	}
+	return os.Create(path)
 }
 
 func parseRTMPChunks(r io.Reader, w *mediaWriter) error {
@@ -236,9 +249,8 @@ func readAndApplyChunkMessageHeader(r io.Reader, fmtVal byte, st *chunkStreamSta
 		st.readSize = 0
 
 	case 1:
-		if st.messageStreamID == 0 && st.messageLength == 0 {
-			return fmt.Errorf("fmt=1 encountered without prior header (check -skip; if raw includes S0+S1+S2, use -skip=%d; if handshake already removed, use -skip=0)", handshakeSkip)
-		}
+		// Best-effort compatibility: some raw captures start a new csid with fmt=1.
+		// In that case the missing field is messageStreamID only; keep the zero value.
 		td, err := readU24()
 		if err != nil {
 			return err
@@ -267,7 +279,7 @@ func readAndApplyChunkMessageHeader(r io.Reader, fmtVal byte, st *chunkStreamSta
 		st.readSize = 0
 
 	case 2:
-		if st.messageStreamID == 0 && st.messageLength == 0 {
+		if st.messageLength == 0 {
 			return fmt.Errorf("fmt=2 encountered without prior header (check -skip; if raw includes S0+S1+S2, use -skip=%d; if handshake already removed, use -skip=0)", handshakeSkip)
 		}
 		td, err := readU24()

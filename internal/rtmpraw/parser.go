@@ -3,6 +3,7 @@ package rtmpraw
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 
@@ -92,7 +93,9 @@ func ParseRTMPRaw(r io.Reader, opt Options, out Output) (Result, error) {
 	}
 
 	err := parseRTMPChunks(r, w)
-	if err != nil && err != io.EOF {
+	if err != nil &&
+		!errors.Is(err, io.EOF) &&
+		!errors.Is(err, io.ErrUnexpectedEOF) {
 		return Result{}, err
 	}
 
@@ -236,9 +239,8 @@ func readAndApplyChunkMessageHeader(r io.Reader, fmtVal byte, st *chunkStreamSta
 		st.readSize = 0
 
 	case 1:
-		if st.messageStreamID == 0 && st.messageLength == 0 {
-			return fmt.Errorf("fmt=1 encountered without prior header")
-		}
+		// Best-effort compatibility: some raw captures start a new csid with fmt=1.
+		// In that case the missing field is messageStreamID only; keep the zero value.
 		td, err := readU24()
 		if err != nil {
 			return err
@@ -267,7 +269,7 @@ func readAndApplyChunkMessageHeader(r io.Reader, fmtVal byte, st *chunkStreamSta
 		st.readSize = 0
 
 	case 2:
-		if st.messageStreamID == 0 && st.messageLength == 0 {
+		if st.messageLength == 0 {
 			return fmt.Errorf("fmt=2 encountered without prior header")
 		}
 		td, err := readU24()
@@ -291,7 +293,6 @@ func readAndApplyChunkMessageHeader(r io.Reader, fmtVal byte, st *chunkStreamSta
 		if st.messageLength == 0 {
 			return fmt.Errorf("fmt=3 encountered without prior header")
 		}
-		// fmt=3 can be continuation or same-header new message.
 		if st.readSize == 0 {
 			if st.lastFmt != 0 && st.timestampDelta > 0 {
 				st.timestamp += st.timestampDelta
