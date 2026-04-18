@@ -41,6 +41,8 @@ type analyzeTask struct {
 	videoFrameRate  float64
 	audioSampleRate int
 	audioChannels   int
+	previewHub      *PreviewHub
+	previewEnc      *PreviewEncoder
 }
 
 type taskStartupError struct {
@@ -82,6 +84,12 @@ func (s *StreamAnalyzer) StartTask(ctx context.Context, taskReq *models.TaskRequ
 		cancel:   cancel,
 		streamCh: make(chan *models.StreamInfo, 4096),
 		aggDone:  make(chan struct{}),
+	}
+	if at.Type == "rtmp" || at.Type == "http-flv" {
+		at.previewHub = NewPreviewHub()
+		if enc, err := NewPreviewEncoder(); err == nil {
+			at.previewEnc = enc
+		}
 	}
 
 	s.tasks[taskID] = at
@@ -328,6 +336,7 @@ func (s *StreamAnalyzer) handleFLVTag(flvTag *tag.FlvTag, at *analyzeTask) {
 		info.VideoWidth = at.videoWidth
 		info.VideoHeight = at.videoHeight
 		info.VideoFrameRate = at.videoFrameRate
+		info.CTS = int64(data.CompositionTime)
 		if data.CompositionTime != 0 {
 			info.PTS = int64(flvTag.Timestamp) + int64(data.CompositionTime)
 		} else {
@@ -569,6 +578,38 @@ func (s *StreamAnalyzer) ListTasks() []*models.Task {
 		})
 	}
 	return tasks
+}
+
+func (s *StreamAnalyzer) SubscribePreview(taskID string) chan []byte {
+	s.mu.RLock()
+	at, ok := s.tasks[taskID]
+	s.mu.RUnlock()
+	if !ok || at.previewHub == nil {
+		ch := make(chan []byte)
+		close(ch)
+		return ch
+	}
+	return at.previewHub.Subscribe(taskID)
+}
+
+func (s *StreamAnalyzer) UnsubscribePreview(taskID string, ch chan []byte) {
+	s.mu.RLock()
+	at, ok := s.tasks[taskID]
+	s.mu.RUnlock()
+	if !ok || at.previewHub == nil {
+		return
+	}
+	at.previewHub.Unsubscribe(taskID, ch)
+}
+
+func (s *StreamAnalyzer) GetPreviewHeader(taskID string) []byte {
+	s.mu.RLock()
+	at, ok := s.tasks[taskID]
+	s.mu.RUnlock()
+	if !ok || at.previewEnc == nil {
+		return nil
+	}
+	return at.previewEnc.Header()
 }
 
 func (s *StreamAnalyzer) ParseRTMPURL(url string) (host, app, stream string) {

@@ -35,6 +35,7 @@ type FrameInfo struct {
 	MediaType string // video/audio
 	DTS       int64
 	PTS       int64
+	CTS       int64
 	FrameLen  int
 	FrameType string // I/P/B/- for audio
 }
@@ -373,6 +374,7 @@ func (w *mediaWriter) handleVideo(timestamp uint32, payload []byte) error {
 					MediaType: "video",
 					DTS:       int64(timestamp),
 					PTS:       pts,
+					CTS:       int64(video.CompositionTime),
 					FrameLen:  len(annexb),
 					FrameType: frameTypeToString(video.FrameType),
 				})
@@ -446,6 +448,7 @@ func (w *mediaWriter) handleVideo(timestamp uint32, payload []byte) error {
 					MediaType: "video",
 					DTS:       int64(timestamp),
 					PTS:       pts,
+					CTS:       int64(video.CompositionTime),
 					FrameLen:  len(annexb),
 					FrameType: frameTypeToString(video.FrameType),
 				})

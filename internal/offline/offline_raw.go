@@ -41,6 +41,7 @@ func (m *Manager) runRaw(task *models.OfflineTask, taskDir string, summary *mode
 				MediaType: fi.MediaType,
 				DTS:       fi.DTS,
 				PTS:       fi.PTS,
+				CTS:       fi.CTS,
 				FrameLen:  fi.FrameLen,
 				FrameType: fi.FrameType,
 			})

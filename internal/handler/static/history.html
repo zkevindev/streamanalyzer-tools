@@ -98,6 +98,11 @@
                     <button class="btn secondary" onclick="closeAnalysis()">关闭</button>
                 </div>
                 <div id="statsGrid" class="stats-grid"></div>
+                <div id="mediaFilterTabs" class="chart-tabs" style="margin-bottom:.5rem">
+                    <button type="button" class="active" data-filter="all" onclick="setMediaFilter('all')">全部</button>
+                    <button type="button" data-filter="video" onclick="setMediaFilter('video')">视频</button>
+                    <button type="button" data-filter="audio" onclick="setMediaFilter('audio')">音频</button>
+                </div>
                 <div id="flvChartTabs" class="chart-tabs">
                     <button type="button" class="active" data-chart="timestamp" onclick="showChart('timestamp')">DTS</button>
                     <button type="button" data-chart="length" onclick="showChart('length')">数据长度</button>
@@ -146,6 +151,7 @@
         let currentData = null;
         let currentChartType = 'timestamp';
         let currentHlsChartType = 'hls-ts';
+        let currentMediaFilter = 'all';
         const stoppingTasks = new Set();
         let chartRefreshInterval = null;
 
@@ -322,7 +328,7 @@
                 setFlvChartVisible(true);
                 updateStats(d);
                 if (typeof renderClientChart === 'function' && currentData) {
-                    renderClientChart(currentChartType, currentData, 'mainChart');
+                    renderClientChart(currentChartType, currentData, 'mainChart', currentMediaFilter);
                 }
                 updateChartTable(currentChartType);
             }
@@ -401,6 +407,17 @@
             }
         }
         
+        function setMediaFilter(filter) {
+            currentMediaFilter = filter;
+            document.querySelectorAll('#mediaFilterTabs button[data-filter]').forEach(function(b) {
+                b.classList.toggle('active', b.getAttribute('data-filter') === filter);
+            });
+            if (currentData && !isHlsAnalysisMode(currentData)) {
+                if (typeof renderClientChart === 'function') renderClientChart(currentChartType, currentData, 'mainChart', currentMediaFilter);
+                updateChartTable(currentChartType);
+            }
+        }
+
         function showChart(type) {
             if (isHlsAnalysisMode(currentData)) return;
             currentChartType = type;
@@ -408,7 +425,7 @@
                 b.classList.toggle('active', b.getAttribute('data-chart') === type);
             });
             if (currentData && typeof renderClientChart === 'function') {
-                renderClientChart(type, currentData, 'mainChart');
+                renderClientChart(type, currentData, 'mainChart', currentMediaFilter);
             }
             updateChartTable(type);
         }
@@ -416,6 +433,7 @@
         function updateChartTable(type) {
             if (!currentData || isHlsAnalysisMode(currentData)) return;
             const d = currentData;
+            const filter = currentMediaFilter || 'all';
             const tableDiv = document.getElementById('chartTable');
             const thead = document.getElementById('tableHead');
             const tbody = document.getElementById('tableBody');
@@ -425,54 +443,79 @@
             const maxRows = Number.MAX_SAFE_INTEGER;
             const displayStats = stats;
             const formatTime = (sec) => {
-                const d = new Date(Number(sec) * 1000);
-                if (Number.isNaN(d.getTime())) return '-';
+                const dd = new Date(Number(sec) * 1000);
+                if (Number.isNaN(dd.getTime())) return '-';
                 const pad = (n) => String(n).padStart(2, '0');
-                return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' +
-                    pad(d.getHours()) + ':' + pad(d.getMinutes()) + ':' + pad(d.getSeconds());
+                return dd.getFullYear() + '-' + pad(dd.getMonth() + 1) + '-' + pad(dd.getDate()) + ' ' +
+                    pad(dd.getHours()) + ':' + pad(dd.getMinutes()) + ':' + pad(dd.getSeconds());
             };
             const startSecond = displayStats.length > 0 ? Number(displayStats[0].second) : 0;
             switch(type) {
-                case 'timestamp':
+                case 'timestamp': {
                     tableDiv.style.display='block';
-                    headers='<tr><th>时间戳</th><th class="video">视频DTS</th><th class="video">视频PTS</th><th class="audio">音频DTS</th></tr>';
-                    const vts=d.video_dts||[], vpts=d.video_pts||[], ats=d.audio_dts||[];
-                    const allTsSet=new Set([].concat(vts,vpts,ats));
+                    const vts=d.video_dts||[], vpts=d.video_pts||[], ats=d.audio_dts||[], vcts=d.video_cts||[];
+                    let h='<tr><th>时间戳</th>';
+                    if(filter==='all'||filter==='video') h+='<th class="video">视频DTS</th><th class="video">视频PTS</th><th class="video">视频CTS</th>';
+                    if(filter==='all'||filter==='audio') h+='<th class="audio">音频DTS</th>';
+                    h+='</tr>';
+                    headers=h;
+                    const allTsSet=new Set([]);
+                    if(filter==='all'||filter==='video') { vts.forEach(v=>allTsSet.add(v)); vpts.forEach(v=>allTsSet.add(v)); }
+                    if(filter==='all'||filter==='audio') { ats.forEach(v=>allTsSet.add(v)); }
                     const allTs=Array.from(allTsSet).filter(v=>v!==null&&v!==undefined&&v!=='').sort((a,b)=>Number(a)-Number(b)).slice(0,maxRows);
                     const hasNum=(arr,x)=>arr.some(v=>Number(v)===Number(x));
-                    for(let i=0;i<allTs.length;i++){const t=allTs[i];rows+='<tr><td>'+t+'</td><td>'+(hasNum(vts,t)?t:'-')+'</td><td>'+(hasNum(vpts,t)?t:'-')+'</td><td>'+(hasNum(ats,t)?t:'-')+'</td></tr>';}
+                    for(let i=0;i<allTs.length;i++){
+                        const t=allTs[i];
+                        let r='<tr><td>'+t+'</td>';
+                        if(filter==='all'||filter==='video'){
+                            const ctsIdx=vts.indexOf(Number(t));
+                            r+='<td>'+(hasNum(vts,t)?t:'-')+'</td><td>'+(hasNum(vpts,t)?t:'-')+'</td><td>'+(ctsIdx>=0&&vcts[ctsIdx]!=null?vcts[ctsIdx]:'-')+'</td>';
+                        }
+                        if(filter==='all'||filter==='audio') r+='<td>'+(hasNum(ats,t)?t:'-')+'</td>';
+                        r+='</tr>';
+                        rows+=r;
+                    }
                     break;
+                }
                 case 'length':
                     tableDiv.style.display='block';
-                    headers='<tr><th>#</th><th class="video">视频长度</th><th class="audio">音频长度</th></tr>';
+                    headers='<tr><th>#</th>'+(filter==='all'||filter==='video'?'<th class="video">视频长度</th>':'')+(filter==='all'||filter==='audio'?'<th class="audio">音频长度</th>':'')+'</tr>';
                     const vls=d.video_lens||[], als=d.audio_lens||[];
-                    const lsLen=Math.min(Math.max(vls.length,als.length),maxRows);
-                    for(let i=0;i<lsLen;i++){rows+='<tr><td>'+(i+1)+'</td><td>'+(vls[i]||'-')+'</td><td>'+(als[i]||'-')+'</td></tr>';}
+                    const lsLen=Math.min((filter==='all'?Math.max(vls.length,als.length):(filter==='video'?vls.length:als.length)),maxRows);
+                    for(let i=0;i<lsLen;i++){
+                        rows+='<tr><td>'+(i+1)+'</td>';
+                        if(filter==='all'||filter==='video') rows+='<td>'+(vls[i]||'-')+'</td>';
+                        if(filter==='all'||filter==='audio') rows+='<td>'+(als[i]||'-')+'</td>';
+                        rows+='</tr>';
+                    }
                     break;
                 case 'iframe':
                     tableDiv.style.display='block';
+                    if(filter==='audio'){headers='<tr><th>#</th><th>I帧间隔</th></tr>';rows='<tr><td colspan="2">音频无 I 帧间隔数据</td></tr>';break;}
                     headers='<tr><th>#</th><th class="video">I帧间隔</th></tr>';
                     const iframes=(d.iframe_intervals||[]).filter(v=>v>0).slice(0,maxRows);
                     for(let i=0;i<iframes.length;i++){rows+='<tr><td>'+(i+1)+'</td><td>'+iframes[i]+'</td></tr>';}
                     break;
                 case 'gop':
                     tableDiv.style.display='block';
+                    if(filter==='audio'){headers='<tr><th>#</th><th>GOP大小</th></tr>';rows='<tr><td colspan="2">音频无 GOP 数据</td></tr>';break;}
                     headers='<tr><th>#</th><th class="video">GOP大小</th></tr>';
                     const gops=(d.gop_sizes||[]).slice(0,maxRows);
                     for(let i=0;i<gops.length;i++){rows+='<tr><td>'+(i+1)+'</td><td>'+gops[i]+'</td></tr>';}
                     break;
                 case 'bitrate':
                     tableDiv.style.display='block';
-                    headers='<tr><th>时间</th><th class="video">视频码率</th><th class="audio">音频码率</th></tr>';
-                    for(let i=0;i<displayStats.length;i++){const s=displayStats[i];const rel=Number(s.second)-startSecond;rows+='<tr><td>T+'+rel+'s<br/>'+formatTime(s.second)+'</td><td>'+s.video_bitrate.toFixed(1)+'</td><td>'+s.audio_bitrate.toFixed(1)+'</td></tr>';}
+                    headers='<tr><th>时间</th>'+(filter==='all'||filter==='video'?'<th class="video">视频码率</th>':'')+(filter==='all'||filter==='audio'?'<th class="audio">音频码率</th>':'')+'</tr>';
+                    for(let i=0;i<displayStats.length;i++){const s=displayStats[i];const rel=Number(s.second)-startSecond;rows+='<tr><td>T+'+rel+'s<br/>'+formatTime(s.second)+'</td>'+(filter==='all'||filter==='video'?'<td>'+s.video_bitrate.toFixed(1)+'</td>':'')+(filter==='all'||filter==='audio'?'<td>'+s.audio_bitrate.toFixed(1)+'</td>':'')+'</tr>';}
                     break;
                 case 'fps':
                     tableDiv.style.display='block';
-                    headers='<tr><th>时间</th><th class="video">视频FPS</th><th class="audio">音频FPS</th></tr>';
-                    for(let i=0;i<displayStats.length;i++){const s=displayStats[i];const rel=Number(s.second)-startSecond;rows+='<tr><td>T+'+rel+'s<br/>'+formatTime(s.second)+'</td><td>'+s.video_fps+'</td><td>'+s.audio_fps+'</td></tr>';}
+                    headers='<tr><th>时间</th>'+(filter==='all'||filter==='video'?'<th class="video">视频FPS</th>':'')+(filter==='all'||filter==='audio'?'<th class="audio">音频FPS</th>':'')+'</tr>';
+                    for(let i=0;i<displayStats.length;i++){const s=displayStats[i];const rel=Number(s.second)-startSecond;rows+='<tr><td>T+'+rel+'s<br/>'+formatTime(s.second)+'</td>'+(filter==='all'||filter==='video'?'<td>'+s.video_fps+'</td>':'')+(filter==='all'||filter==='audio'?'<td>'+s.audio_fps+'</td>':'')+'</tr>';}
                     break;
                 case 'avsync':
                     tableDiv.style.display='block';
+                    if(filter!=='all'){headers='<tr><th>视频DTS</th><th>最近音频DTS</th><th>偏差</th></tr>';rows='<tr><td colspan="3">AV 同步需在“全部”模式下查看</td></tr>';break;}
                     headers='<tr><th>视频DTS</th><th class="audio">最近音频DTS</th><th>偏差</th></tr>';
                     const avVts=(d.video_dts||[]).map(Number).filter(v=>!Number.isNaN(v));
                     const avAts=(d.audio_dts||[]).map(Number).filter(v=>!Number.isNaN(v));

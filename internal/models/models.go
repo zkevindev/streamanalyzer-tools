@@ -24,6 +24,7 @@ type StreamInfo struct {
 	SampleRate     int       `json:"sample_rate"`
 	Channels       int       `json:"channels"`
 	PTS            int64     `json:"pts"`
+	CTS            int64     `json:"cts"`
 	FrameType      string    `json:"frame_type"`      // I/P/B frame
 	IsKeyFrame     bool      `json:"is_key_frame"`    // is I frame
 	IFrameInterval int64     `json:"iframe_interval"` // I帧间隔(ms)
@@ -80,6 +81,7 @@ type ChartData struct {
 	Channels        int           `json:"channels"`
 	VideoDTS        []int64       `json:"video_dts"`
 	VideoPTS        []int64       `json:"video_pts"`
+	VideoCTS        []int64       `json:"video_cts"`
 	AudioDTS        []int64       `json:"audio_dts"`
 	VideoLens       []int64       `json:"video_lens"`
 	AudioLens       []int64       `json:"audio_lens"`
@@ -212,6 +214,7 @@ type OfflineFrameDetail struct {
 	MediaType string `json:"media_type,omitempty"` // video/audio
 	DTS       int64  `json:"dts,omitempty"`
 	PTS       int64  `json:"pts,omitempty"`
+	CTS       int64  `json:"cts,omitempty"`
 	FrameLen  int    `json:"frame_len,omitempty"`
 	FrameType string `json:"frame_type,omitempty"` // I/P/B/- for audio
 }

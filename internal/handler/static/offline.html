@@ -76,6 +76,19 @@
     .kv .k{background:#fafaf9;color:var(--text-muted)}
     code{font-family:ui-monospace,monospace;font-size:.8125rem;background:#f3f4f6;padding:.125rem .375rem;border-radius:.25rem}
     .empty-state{text-align:center;padding:3rem;color:var(--text-muted);font-size:.875rem}
+    .media-filter{display:inline-flex;background:#f5f4f2;border-radius:12px;padding:4px;gap:3px;margin-bottom:1rem;box-shadow:inset 0 1px 2px rgba(0,0,0,.04),0 1px 0 rgba(255,255,255,.5)}
+    .media-filter button{display:inline-flex;align-items:center;gap:.5rem;padding:.5rem 1rem;font-size:.8125rem;font-weight:600;border:none;border-radius:10px;background:transparent;color:#78716c;cursor:pointer;transition:all .25s cubic-bezier(0.16,1,0.3,1);position:relative;overflow:hidden}
+    .media-filter button::before{content:'';position:absolute;inset:0;border-radius:10px;opacity:0;transition:opacity .2s ease}
+    .media-filter button svg{width:16px;height:16px;opacity:.6;transition:all .2s ease}
+    .media-filter button:hover{color:#44403c;background:rgba(255,255,255,.6);transform:translateY(-1px)}
+    .media-filter button:hover svg{opacity:.85}
+    .media-filter button.active{background:#fff;color:#1a1918;box-shadow:0 2px 8px rgba(0,0,0,.08),0 1px 3px rgba(0,0,0,.05),inset 0 1px 0 rgba(255,255,255,.8);transform:translateY(0)}
+    .media-filter button.active svg{opacity:1}
+    .media-filter button[data-filter="all"].active{color:#1a1918}
+    .media-filter button[data-filter="video"].active{color:#d97757}
+    .media-filter button[data-filter="audio"].active{color:#059669}
+    .media-filter button[data-filter="video"].active::before{background:linear-gradient(135deg,rgba(217,119,87,.08) 0%,rgba(217,119,87,.02) 100%);opacity:1}
+    .media-filter button[data-filter="audio"].active::before{background:linear-gradient(135deg,rgba(5,150,105,.08) 0%,rgba(5,150,105,.02) 100%);opacity:1}
     @media(max-width:640px){body{padding:1rem}.form-grid{grid-template-columns:1fr}.page-header{flex-direction:column}.chart-grid{grid-template-columns:1fr}}
   </style>
 </head>
@@ -211,6 +224,20 @@
         <div class="section" id="rawFrameSection" style="display:none">
           <div class="section-title" id="mediaDetailMainTitle">媒体包明细</div>
           <p id="rawFrameModeHint" class="hint tip" style="display:none"></p>
+          <div id="offlineMediaFilterTabs" class="media-filter" style="margin-bottom:.5rem;display:none">
+            <button type="button" class="active" data-filter="all" onclick="setOfflineFilter('all')">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+              全部
+            </button>
+            <button type="button" data-filter="video" onclick="setOfflineFilter('video')">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="15" height="10" rx="2"/><path d="M17 2l5 5-5 5"/></svg>
+              视频
+            </button>
+            <button type="button" data-filter="audio" onclick="setOfflineFilter('audio')">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
+              音频
+            </button>
+          </div>
 
           <div id="tsPesWrap" style="display:none">
             <div class="section-title" style="font-size:.875rem;margin-top:.5rem">TS PES 明细</div>
@@ -237,9 +264,9 @@
               <summary id="rawFrameSummary">音视频帧明细</summary>
               <div class="table-wrap" style="margin-top:0;max-height:420px;overflow:auto">
                 <table class="small">
-                  <thead>
+                  <thead id="rawFrameHead">
                     <tr>
-                      <th>#</th><th>媒体</th><th>DTS</th><th>PTS</th><th>长度</th><th>帧类型</th>
+                      <th>#</th><th>媒体</th><th>DTS</th><th>PTS</th><th>CTS</th><th>长度</th><th>帧类型</th>
                     </tr>
                   </thead>
                   <tbody id="rawFrameBody"></tbody>
@@ -283,6 +310,25 @@
   <script src="/static/echarts_helpers.js"></script>
   <script>
     let currentId = null;
+    let currentOfflineFilter = 'all';
+    function setOfflineFilter(filter){
+      currentOfflineFilter = filter;
+      document.querySelectorAll('#offlineMediaFilterTabs button[data-filter]').forEach(function(b){
+        b.classList.toggle('active', b.getAttribute('data-filter') === filter);
+      });
+      const mode = String(document.getElementById('mode').value || '').toLowerCase();
+      // Re-render whichever view is currently shown
+      const tsWrap = document.getElementById('tsPesWrap');
+      const rawWrap = document.getElementById('rawFrameWrap');
+      if(tsWrap && tsWrap.style.display !== 'none'){
+        // For TS, re-render would require keeping flows in memory; we'll handle in show()
+      }
+      if(rawWrap && rawWrap.style.display !== 'none'){
+        // Need to re-render raw frames; show() stores in rawFlows but we don't have global access.
+        // Instead, we'll trigger show(currentId) to re-render.
+        if(currentId) show(currentId);
+      }
+    }
     function setRunHint(msg){
       const el = document.getElementById('runHint');
       if(!el) return;
@@ -511,15 +557,23 @@
       const trunc = document.getElementById('tsPesTruncHint');
       const hint = document.getElementById('rawFrameModeHint');
       const title = document.getElementById('mediaDetailMainTitle');
+      const filterTabs = document.getElementById('offlineMediaFilterTabs');
       if(!section || !tsWrap || !rawWrap || !body || !summary) return;
       if(hint){ hint.style.display = 'none'; hint.textContent = ''; }
       if(title){ title.textContent = '媒体包明细'; }
       rawWrap.style.display = 'none';
       tsWrap.style.display = '';
+      if(filterTabs){ filterTabs.style.display = ''; }
       const all = [];
       (flows||[]).forEach(function(f){
         const items = Array.isArray(f.pes_details) ? f.pes_details : [];
         items.forEach(function(it){ all.push(it); });
+      });
+      const filter = currentOfflineFilter || 'all';
+      const filtered = all.filter(function(it){
+        if(filter === 'all') return true;
+        const cat = String(it.category || '').toLowerCase();
+        return (filter === 'video' && cat === 'video') || (filter === 'audio' && cat === 'audio');
       });
       const total = (flows && flows[0] && flows[0].pes_detail_total != null) ? Number(flows[0].pes_detail_total) : all.length;
       let truncFlag = false;
@@ -536,8 +590,8 @@
         }
       }
       body.innerHTML = '';
-      for(let i=0;i<all.length;i++){
-        const it = all[i] || {};
+      for(let i=0;i<filtered.length;i++){
+        const it = filtered[i] || {};
         const tr = document.createElement('tr');
         tr.innerHTML =
           '<td>' + String(it.seq ?? (i+1)) + '</td>' +
@@ -553,63 +607,80 @@
           '<td style="max-width:280px;word-break:break-all;font-size:.75rem">' + naluBriefLine(it.nalus) + '</td>';
         body.appendChild(tr);
       }
-      if(all.length === 0){
+      if(filtered.length === 0){
         const tr = document.createElement('tr');
-        tr.innerHTML = '<td colspan="11" style="color:var(--text-muted)">暂无 PES 明细（请重新解析 TS 任务以生成 pes_details）。</td>';
+        const emptyMsg = filter !== 'all' ? '当前过滤条件下无 PES 数据' : '暂无 PES 明细（请重新解析 TS 任务以生成 pes_details）。';
+        tr.innerHTML = '<td colspan="11" style="color:var(--text-muted)">' + emptyMsg + '</td>';
         body.appendChild(tr);
       }
-      summary.textContent = 'PES 包列表（展示 ' + all.length + ' / ' + (isFinite(total)?total:all.length) + '）';
+      summary.textContent = 'PES 包列表（展示 ' + filtered.length + ' / ' + (isFinite(total)?total:all.length) + '）';
       section.style.display = '';
     }
     function renderRawFrames(mode, flows){
       const section = document.getElementById('rawFrameSection');
       const body = document.getElementById('rawFrameBody');
+      const head = document.getElementById('rawFrameHead');
       const summary = document.getElementById('rawFrameSummary');
       const hint = document.getElementById('rawFrameModeHint');
       const details = document.getElementById('rawFrameDetails');
       const tsWrap = document.getElementById('tsPesWrap');
       const rawWrap = document.getElementById('rawFrameWrap');
       const title = document.getElementById('mediaDetailMainTitle');
+      const filterTabs = document.getElementById('offlineMediaFilterTabs');
       if(!section || !body || !summary) return;
       if(hint){ hint.style.display = 'none'; hint.textContent = ''; }
       if(title){ title.textContent = '媒体包明细'; }
       if(tsWrap){ tsWrap.style.display = 'none'; }
       if(rawWrap){ rawWrap.style.display = ''; }
       if(details){ details.style.display = ''; }
+      if(filterTabs){ filterTabs.style.display = ''; }
+      const m = String(mode||'').toLowerCase();
+      const showCTS = (m === 'flv' || m === 'raw');
+      if(head){
+        head.innerHTML = '<tr><th>#</th><th>媒体</th><th>DTS</th><th>PTS</th>' + (showCTS ? '<th>CTS</th>' : '') + '<th>长度</th><th>帧类型</th></tr>';
+      }
       const all = [];
       (flows||[]).forEach(f=>{
         const items = Array.isArray(f.frame_details) ? f.frame_details : [];
         items.forEach(it=>all.push(it));
       });
+      const filter = currentOfflineFilter || 'all';
+      const filtered = all.filter(function(it){
+        if(filter === 'all') return true;
+        const mt = String(it.media_type || '').toLowerCase();
+        return mt === filter;
+      });
       body.innerHTML = '';
-      if(all.length === 0){
+      if(filtered.length === 0){
         const tr = document.createElement('tr');
         let emptyMsg = '暂无逐帧数据。';
-        const m = String(mode||'').toLowerCase();
         if(m === 'mp4'){
-          emptyMsg = '暂无逐帧数据（请确认 MP4 含可解析的音视频轨）。';
+          emptyMsg = filter !== 'all' ? '当前过滤条件下无逐帧数据' : '暂无逐帧数据（请确认 MP4 含可解析的音视频轨）。';
         }else if(m === 'flv'){
-          emptyMsg = '暂无逐帧数据（请确认 FLV 含音视频 Tag）。';
+          emptyMsg = filter !== 'all' ? '当前过滤条件下无逐帧数据' : '暂无逐帧数据（请确认 FLV 含音视频 Tag）。';
         }else{
-          emptyMsg = '暂无逐帧数据（旧任务或未解析出音视频的 raw 文件会为空）。请用「模式：raw」重新上传 RTMP 单方向裸流。';
+          emptyMsg = filter !== 'all' ? '当前过滤条件下无逐帧数据' : '暂无逐帧数据（旧任务或未解析出音视频的 raw 文件会为空）。请用「模式：raw」重新上传 RTMP 单方向裸流。';
         }
-        tr.innerHTML = '<td colspan="6" style="color:var(--text-muted)">' + emptyMsg + '</td>';
+        const cols = showCTS ? 7 : 6;
+        tr.innerHTML = '<td colspan="' + cols + '" style="color:var(--text-muted)">' + emptyMsg + '</td>';
         body.appendChild(tr);
       }else{
-        for(let i=0;i<all.length;i++){
-          const it = all[i] || {};
+        for(let i=0;i<filtered.length;i++){
+          const it = filtered[i] || {};
           const tr = document.createElement('tr');
+          const ctsCell = showCTS ? ('<td>' + String(it.cts ?? '-') + '</td>') : '';
           tr.innerHTML =
             '<td>' + (i+1) + '</td>' +
             '<td>' + String(it.media_type || '-') + '</td>' +
             '<td>' + String(it.dts ?? '-') + '</td>' +
             '<td>' + String(it.pts ?? '-') + '</td>' +
+            ctsCell +
             '<td>' + fmtBytes(it.frame_len ?? 0) + '</td>' +
             '<td>' + String(it.frame_type || '-') + '</td>';
           body.appendChild(tr);
         }
       }
-      summary.textContent = '音视频帧明细（共 ' + all.length + ' 帧）';
+      summary.textContent = '音视频帧明细（共 ' + filtered.length + ' 帧）';
       section.style.display = '';
     }
     function clearTbody(id){
@@ -749,6 +820,18 @@
       destroyOfflineCharts();
       if(typeof echarts === 'undefined'){
         section.style.display = 'none';
+        return;
+      }
+      const filter = currentOfflineFilter || 'all';
+      if(filter === 'audio'){
+        iIntervalChart = echarts.init(iEl);
+        iIntervalChart.setOption({
+          title:{text:'音频无 I 帧间隔数据', left:'center', top:'middle'},
+          xAxis:{type:'category', data:[]},
+          yAxis:{type:'value'},
+          series:[]
+        });
+        section.style.display = '';
         return;
       }
       const series = calcOfflineSeries(mode, flows);

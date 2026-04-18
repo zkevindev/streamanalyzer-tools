@@ -71,6 +71,14 @@ func (s *StreamAnalyzer) readFLVStream(ctx context.Context, decoder FlvDecoder, 
 			return err
 		}
 
+		if at.previewHub != nil && at.previewEnc != nil {
+			if cloned, err := cloneFlvTag(flvTag); err == nil {
+				if data, err := at.previewEnc.Encode(cloned); err == nil && len(data) > 0 {
+					at.previewHub.Broadcast(at.ID, data)
+				}
+			}
+		}
+
 		s.handleFLVTag(flvTag, at)
 	}
 }
@@ -85,6 +93,14 @@ func (s *StreamAnalyzer) readRTMPStream(ctx context.Context, decoder *RTMPDecode
 				return err
 			}
 			return err
+		}
+
+		if at.previewHub != nil && at.previewEnc != nil {
+			if cloned, err := cloneFlvTag(flvTag); err == nil {
+				if data, err := at.previewEnc.Encode(cloned); err == nil && len(data) > 0 {
+					at.previewHub.Broadcast(at.ID, data)
+				}
+			}
 		}
 
 		s.handleFLVTag(flvTag, at)

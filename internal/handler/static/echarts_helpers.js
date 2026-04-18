@@ -13,7 +13,9 @@
   function toTimestampSeries(arr) {
     const out = [];
     for (let i = 0; i < (arr || []).length; i++) {
-      const ts = Number(arr[i]);
+      const v = arr[i];
+      if (v === null || v === undefined) continue;
+      const ts = Number(v);
       if (!Number.isNaN(ts)) out.push([ts, ts]);
     }
     return out;
@@ -76,7 +78,8 @@
    * @param {object} d - ChartData from /api/task/:id/data
    * @param {string} domId
    */
-  window.renderClientChart = function (type, d, domId) {
+  window.renderClientChart = function (type, d, domId, filter) {
+    filter = filter || 'all';
     const chart = window.ensureMainChart(domId);
     if (!chart) return;
     if (!d || !d.frame_types || d.frame_types.length === 0) {
@@ -94,10 +97,27 @@
         const vts = d.video_dts || [];
         const vpts = d.video_pts || [];
         const ats = d.audio_dts || [];
+        const vcts = d.video_cts || [];
+        const legendData = [];
+        const series = [];
+        if (filter === 'all' || filter === 'video') {
+          legendData.push('视频DTS', '视频PTS', '视频CTS');
+          series.push(
+            { name: '视频DTS', type: 'line', data: toTimestampSeries(vts), showSymbol: false },
+            { name: '视频PTS', type: 'line', data: toTimestampSeries(vpts), showSymbol: false },
+            { name: '视频CTS', type: 'line', data: toTimestampSeries(vcts), showSymbol: false }
+          );
+        }
+        if (filter === 'all' || filter === 'audio') {
+          legendData.push('音频DTS');
+          series.push(
+            { name: '音频DTS', type: 'line', data: toTimestampSeries(ats), showSymbol: false }
+          );
+        }
         option = {
           title: { text: '时间戳对齐视图 (ms)', left: 'center' },
           tooltip: { trigger: 'axis' },
-          legend: { data: ['视频DTS', '视频PTS', '音频DTS'], top: 28 },
+          legend: { data: legendData, top: 28 },
           grid: baseGrid(),
           xAxis: { type: 'value', name: '时间戳(ms)', scale: true },
           yAxis: { type: 'value', name: 'ms', scale: true },
@@ -105,38 +125,29 @@
             { type: 'inside', start: 0, end: 100 },
             { type: 'slider', start: 0, end: 100, height: 18 },
           ],
-          series: [
-            {
-              name: '视频DTS',
-              type: 'line',
-              data: toTimestampSeries(vts),
-              showSymbol: false,
-            },
-            {
-              name: '视频PTS',
-              type: 'line',
-              data: toTimestampSeries(vpts),
-              showSymbol: false,
-            },
-            {
-              name: '音频DTS',
-              type: 'line',
-              data: toTimestampSeries(ats),
-              showSymbol: false,
-            },
-          ],
+          series: series,
         };
         break;
       }
       case 'length': {
         const vls = d.video_lens || [];
         const als = d.audio_lens || [];
-        const n = Math.max(vls.length, als.length, 1);
+        const n = Math.max(filter === 'all' ? Math.max(vls.length, als.length) : (filter === 'video' ? vls.length : als.length), 1);
         const x = Array.from({ length: n }, (_, i) => String(i));
+        const legendData = [];
+        const series = [];
+        if (filter === 'all' || filter === 'video') {
+          legendData.push('视频');
+          series.push({ name: '视频', type: 'line', data: padToLen(vls, n), showSymbol: false });
+        }
+        if (filter === 'all' || filter === 'audio') {
+          legendData.push('音频');
+          series.push({ name: '音频', type: 'line', data: padToLen(als, n), showSymbol: false });
+        }
         option = {
           title: { text: '数据长度 (bytes)', left: 'center' },
           tooltip: { trigger: 'axis' },
-          legend: { data: ['视频', '音频'], top: 28 },
+          legend: { data: legendData, top: 28 },
           grid: baseGrid(),
           xAxis: { type: 'category', name: '序号', data: x },
           yAxis: { type: 'value', name: 'bytes', scale: true },
@@ -144,31 +155,19 @@
             { type: 'inside', start: 0, end: 100 },
             { type: 'slider', start: 0, end: 100, height: 18 },
           ],
-          series: [
-            {
-              name: '视频',
-              type: 'line',
-              data: padToLen(vls, n),
-              showSymbol: false,
-            },
-            {
-              name: '音频',
-              type: 'line',
-              data: padToLen(als, n),
-              showSymbol: false,
-            },
-          ],
+          series: series,
         };
         break;
       }
       case 'iframe': {
+        if (filter === 'audio') {
+          chart.clear();
+          chart.setOption({ title: { text: '音频无 I 帧间隔数据', left: 'center', top: 'middle' } });
+          return;
+        }
         const raw = d.iframe_intervals || [];
-        const vals = raw.filter(function (v) {
-          return v > 0;
-        });
-        const x = vals.map(function (_, i) {
-          return String(i);
-        });
+        const vals = raw.filter(function (v) { return v > 0; });
+        const x = vals.map(function (_, i) { return String(i); });
         option = {
           title: { text: 'I 帧间隔 (ms)', left: 'center' },
           tooltip: { trigger: 'axis' },
@@ -180,10 +179,13 @@
         break;
       }
       case 'gop': {
+        if (filter === 'audio') {
+          chart.clear();
+          chart.setOption({ title: { text: '音频无 GOP 数据', left: 'center', top: 'middle' } });
+          return;
+        }
         const gops = d.gop_sizes || [];
-        const x = gops.map(function (_, i) {
-          return String(i);
-        });
+        const x = gops.map(function (_, i) { return String(i); });
         option = {
           title: { text: 'GOP 大小', left: 'center' },
           tooltip: { trigger: 'axis' },
@@ -200,13 +202,31 @@
       }
       case 'bitrate': {
         const stats = d.second_stats || [];
-        const x = stats.map(function (_, i) {
-          return String(i);
-        });
+        const x = stats.map(function (_, i) { return String(i); });
+        const legendData = [];
+        const series = [];
+        if (filter === 'all' || filter === 'video') {
+          legendData.push('视频');
+          series.push({
+            name: '视频',
+            type: 'line',
+            data: stats.map(function (s) { return s.video_bitrate; }),
+            showSymbol: false,
+          });
+        }
+        if (filter === 'all' || filter === 'audio') {
+          legendData.push('音频');
+          series.push({
+            name: '音频',
+            type: 'line',
+            data: stats.map(function (s) { return s.audio_bitrate; }),
+            showSymbol: false,
+          });
+        }
         option = {
           title: { text: '码率 (Kbps, 相对秒)', left: 'center' },
           tooltip: { trigger: 'axis' },
-          legend: { data: ['视频', '音频'], top: 28 },
+          legend: { data: legendData, top: 28 },
           grid: baseGrid(),
           xAxis: { type: 'category', name: '相对秒', data: x },
           yAxis: { type: 'value', name: 'Kbps' },
@@ -214,36 +234,37 @@
             { type: 'inside', start: 0, end: 100 },
             { type: 'slider', start: 0, end: 100, height: 18 },
           ],
-          series: [
-            {
-              name: '视频',
-              type: 'line',
-              data: stats.map(function (s) {
-                return s.video_bitrate;
-              }),
-              showSymbol: false,
-            },
-            {
-              name: '音频',
-              type: 'line',
-              data: stats.map(function (s) {
-                return s.audio_bitrate;
-              }),
-              showSymbol: false,
-            },
-          ],
+          series: series,
         };
         break;
       }
       case 'fps': {
         const stats = d.second_stats || [];
-        const x = stats.map(function (_, i) {
-          return String(i);
-        });
+        const x = stats.map(function (_, i) { return String(i); });
+        const legendData = [];
+        const series = [];
+        if (filter === 'all' || filter === 'video') {
+          legendData.push('视频FPS');
+          series.push({
+            name: '视频FPS',
+            type: 'line',
+            data: stats.map(function (s) { return s.video_fps; }),
+            showSymbol: false,
+          });
+        }
+        if (filter === 'all' || filter === 'audio') {
+          legendData.push('音频FPS');
+          series.push({
+            name: '音频FPS',
+            type: 'line',
+            data: stats.map(function (s) { return s.audio_fps; }),
+            showSymbol: false,
+          });
+        }
         option = {
           title: { text: '每秒帧数 (相对秒)', left: 'center' },
           tooltip: { trigger: 'axis' },
-          legend: { data: ['视频FPS', '音频FPS'], top: 28 },
+          legend: { data: legendData, top: 28 },
           grid: baseGrid(),
           xAxis: { type: 'category', name: '相对秒', data: x },
           yAxis: { type: 'value', name: 'FPS' },
@@ -251,28 +272,16 @@
             { type: 'inside', start: 0, end: 100 },
             { type: 'slider', start: 0, end: 100, height: 18 },
           ],
-          series: [
-            {
-              name: '视频FPS',
-              type: 'line',
-              data: stats.map(function (s) {
-                return s.video_fps;
-              }),
-              showSymbol: false,
-            },
-            {
-              name: '音频FPS',
-              type: 'line',
-              data: stats.map(function (s) {
-                return s.audio_fps;
-              }),
-              showSymbol: false,
-            },
-          ],
+          series: series,
         };
         break;
       }
       case 'avsync': {
+        if (filter !== 'all') {
+          chart.clear();
+          chart.setOption({ title: { text: 'AV 同步需在“全部”模式下查看', left: 'center', top: 'middle' } });
+          return;
+        }
         const series = calcAVSyncDiffSeries(d.video_dts || [], d.audio_dts || []);
         option = {
           title: { text: 'AV 同步偏差 (视频DTS-最近音频DTS, ms)', left: 'center' },

@@ -219,6 +219,7 @@ func (e *flvExtractor) handleVideo(ts int64, video *tag.VideoData) (*models.Offl
 				MediaType: "video",
 				DTS:       ts,
 				PTS:       ts + int64(video.CompositionTime),
+				CTS:       int64(video.CompositionTime),
 				FrameLen:  len(annexb),
 				FrameType: flvFrameType(video.FrameType),
 			}, nil
@@ -285,6 +286,7 @@ func (e *flvExtractor) handleVideo(ts int64, video *tag.VideoData) (*models.Offl
 				MediaType: "video",
 				DTS:       ts,
 				PTS:       ts + int64(video.CompositionTime),
+				CTS:       int64(video.CompositionTime),
 				FrameLen:  len(annexb),
 				FrameType: flvFrameType(video.FrameType),
 			}, nil

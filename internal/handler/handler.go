@@ -18,6 +18,7 @@ import (
 	"streamanalyzer/internal/storage"
 
 	"github.com/gin-gonic/gin"
+	"github.com/gorilla/websocket"
 	"github.com/xuri/excelize/v2"
 )
 
@@ -61,6 +62,7 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	r.GET("/realtime", func(c *gin.Context) { c.File("./internal/handler/static/realtime.html") })
 	r.GET("/history", func(c *gin.Context) { c.File("./internal/handler/static/history.html") })
 	r.GET("/offline", func(c *gin.Context) { c.File("./internal/handler/static/offline.html") })
+	r.GET("/ws/preview/:id", h.PreviewWebSocket)
 }
 
 func (h *Handler) CreateOfflineTask(c *gin.Context) {
@@ -280,7 +282,7 @@ func (h *Handler) readTaskXLSXData(taskID string) (*models.ChartData, error) {
 		if i == 0 {
 			continue
 		}
-		if len(record) < 15 {
+		if len(record) < 16 {
 			continue
 		}
 
@@ -325,6 +327,11 @@ func (h *Handler) readTaskXLSXData(taskID string) (*models.ChartData, error) {
 				} else {
 					chartData.VideoPTS = append(chartData.VideoPTS, dts)
 				}
+				if cts, err := strconv.ParseInt(record[10], 10, 64); err == nil {
+					chartData.VideoCTS = append(chartData.VideoCTS, cts)
+				} else {
+					chartData.VideoCTS = append(chartData.VideoCTS, 0)
+				}
 			}
 		}
 		var audioLen int64
@@ -336,30 +343,30 @@ func (h *Handler) readTaskXLSXData(taskID string) (*models.ChartData, error) {
 			}
 		}
 		if videoLen > 0 || audioLen > 0 {
-			frameType := record[10]
+			frameType := record[11]
 			chartData.FrameTypes = append(chartData.FrameTypes, frameType)
-			if ifInterval, err := strconv.ParseInt(record[12], 10, 64); err == nil {
+			if ifInterval, err := strconv.ParseInt(record[13], 10, 64); err == nil {
 				chartData.IFrameIntervals = append(chartData.IFrameIntervals, ifInterval)
 			}
-			if gopSize, err := strconv.Atoi(record[13]); err == nil {
+			if gopSize, err := strconv.Atoi(record[14]); err == nil {
 				chartData.GOPSizes = append(chartData.GOPSizes, gopSize)
 			}
 		}
-		if len(record) > 15 {
-			if vfr, err := strconv.ParseFloat(record[15], 64); err == nil && vfr > 0 {
+		if len(record) > 16 {
+			if vfr, err := strconv.ParseFloat(record[16], 64); err == nil && vfr > 0 {
 				chartData.VideoFrameRate = vfr
 			}
 		}
-		if len(record) > 16 && chartData.MetadataJSON == "" && record[16] != "" {
-			chartData.MetadataJSON = record[16]
+		if len(record) > 17 && chartData.MetadataJSON == "" && record[17] != "" {
+			chartData.MetadataJSON = record[17]
 		}
 
-		if len(record) <= 14 || record[14] == "" {
+		if len(record) <= 15 || record[15] == "" {
 			// During live write/flush, a partially written row may appear transiently.
 			// Skip invalid rows instead of failing the whole API response.
 			continue
 		}
-		recordedAt, err := time.ParseInLocation("2006-01-02 15:04:05", record[14], time.Local)
+		recordedAt, err := time.ParseInLocation("2006-01-02 15:04:05", record[15], time.Local)
 		if err != nil {
 			continue
 		}
@@ -493,4 +500,46 @@ func (h *Handler) DownloadXLSX(c *gin.Context) {
 	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s.xlsx", taskID))
 	c.Header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 	c.File(xlsxPath)
+}
+
+var upgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool { return true },
+}
+
+func (h *Handler) PreviewWebSocket(c *gin.Context) {
+	taskID := c.Param("id")
+
+	task, err := h.analyzer.GetTask(taskID)
+	if err != nil || task.Status != "running" {
+		c.JSON(http.StatusNotFound, gin.H{"error": "task not found or not running"})
+		return
+	}
+	if task.Type != "rtmp" && task.Type != "http-flv" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "preview only supports rtmp and http-flv"})
+		return
+	}
+
+	ws, err := upgrader.Upgrade(c.Writer, c.Request, nil)
+	if err != nil {
+		return
+	}
+	defer ws.Close()
+
+	// Send FLV header first so mpegts.js can parse the stream from the beginning.
+	taskObj, err := h.analyzer.GetTask(taskID)
+	if err == nil && (taskObj.Type == "rtmp" || taskObj.Type == "http-flv") {
+		// The analyzer guarantees previewEnc is non-nil for these types.
+		if header := h.analyzer.GetPreviewHeader(taskID); len(header) > 0 {
+			ws.WriteMessage(websocket.BinaryMessage, header)
+		}
+	}
+
+	ch := h.analyzer.SubscribePreview(taskID)
+	defer h.analyzer.UnsubscribePreview(taskID, ch)
+
+	for data := range ch {
+		if err := ws.WriteMessage(websocket.BinaryMessage, data); err != nil {
+			break
+		}
+	}
 }

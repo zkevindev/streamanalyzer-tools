@@ -54,7 +54,7 @@ func (s *CSVStorage) CreateTaskCSV(taskID string) error {
 
 	if err := writeSheetHeader(f, streamSheet, []string{
 		"dts", "video_len", "audio_len", "video_width", "video_height",
-		"video_codec", "audio_codec", "sample_rate", "channels", "pts",
+		"video_codec", "audio_codec", "sample_rate", "channels", "pts", "cts",
 		"frame_type", "is_key_frame", "iframe_interval", "gop_size", "recorded_at", "video_frame_rate", "metadata_json",
 	}); err != nil {
 		return err
@@ -62,7 +62,7 @@ func (s *CSVStorage) CreateTaskCSV(taskID string) error {
 
 	if err := writeSheetHeader(f, videoSheet, []string{
 		"dts", "video_len", "video_width", "video_height",
-		"video_codec", "pts", "frame_type", "is_key_frame", "iframe_interval", "gop_size", "recorded_at", "video_frame_rate",
+		"video_codec", "pts", "cts", "frame_type", "is_key_frame", "iframe_interval", "gop_size", "recorded_at", "video_frame_rate",
 	}); err != nil {
 		return err
 	}
@@ -126,6 +126,7 @@ func (s *CSVStorage) WriteStreamInfo(info *models.StreamInfo) error {
 		fmt.Sprintf("%d", info.SampleRate),
 		fmt.Sprintf("%d", info.Channels),
 		fmt.Sprintf("%d", info.PTS),
+		fmt.Sprintf("%d", info.CTS),
 		info.FrameType,
 		isKeyFrame,
 		fmt.Sprintf("%d", info.IFrameInterval),
@@ -147,6 +148,7 @@ func (s *CSVStorage) WriteStreamInfo(info *models.StreamInfo) error {
 			fmt.Sprintf("%d", info.VideoHeight),
 			info.VideoCodec,
 			fmt.Sprintf("%d", info.PTS),
+			fmt.Sprintf("%d", info.CTS),
 			info.FrameType,
 			isKeyFrame,
 			fmt.Sprintf("%d", info.IFrameInterval),
