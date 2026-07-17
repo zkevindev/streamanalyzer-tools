@@ -3,6 +3,7 @@ package analyzer
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 
 	"github.com/yutopp/go-flv"
@@ -22,8 +23,14 @@ func (d *httpFLVDecoder) Decode(flvTag *tag.FlvTag) error {
 	return d.decoder.Decode(flvTag)
 }
 
-func newHTTPFLVDecoder(resp *http.Response) (*httpFLVDecoder, error) {
-	decoder, err := flv.NewDecoder(resp.Body)
+// newHTTPFLVDecoder reads from resp.Body. If dumpW is non-nil, the untouched
+// response body (a well-formed FLV file) is copied to it as it is consumed.
+func newHTTPFLVDecoder(resp *http.Response, dumpW io.Writer) (*httpFLVDecoder, error) {
+	var body io.Reader = resp.Body
+	if dumpW != nil {
+		body = io.TeeReader(body, dumpW)
+	}
+	decoder, err := flv.NewDecoder(body)
 	if err != nil {
 		return nil, err
 	}
@@ -52,11 +59,15 @@ func (s *StreamAnalyzer) runHTTPFLVTask(ctx context.Context, at *analyzeTask) er
 		return &taskStartupError{err: fmt.Errorf("http flv status: %d", resp.StatusCode)}
 	}
 
-	decoder, err := newHTTPFLVDecoder(resp)
+	var dumpW io.Writer
+	if at.dump != nil {
+		dumpW = at.dump.Writer(at.ID + ".flv")
+	}
+
+	decoder, err := newHTTPFLVDecoder(resp, dumpW)
 	if err != nil {
 		return &taskStartupError{err: err}
 	}
-	defer resp.Body.Close()
 
 	return s.readFLVStream(ctx, decoder, at)
 }

@@ -3,6 +3,7 @@ package analyzer
 import (
 	"context"
 	"fmt"
+	"sync"
 
 	"streamanalyzer/internal/hls"
 	"streamanalyzer/internal/models"
@@ -10,8 +11,9 @@ import (
 
 func (s *StreamAnalyzer) runHLSTask(ctx context.Context, at *analyzeTask) error {
 	client := &hls.Client{
-		PlaylistURL: at.URL,
-		UserAgent:   "StreamAnalyzer-HLS/1.0",
+		PlaylistURL:   at.URL,
+		UserAgent:     "StreamAnalyzer-HLS/1.0",
+		OnSegmentData: s.newHLSDumpFunc(at),
 		OnSegment: func(st hls.SegmentStats) {
 			row := models.ChartHLSSegment{
 				TaskID:            at.ID,
@@ -51,4 +53,33 @@ func (s *StreamAnalyzer) runHLSTask(ctx context.Context, at *analyzeTask) error 
 	}
 
 	return nil
+}
+
+// newHLSDumpFunc appends downloaded segments, byte for byte, into one TS file
+// per rendition. Renditions are dumped concurrently, so the playlist->file
+// mapping is guarded.
+func (s *StreamAnalyzer) newHLSDumpFunc(at *analyzeTask) func(string, uint64, []byte) {
+	if at.dump == nil {
+		return nil
+	}
+
+	var mu sync.Mutex
+	names := make(map[string]string)
+
+	return func(playlistURL string, seq uint64, raw []byte) {
+		mu.Lock()
+		name, ok := names[playlistURL]
+		if !ok {
+			if len(names) == 0 {
+				name = at.ID + ".ts"
+			} else {
+				name = fmt.Sprintf("%s_%d.ts", at.ID, len(names))
+			}
+			names[playlistURL] = name
+			fmt.Printf("task=%s dump rendition %s -> %s\n", at.ID, playlistURL, name)
+		}
+		mu.Unlock()
+
+		_, _ = at.dump.Writer(name).Write(raw)
+	}
 }

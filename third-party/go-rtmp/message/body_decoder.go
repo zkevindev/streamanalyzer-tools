@@ -91,6 +91,30 @@ var CmdBodyDecoders = map[string]BodyDecoderFunc{
 	"getStreamLength": DecodeBodyGetStreamLength,
 	"ping":            DecodeBodyPing,
 	"closeStream":     DecodeBodyCloseStream,
+	"onStatus":        DecodeBodyOnStatus,
+}
+
+// DecodeBodyOnStatus decodes the onStatus command a server sends to report
+// play/publish progress (e.g. NetStream.Play.Start). Without it a client can
+// never observe that its play request succeeded.
+func DecodeBodyOnStatus(_ io.Reader, d AMFDecoder, v *AMFConvertible) error {
+	var commandObject interface{} // always nil for onStatus
+	if err := d.Decode(&commandObject); err != nil {
+		return errors.Wrap(err, "Failed to decode 'onStatus' args[0]")
+	}
+	var infoObject interface{}
+	if err := d.Decode(&infoObject); err != nil {
+		return errors.Wrap(err, "Failed to decode 'onStatus' args[1]")
+	}
+
+	var cmd NetStreamOnStatus
+	if err := cmd.FromArgs(commandObject, infoObject); err != nil {
+		return errors.Wrap(err, "Failed to reconstruct 'onStatus'")
+	}
+
+	*v = &cmd
+
+	return nil
 }
 
 func CmdBodyDecoderFor(name string, transactionID int64) BodyDecoderFunc {

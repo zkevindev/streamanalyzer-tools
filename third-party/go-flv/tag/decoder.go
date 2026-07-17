@@ -18,7 +18,10 @@ import (
 func DecodeFlvTag(r io.Reader, flvTag *FlvTag) (err error) {
 	ui32 := make([]byte, 4)
 	buf := make([]byte, 11)
-	if _, err := io.ReadAtLeast(r, buf, 1); err != nil {
+	// The tag header is a fixed 11 bytes. A short read (e.g. a header straddling
+	// the reader's buffer boundary) must not leave the rest of buf unfilled,
+	// otherwise the sizes below are parsed from stale bytes and the stream desyncs.
+	if _, err := io.ReadFull(r, buf); err != nil {
 		return err
 	}
 

@@ -3,10 +3,12 @@ package rtmp
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/url"
 	"strings"
 
 	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
 
 	"github.com/yutopp/go-rtmp/message"
 )
@@ -23,6 +25,14 @@ type PlayTarget struct {
 type PlayOptions struct {
 	ChunkSize uint32
 	Start     int64
+
+	// RecvTap, if set, receives a copy of every byte read from the connection,
+	// starting with the server handshake (S0+S1+S2).
+	RecvTap io.Writer
+
+	// Logger, if set, receives the library's internal diagnostics. Without it
+	// go-rtmp discards them, which makes protocol-level issues invisible.
+	Logger logrus.FieldLogger
 }
 
 func ParsePlayURL(rawURL string) (*PlayTarget, error) {
@@ -80,6 +90,15 @@ func DialAndPlay(ctx context.Context, rawURL string, handler Handler, opts *Play
 
 	connConfig := &ConnConfig{
 		Handler: handler,
+		// Many production servers and CDNs do not echo C1's random bytes back in
+		// S2. Rejecting them would make the stream unanalysable for no benefit:
+		// as a pull-only client we care about the media, not about proving the
+		// peer replayed our random block.
+		SkipHandshakeVerification: true,
+	}
+	if opts != nil {
+		connConfig.RecvTap = opts.RecvTap
+		connConfig.Logger = opts.Logger
 	}
 
 	var cc *ClientConn

@@ -7,6 +7,7 @@ type Task struct {
 	URL       string    `json:"url"`
 	Type      string    `json:"type"`   // rtmp, http-flv, hls
 	Status    string    `json:"status"` // running, stopped, failed
+	Dump      bool      `json:"dump"`
 	StartTime time.Time `json:"start_time"`
 	EndTime   time.Time `json:"end_time,omitempty"`
 }
@@ -31,11 +32,22 @@ type StreamInfo struct {
 	GOPSize        int       `json:"gop_size"`        // 当前GOP中的帧数
 	RecordedAt     time.Time `json:"recorded_at"`
 	MetadataJSON   string    `json:"metadata_json"`
+	VideoProfile   string    `json:"video_profile"` // 如 High / Main
+	VideoLevel     int       `json:"video_level"`   // level_idc，如 31 表示 3.1
+	NALUCount      int       `json:"nalu_count"`
+	NALUTypes      string    `json:"nalu_types"` // 如 "SPS:1;PPS:1;IDR:1"
 }
 
 type TaskRequest struct {
 	URL  string `json:"url" binding:"required"`
 	Type string `json:"type" binding:"required"` // rtmp, http-flv, hls
+	Dump bool   `json:"dump"`                    // dump raw received bytes (no demuxing)
+}
+
+// DumpFile 描述一个任务 dump 出的原始码流文件。
+type DumpFile struct {
+	Name      string `json:"name"`
+	SizeBytes int64  `json:"size_bytes"`
 }
 
 // ChartHLSSegment 实时 HLS（TS）任务：按切片维度展示。
@@ -93,6 +105,69 @@ type ChartData struct {
 	MetadataJSON    string        `json:"metadata_json"`
 
 	HLSSegments []ChartHLSSegment `json:"hls_segments,omitempty"`
+
+	VideoProfile string `json:"video_profile,omitempty"`
+	VideoLevel   int    `json:"video_level,omitempty"`
+
+	// 分析增强：诊断结论、AV 同步曲线、抖动、帧类型/NALU 分布。
+	Health       *StreamHealth   `json:"health,omitempty"`
+	AVSyncPoints []AVSyncPoint   `json:"av_sync_points,omitempty"`
+	JitterPoints []JitterPoint   `json:"jitter_points,omitempty"`
+	FrameKinds   []FrameKindStat `json:"frame_kinds,omitempty"`
+	NALUStats    []NALUStat      `json:"nalu_stats,omitempty"`
+}
+
+// StreamHealth 汇总一次分析的整体结论与告警明细。
+type StreamHealth struct {
+	Score   int     `json:"score"`   // 0-100
+	Level   string  `json:"level"`   // good / warn / bad
+	Summary string  `json:"summary"` // 一句话结论
+	Alerts  []Alert `json:"alerts"`
+
+	VideoFPSAvg      float64 `json:"video_fps_avg"`
+	VideoBitrateAvg  float64 `json:"video_bitrate_avg_kbps"`
+	AudioBitrateAvg  float64 `json:"audio_bitrate_avg_kbps"`
+	BitratePeakRatio float64 `json:"bitrate_peak_ratio"` // 峰值/均值
+	GOPAvgMs         float64 `json:"gop_avg_ms"`
+	GOPJitterMs      float64 `json:"gop_jitter_ms"` // I 帧间隔标准差
+	JitterAvgMs      float64 `json:"jitter_avg_ms"`
+	JitterMaxMs      float64 `json:"jitter_max_ms"`
+	AVSyncMaxMs      int64   `json:"av_sync_max_ms"`
+}
+
+// Alert 单条诊断结论。
+type Alert struct {
+	Severity string `json:"severity"` // error / warn / info
+	Code     string `json:"code"`
+	Title    string `json:"title"`
+	Detail   string `json:"detail"`
+	Count    int    `json:"count,omitempty"`
+	AtDTS    int64  `json:"at_dts,omitempty"` // 首次出现位置
+}
+
+type AVSyncPoint struct {
+	Second int   `json:"second"`
+	DiffMs int64 `json:"diff_ms"` // video DTS - audio DTS
+}
+
+type JitterPoint struct {
+	Index          int     `json:"index"`
+	DTS            int64   `json:"dts"`
+	JitterMs       float64 `json:"jitter_ms"`
+	ArrivalDeltaMs float64 `json:"arrival_delta_ms"`
+}
+
+type FrameKindStat struct {
+	Kind       string  `json:"kind"` // I / P / B
+	Count      int     `json:"count"`
+	AvgBytes   float64 `json:"avg_bytes"`
+	MaxBytes   int64   `json:"max_bytes"`
+	TotalBytes int64   `json:"total_bytes"`
+}
+
+type NALUStat struct {
+	Name  string `json:"name"`
+	Count int    `json:"count"`
 }
 
 type SecondStat struct {

@@ -344,6 +344,127 @@
         };
         break;
       }
+      case 'jitter': {
+        const pts = d.jitter_points || [];
+        if (pts.length === 0) {
+          chart.clear();
+          chart.setOption({
+            title: {
+              text: '无抖动数据',
+              subtext: '仅实时速率拉流才统计抖动（点播/文件回放会跳过）',
+              left: 'center',
+              top: 'middle',
+            },
+          });
+          return;
+        }
+        option = {
+          title: { text: '帧到达抖动 (RFC3550, ms)', left: 'center' },
+          tooltip: { trigger: 'axis' },
+          legend: { data: ['抖动', '到达间隔'], top: 28 },
+          grid: baseGrid(),
+          xAxis: { type: 'value', name: 'DTS(ms)', scale: true },
+          yAxis: { type: 'value', name: 'ms', scale: true },
+          dataZoom: [
+            { type: 'inside', start: 0, end: 100 },
+            { type: 'slider', start: 0, end: 100, height: 18 },
+          ],
+          series: [
+            {
+              name: '抖动',
+              type: 'line',
+              showSymbol: false,
+              data: pts.map(function (p) { return [p.dts, p.jitter_ms]; }),
+              markLine: {
+                symbol: 'none',
+                lineStyle: { type: 'dashed', color: '#dc2626' },
+                label: { formatter: '{b}' },
+                data: [{ yAxis: 100, name: '100ms 告警线' }],
+              },
+            },
+            {
+              name: '到达间隔',
+              type: 'line',
+              showSymbol: false,
+              lineStyle: { opacity: .35 },
+              data: pts.map(function (p) { return [p.dts, p.arrival_delta_ms]; }),
+            },
+          ],
+        };
+        break;
+      }
+      case 'framekind': {
+        const kinds = d.frame_kinds || [];
+        if (kinds.length === 0) {
+          chart.clear();
+          chart.setOption({ title: { text: '无帧类型数据', left: 'center', top: 'middle' } });
+          return;
+        }
+        const colorOf = { I: '#d97757', P: '#2563eb', B: '#059669' };
+        option = {
+          title: { text: '帧类型分布（数量与平均大小）', left: 'center' },
+          tooltip: {
+            trigger: 'axis',
+            axisPointer: { type: 'shadow' },
+            formatter: function (params) {
+              if (!params || !params.length) return '';
+              const k = kinds[params[0].dataIndex];
+              return k.kind + ' 帧<br/>数量: ' + k.count +
+                '<br/>平均大小: ' + Math.round(k.avg_bytes) + ' B' +
+                '<br/>最大: ' + k.max_bytes + ' B' +
+                '<br/>总计: ' + (k.total_bytes / 1024).toFixed(1) + ' KB';
+            },
+          },
+          legend: { data: ['帧数', '平均大小'], top: 28 },
+          grid: baseGrid(),
+          xAxis: { type: 'category', data: kinds.map(function (k) { return k.kind; }) },
+          yAxis: [
+            { type: 'value', name: '帧数' },
+            { type: 'value', name: '平均大小(B)' },
+          ],
+          series: [
+            {
+              name: '帧数',
+              type: 'bar',
+              data: kinds.map(function (k) {
+                return { value: k.count, itemStyle: { color: colorOf[k.kind] || '#78716c' } };
+              }),
+            },
+            {
+              name: '平均大小',
+              type: 'line',
+              yAxisIndex: 1,
+              symbolSize: 8,
+              data: kinds.map(function (k) { return Math.round(k.avg_bytes); }),
+            },
+          ],
+        };
+        break;
+      }
+      case 'nalu': {
+        const nalus = d.nalu_stats || [];
+        if (nalus.length === 0) {
+          chart.clear();
+          chart.setOption({ title: { text: '无 NALU 数据', left: 'center', top: 'middle' } });
+          return;
+        }
+        option = {
+          title: { text: 'NALU 类型分布', left: 'center' },
+          tooltip: { trigger: 'item', formatter: '{b}: {c} ({d}%)' },
+          legend: { bottom: 0 },
+          series: [
+            {
+              name: 'NALU',
+              type: 'pie',
+              radius: ['38%', '62%'],
+              center: ['50%', '52%'],
+              label: { formatter: '{b}\n{c}' },
+              data: nalus.map(function (n) { return { name: n.name, value: n.count }; }),
+            },
+          ],
+        };
+        break;
+      }
       default:
         option = {
           title: { text: '未知图表类型', left: 'center' },

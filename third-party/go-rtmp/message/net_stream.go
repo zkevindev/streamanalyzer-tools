@@ -7,6 +7,11 @@
 
 package message
 
+import (
+	"github.com/pkg/errors"
+	"github.com/yutopp/go-amf0"
+)
+
 type NetStreamPublish struct {
 	CommandObject  interface{}
 	PublishingName string
@@ -84,7 +89,41 @@ type NetStreamOnStatusInfoObject struct {
 }
 
 func (t *NetStreamOnStatus) FromArgs(args ...interface{}) error {
-	panic("Not implemented")
+	// args[0] is the command object, always nil for onStatus.
+	if len(args) < 2 {
+		return errors.Errorf("Not enough arguments for onStatus: Len = %d", len(args))
+	}
+
+	info, ok := asStringMap(args[1])
+	if !ok {
+		return errors.Errorf("Unexpected info object for onStatus: Type = %T", args[1])
+	}
+
+	t.InfoObject = NetStreamOnStatusInfoObject{
+		Level:       NetStreamOnStatusLevel(asString(info["level"])),
+		Code:        NetStreamOnStatusCode(asString(info["code"])),
+		Description: asString(info["description"]),
+	}
+
+	return nil
+}
+
+// asStringMap normalizes an AMF object/ECMA array into a plain map. Servers use
+// either representation for the onStatus info object.
+func asStringMap(v interface{}) (map[string]interface{}, bool) {
+	switch m := v.(type) {
+	case map[string]interface{}:
+		return m, true
+	case amf0.ECMAArray:
+		return map[string]interface{}(m), true
+	default:
+		return nil, false
+	}
+}
+
+func asString(v interface{}) string {
+	s, _ := v.(string)
+	return s
 }
 
 func (t *NetStreamOnStatus) ToArgs(ty EncodingType) ([]interface{}, error) {

@@ -13,6 +13,23 @@ import (
 	"github.com/xuri/excelize/v2"
 )
 
+const (
+	// TimeLayout is the recorded_at format. Milliseconds are required to measure
+	// arrival jitter; LegacyTimeLayout is what files written before that used.
+	TimeLayout       = "2006-01-02 15:04:05.000"
+	LegacyTimeLayout = "2006-01-02 15:04:05"
+)
+
+// ParseRecordedAt reads a recorded_at cell, accepting both the current
+// millisecond format and the older second-precision one.
+func ParseRecordedAt(s string) (time.Time, error) {
+	s = strings.TrimSpace(s)
+	if t, err := time.ParseInLocation(TimeLayout, s, time.Local); err == nil {
+		return t, nil
+	}
+	return time.ParseInLocation(LegacyTimeLayout, s, time.Local)
+}
+
 type CSVStorage struct {
 	baseDir string
 	mu      sync.RWMutex
@@ -56,6 +73,7 @@ func (s *CSVStorage) CreateTaskCSV(taskID string) error {
 		"dts", "video_len", "audio_len", "video_width", "video_height",
 		"video_codec", "audio_codec", "sample_rate", "channels", "pts", "cts",
 		"frame_type", "is_key_frame", "iframe_interval", "gop_size", "recorded_at", "video_frame_rate", "metadata_json",
+		"video_profile", "video_level", "nalu_count", "nalu_types",
 	}); err != nil {
 		return err
 	}
@@ -63,6 +81,7 @@ func (s *CSVStorage) CreateTaskCSV(taskID string) error {
 	if err := writeSheetHeader(f, videoSheet, []string{
 		"dts", "video_len", "video_width", "video_height",
 		"video_codec", "pts", "cts", "frame_type", "is_key_frame", "iframe_interval", "gop_size", "recorded_at", "video_frame_rate",
+		"video_profile", "video_level", "nalu_count", "nalu_types",
 	}); err != nil {
 		return err
 	}
@@ -131,9 +150,13 @@ func (s *CSVStorage) WriteStreamInfo(info *models.StreamInfo) error {
 		isKeyFrame,
 		fmt.Sprintf("%d", info.IFrameInterval),
 		fmt.Sprintf("%d", info.GOPSize),
-		info.RecordedAt.Format("2006-01-02 15:04:05"),
+		info.RecordedAt.Format(TimeLayout),
 		fmt.Sprintf("%.3f", info.VideoFrameRate),
 		info.MetadataJSON,
+		info.VideoProfile,
+		fmt.Sprintf("%d", info.VideoLevel),
+		fmt.Sprintf("%d", info.NALUCount),
+		info.NALUTypes,
 	}
 	if err := writeRow(f, "stream", rows["stream"], streamRow); err != nil {
 		return err
@@ -153,8 +176,12 @@ func (s *CSVStorage) WriteStreamInfo(info *models.StreamInfo) error {
 			isKeyFrame,
 			fmt.Sprintf("%d", info.IFrameInterval),
 			fmt.Sprintf("%d", info.GOPSize),
-			info.RecordedAt.Format("2006-01-02 15:04:05"),
+			info.RecordedAt.Format(TimeLayout),
 			fmt.Sprintf("%.3f", info.VideoFrameRate),
+			info.VideoProfile,
+			fmt.Sprintf("%d", info.VideoLevel),
+			fmt.Sprintf("%d", info.NALUCount),
+			info.NALUTypes,
 		}
 		if err := writeRow(f, "video", rows["video"], videoRow); err != nil {
 			return err
@@ -169,7 +196,7 @@ func (s *CSVStorage) WriteStreamInfo(info *models.StreamInfo) error {
 			info.AudioCodec,
 			fmt.Sprintf("%d", info.SampleRate),
 			fmt.Sprintf("%d", info.Channels),
-			info.RecordedAt.Format("2006-01-02 15:04:05"),
+			info.RecordedAt.Format(TimeLayout),
 		}
 		if err := writeRow(f, "audio", rows["audio"], audioRow); err != nil {
 			return err
@@ -294,6 +321,10 @@ func (s *CSVStorage) CloseTask(taskID string) error {
 
 func (s *CSVStorage) GetCSVPath(taskID string) string {
 	return filepath.Join(s.baseDir, fmt.Sprintf("%s.xlsx", taskID))
+}
+
+func (s *CSVStorage) BaseDir() string {
+	return s.baseDir
 }
 
 func (s *CSVStorage) Close() error {

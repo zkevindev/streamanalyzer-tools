@@ -9,6 +9,33 @@ type VideoMeta struct {
 	Width     int
 	Height    int
 	FrameRate float64
+	// Profile/Level as signalled by the SPS. Profile is profile_idc for H.264 and
+	// general_profile_idc for H.265; Level is level_idc / general_level_idc.
+	Profile     int
+	Level       int
+	ProfileName string
+}
+
+// H264ProfileName maps profile_idc to its common name.
+func H264ProfileName(profileIDC int) string {
+	switch profileIDC {
+	case 66:
+		return "Baseline"
+	case 77:
+		return "Main"
+	case 88:
+		return "Extended"
+	case 100:
+		return "High"
+	case 110:
+		return "High 10"
+	case 122:
+		return "High 4:2:2"
+	case 244:
+		return "High 4:4:4"
+	default:
+		return fmt.Sprintf("Profile %d", profileIDC)
+	}
 }
 
 // AVCDecoderConfigurationRecord corresponds to ISO/IEC 14496-15 avcC box payload.
@@ -94,7 +121,8 @@ func parseH264SPS(nal []byte) (*VideoMeta, error) {
 	if err := r.skipBits(8); err != nil { // constraint flags + reserved
 		return nil, err
 	}
-	if _, err := r.readBits(8); err != nil { // level_idc
+	levelIDC, err := r.readBits(8)
+	if err != nil {
 		return nil, err
 	}
 	if _, err := r.readUE(); err != nil { // seq_parameter_set_id
@@ -251,9 +279,12 @@ func parseH264SPS(nal []byte) (*VideoMeta, error) {
 	}
 
 	return &VideoMeta{
-		Width:     width,
-		Height:    height,
-		FrameRate: fps,
+		Width:       width,
+		Height:      height,
+		FrameRate:   fps,
+		Profile:     int(profileIDC),
+		Level:       int(levelIDC),
+		ProfileName: H264ProfileName(int(profileIDC)),
 	}, nil
 }
 

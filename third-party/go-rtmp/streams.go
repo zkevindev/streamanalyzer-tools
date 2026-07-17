@@ -11,6 +11,8 @@ import (
 	"sync"
 
 	"github.com/pkg/errors"
+
+	"github.com/yutopp/go-rtmp/message"
 )
 
 // ControlStreamID StreamID 0 is a control stream
@@ -89,6 +91,23 @@ func (ss *streams) At(streamID uint32) (*Stream, error) {
 	}
 
 	return stream, nil
+}
+
+// notifyPlayStatus forwards an onStatus to every stream. Some servers send the
+// play status on the control stream (message stream 0) rather than on the
+// stream created by createStream, so the waiter cannot be addressed directly.
+// Streams without a pending play result ignore it.
+func (ss *streams) notifyPlayStatus(status *message.NetStreamOnStatus) {
+	ss.m.Lock()
+	targets := make([]*Stream, 0, len(ss.streams))
+	for _, stream := range ss.streams {
+		targets = append(targets, stream)
+	}
+	ss.m.Unlock()
+
+	for _, stream := range targets {
+		stream.notifyPlayStatus(status)
+	}
 }
 
 func (ss *streams) notifyError(err error) {

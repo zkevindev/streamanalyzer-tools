@@ -20,9 +20,11 @@
         .nav-item.active{color:var(--accent);background:var(--accent-light);font-weight:500}
         .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.5rem;box-shadow:var(--shadow);margin-bottom:1.5rem}
         .card-title{font-size:1rem;font-weight:600;margin-bottom:1rem;display:flex;align-items:center;gap:.5rem}
-        .form-grid{display:grid;grid-template-columns:1fr auto auto;gap:1rem;align-items:flex-end}
+        .form-grid{display:grid;grid-template-columns:1fr auto auto auto;gap:1rem;align-items:flex-end}
         .form-group{display:flex;flex-direction:column;gap:.375rem}
         label{font-size:.8125rem;font-weight:500;color:var(--text-muted)}
+        .check-inline{display:flex;align-items:center;gap:.5rem;padding:.625rem .875rem;border:1px solid var(--border);border-radius:.5rem;background:var(--surface);color:var(--text);font-size:.875rem;font-weight:400;cursor:pointer;white-space:nowrap}
+        .check-inline input[type="checkbox"]{accent-color:var(--accent);width:1rem;height:1rem;cursor:pointer}
         input[type="text"],select{padding:.625rem .875rem;border:1px solid var(--border);border-radius:.5rem;font-size:.875rem;background:var(--surface);transition:border-color .2s ease;width:100%}
         input:focus,select:focus{outline:none;border-color:var(--accent)}
         .btn{display:inline-flex;align-items:center;gap:.5rem;background:var(--accent);color:#fff;text-decoration:none;padding:.625rem 1.125rem;border-radius:.5rem;font-size:.875rem;font-weight:500;border:none;cursor:pointer;transition:all .2s ease}
@@ -45,8 +47,41 @@
         .actions{display:flex;gap:.375rem}.actions button{padding:.375rem .625rem;font-size:.75rem}
         .empty{text-align:center;padding:3rem;color:var(--text-muted);font-size:.875rem}
         .detail{margin-top:1.5rem;display:none}
+        .modal-overlay{position:fixed;inset:0;z-index:50;display:none;background:rgba(26,25,24,.5);backdrop-filter:blur(2px);padding:2rem 1.5rem;overflow-y:auto}
+        .modal-overlay.open{display:block;animation:fadeIn .18s ease-out}
+        .modal-card{max-width:1100px;margin:0 auto;box-shadow:0 24px 64px rgba(0,0,0,.24);animation:modalIn .22s cubic-bezier(.16,1,.3,1)}
+        .modal-card .detail-header{position:sticky;top:-1.5rem;background:var(--surface);padding:.25rem 0 .75rem;margin:-.25rem 0 1rem;border-bottom:1px solid var(--border);z-index:1}
+        @keyframes fadeIn{from{opacity:0}to{opacity:1}}
+        @keyframes modalIn{from{opacity:0;transform:translateY(12px) scale(.99)}to{opacity:1;transform:none}}
+        body.modal-open{overflow:hidden}
         .detail-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;flex-wrap:wrap;gap:.75rem}
         .detail-title{font-size:1rem;font-weight:600}
+        .health{border:1px solid var(--border);border-radius:.75rem;padding:1rem;margin-bottom:1rem}
+        .health.good{background:#f0fdf4;border-color:#bbf7d0}
+        .health.warn{background:#fffbeb;border-color:#fde68a}
+        .health.bad{background:#fef2f2;border-color:#fecaca}
+        .health-top{display:flex;align-items:center;gap:1rem;flex-wrap:wrap}
+        .health-score{display:flex;flex-direction:column;align-items:center;justify-content:center;width:64px;height:64px;border-radius:50%;flex:0 0 auto;color:#fff;font-weight:700;font-size:1.25rem;line-height:1}
+        .health.good .health-score{background:#16a34a}
+        .health.warn .health-score{background:#d97706}
+        .health.bad .health-score{background:#dc2626}
+        .health-score span{font-size:.5625rem;font-weight:500;opacity:.9;margin-top:.15rem;letter-spacing:.04em}
+        .health-summary{flex:1 1 260px;min-width:0}
+        .health-summary .h-title{font-weight:600;font-size:.9375rem;margin-bottom:.2rem}
+        .health-summary .h-sub{font-size:.8125rem;color:var(--text-muted)}
+        .health-metrics{display:flex;gap:1.25rem;flex-wrap:wrap;margin-top:.85rem;padding-top:.85rem;border-top:1px dashed rgba(0,0,0,.1)}
+        .health-metric{font-size:.75rem;color:var(--text-muted)}
+        .health-metric b{display:block;font-size:.9375rem;color:var(--text);font-weight:600;margin-top:.1rem}
+        .alerts{list-style:none;margin-top:.85rem;display:flex;flex-direction:column;gap:.5rem}
+        .alert{display:flex;gap:.625rem;align-items:flex-start;background:rgba(255,255,255,.75);border:1px solid var(--border);border-radius:.5rem;padding:.625rem .75rem}
+        .alert-badge{flex:0 0 auto;font-size:.625rem;font-weight:700;padding:.15rem .4rem;border-radius:.25rem;letter-spacing:.03em;margin-top:.1rem}
+        .alert.error .alert-badge{background:#fee2e2;color:#991b1b}
+        .alert.warn .alert-badge{background:#fef3c7;color:#92400e}
+        .alert.info .alert-badge{background:#e0e7ff;color:#3730a3}
+        .alert-body{min-width:0}
+        .alert-title{font-size:.8125rem;font-weight:600}
+        .alert-detail{font-size:.75rem;color:var(--text-muted);margin-top:.15rem;line-height:1.5}
+        .alert-at{font-family:ui-monospace,monospace;font-size:.6875rem;color:var(--text-muted);margin-top:.2rem}
         .stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(100px,1fr));gap:.75rem;background:#fafaf9;padding:1rem;border-radius:.75rem;margin-bottom:1rem}
         .stat-item{text-align:center}
         .stat-value{font-size:1.25rem;font-weight:700;color:var(--text)}
@@ -114,6 +149,13 @@
                         <option value="hls">HLS (TS)</option>
                     </select>
                 </div>
+                <div class="form-group">
+                    <label>Dump</label>
+                    <label class="check-inline" title="将拉流收到的原始数据原样存盘（不做 demux）：RTMP 存为 .rtmp（含握手，可直接用于离线 raw 分析），HTTP-FLV 存为 .flv，HLS 存为 .ts">
+                        <input type="checkbox" id="dumpEnabled">
+                        <span>同时 dump 原始码流</span>
+                    </label>
+                </div>
                 <button class="btn" onclick="startTask()">
                     <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M5.25 5.653c0-.856.917-1.398 1.667-.986l11.54 6.347a1.125 1.125 0 0 1 0 1.972l-11.54 6.347a1.125 1.125 0 0 1-1.667-.986V5.653Z" /></svg>
                     开始分析
@@ -134,12 +176,13 @@
             <div id="emptyState" class="empty" style="display:none">暂无活动任务</div>
         </div>
 
-        <div id="chartSection" class="detail">
-            <div class="card">
+        <div id="chartSection" class="modal-overlay" onclick="onChartOverlayClick(event)">
+            <div class="card modal-card">
                 <div class="detail-header">
                     <div class="detail-title">分析结果 - <span id="currentTaskTitle"></span></div>
                     <button class="btn secondary" onclick="closeChart()">关闭</button>
                 </div>
+                <div id="healthBox" class="health" style="display:none"></div>
                 <div id="statsGrid" class="stats-grid"></div>
                 <div id="mediaFilterTabs" class="media-filter">
                     <button type="button" class="active" data-filter="all" onclick="setMediaFilter('all')">
@@ -163,6 +206,9 @@
                     <button type="button" data-chart="bitrate" onclick="showChart('bitrate')">码率</button>
                     <button type="button" data-chart="fps" onclick="showChart('fps')">帧率</button>
                     <button type="button" data-chart="avsync" onclick="showChart('avsync')">AV偏差</button>
+                    <button type="button" data-chart="jitter" onclick="showChart('jitter')">网络抖动</button>
+                    <button type="button" data-chart="framekind" onclick="showChart('framekind')">帧类型分布</button>
+                    <button type="button" data-chart="nalu" onclick="showChart('nalu')">NALU分布</button>
                     <button type="button" class="success" onclick="downloadXLSX()">下载XLSX</button>
                 </div>
                 <div id="mainChart" class="chart-frame"></div>
@@ -295,12 +341,29 @@
         async function startTask() {
             const url = document.getElementById('streamUrl').value;
             const type = document.getElementById('streamType').value;
+            const dump = document.getElementById('dumpEnabled').checked;
             if (!url) { alert('请输入流地址'); return; }
             try {
-                await fetch('/api/task', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url,type})});
+                await fetch('/api/task', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({url,type,dump})});
                 document.getElementById('streamUrl').value = '';
                 loadTasks();
             } catch(e) { alert('创建失败: ' + e.message); }
+        }
+
+        async function downloadDump(id) {
+            try {
+                const res = await fetch('/api/task/' + id + '/dump');
+                if (!res.ok) throw new Error('HTTP ' + res.status);
+                const data = await res.json();
+                const files = (data && data.files) || [];
+                if (!files.length) { alert('dump 文件尚未生成，请稍后再试'); return; }
+                if (data.limit_reached) {
+                    alert('注意：dump 已达到大小上限 ' + data.max_dump_mb + ' MB，文件只包含开头部分（分析不受影响）。\n如需完整 dump，请调整 config.yaml 的 max_dump_mb。');
+                }
+                files.forEach(function (f) {
+                    window.open('/api/task/' + id + '/dump/' + encodeURIComponent(f.name), '_blank');
+                });
+            } catch (e) { alert('获取 dump 失败: ' + (e && e.message ? e.message : e)); }
         }
 
             async function stopTask(id) {
@@ -335,6 +398,7 @@
                     '<td class="actions"><button class="btn stop" onclick="stopTask(\'' + t.id + '\')">停止</button>' +
                     '<button class="btn" onclick="selectTask(\'' + t.id + '\',\'' + t.type + '\')">分析</button>' +
                     (canPreview ? '<button class="btn success" onclick="openPreview(\'' + t.id + '\')">预览</button>' : '') +
+                    (t.dump ? '<button class="btn" onclick="downloadDump(\'' + t.id + '\')">下载Dump</button>' : '') +
                     '</td>';
                 tbody.appendChild(tr);
             });
@@ -434,13 +498,16 @@
             if (typeof disposeHLSChart === 'function') disposeHLSChart();
             currentTaskId = id;
             currentTaskType = type || '';
-            document.getElementById('chartSection').style.display = 'block';
+            document.getElementById('chartSection').classList.add('open');
+            document.body.classList.add('modal-open');
             document.getElementById('currentTaskTitle').textContent = id.substring(5,15) + '...';
             await refreshData();
             if (!isHlsAnalysisMode(currentData)) {
                 showChart('timestamp');
             }
-            document.getElementById('chartSection').scrollIntoView({behavior:'smooth'});
+            // The charts are sized on first render; the modal only gets its final
+            // width after it is shown, so re-measure once it is laid out.
+            window.dispatchEvent(new Event('resize'));
             if (refreshInterval) clearInterval(refreshInterval);
             refreshInterval = setInterval(refreshData, 5000);
         }
@@ -448,11 +515,23 @@
         function closeChart() {
             if (typeof disposeMainChart === 'function') disposeMainChart();
             if (typeof disposeHLSChart === 'function') disposeHLSChart();
-            document.getElementById('chartSection').style.display = 'none';
+            document.getElementById('chartSection').classList.remove('open');
+            document.body.classList.remove('modal-open');
             if (refreshInterval) clearInterval(refreshInterval);
             currentTaskId = null;
             currentTaskType = '';
         }
+
+        // Close only when the backdrop itself is clicked, not the card inside it.
+        function onChartOverlayClick(e) {
+            if (e.target === document.getElementById('chartSection')) closeChart();
+        }
+
+        document.addEventListener('keydown', function (e) {
+            if (e.key !== 'Escape') return;
+            if (document.getElementById('chartSection').classList.contains('open')) closeChart();
+            else if (previewTaskId) closePreview();
+        });
 
         async function refreshData() {
             if (!currentTaskId) return;
@@ -466,9 +545,12 @@
                 currentData = data;
                 if (isHlsAnalysisMode(data)) {
                     setFlvChartVisible(false);
+                    // HLS 走切片维度统计，帧级诊断不适用。
+                    document.getElementById('healthBox').style.display = 'none';
                     renderHLSSegments(data);
                 } else {
                     setFlvChartVisible(true);
+                    renderHealth(data);
                     updateStats(data);
                     if (currentChartType) updateChartTable(currentChartType);
                     if (typeof renderClientChart === 'function' && currentData) renderClientChart(currentChartType, currentData, 'mainChart', currentMediaFilter);
@@ -476,6 +558,55 @@
             } catch (e) {
                 console.warn('refreshData failed:', e);
             }
+        }
+
+        function escapeHtml(s) {
+            return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
+                return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+            });
+        }
+
+        function renderHealth(d) {
+            const box = document.getElementById('healthBox');
+            const h = d && d.health;
+            if (!box) return;
+            if (!h) { box.style.display = 'none'; return; }
+            box.style.display = 'block';
+            box.className = 'health ' + (h.level || 'warn');
+
+            const levelText = {good:'健康', warn:'需关注', bad:'有问题'}[h.level] || '未知';
+            const alerts = h.alerts || [];
+            const badge = {error:'严重', warn:'警告', info:'提示'};
+
+            const metrics = [];
+            function metric(label, val) { metrics.push('<div class="health-metric">'+label+'<b>'+val+'</b></div>'); }
+            metric('视频码率', (h.video_bitrate_avg_kbps||0).toFixed(0)+' kbps');
+            metric('视频FPS', (h.video_fps_avg||0).toFixed(1));
+            if (h.gop_avg_ms) metric('GOP平均', (h.gop_avg_ms/1000).toFixed(2)+' s'+(h.gop_jitter_ms?(' ±'+h.gop_jitter_ms.toFixed(0)+'ms'):''));
+            metric('AV最大偏差', (h.av_sync_max_ms||0)+' ms');
+            if (h.jitter_avg_ms) metric('平均抖动', h.jitter_avg_ms.toFixed(1)+' ms');
+            if (h.bitrate_peak_ratio) metric('码率峰均比', h.bitrate_peak_ratio.toFixed(1)+'x');
+
+            const alertHtml = alerts.length
+                ? '<ul class="alerts">' + alerts.map(function (a) {
+                    return '<li class="alert '+a.severity+'">'+
+                        '<span class="alert-badge">'+(badge[a.severity]||a.severity)+'</span>'+
+                        '<div class="alert-body"><div class="alert-title">'+escapeHtml(a.title)+
+                        (a.count?(' <span style="font-weight:400;color:#78716c">×'+a.count+'</span>'):'')+'</div>'+
+                        '<div class="alert-detail">'+escapeHtml(a.detail)+'</div>'+
+                        (a.at_dts?('<div class="alert-at">首次出现 DTS '+a.at_dts+' ms</div>'):'')+
+                        '</div></li>';
+                }).join('') + '</ul>'
+                : '';
+
+            box.innerHTML =
+                '<div class="health-top">'+
+                    '<div class="health-score">'+(h.score!=null?h.score:'-')+'<span>SCORE</span></div>'+
+                    '<div class="health-summary"><div class="h-title">流健康：'+levelText+'</div>'+
+                    '<div class="h-sub">'+escapeHtml(h.summary||'')+'</div></div>'+
+                '</div>'+
+                '<div class="health-metrics">'+metrics.join('')+'</div>'+
+                alertHtml;
         }
 
         function updateStats(d) {
@@ -498,6 +629,8 @@
             const resolution = (d.video_width>0&&d.video_height>0)?(d.video_width+'x'+d.video_height):'-';
             const sampleRate = d.sample_rate>0?d.sample_rate:'-';
             const channels = d.channels>0?d.channels:'-';
+            // level_idc 31 表示 Level 3.1
+            const profile = d.video_profile ? (d.video_profile + (d.video_level ? (' @L'+(d.video_level/10).toFixed(1)) : '')) : '-';
 
             document.getElementById('statsGrid').innerHTML =
                 '<div class="stat-item"><div class="stat-value">'+((d.frame_types||[]).length)+'</div><div class="stat-label">总帧数</div></div>'+
@@ -510,6 +643,7 @@
                 '<div class="stat-item"><div class="stat-value">'+avgAfps+'</div><div class="stat-label">音频FPS</div></div>'+
                 '<div class="stat-item"><div class="stat-value">'+codecFps+'</div><div class="stat-label">编码帧率</div></div>'+
                 '<div class="stat-item"><div class="stat-value">'+videoCodec+'</div><div class="stat-label">视频编码</div></div>'+
+                '<div class="stat-item"><div class="stat-value" style="font-size:.9375rem">'+profile+'</div><div class="stat-label">Profile</div></div>'+
                 '<div class="stat-item"><div class="stat-value">'+audioCodec+'</div><div class="stat-label">音频编码</div></div>'+
                 '<div class="stat-item"><div class="stat-value">'+resolution+'</div><div class="stat-label">分辨率</div></div>'+
                 '<div class="stat-item"><div class="stat-value">'+sampleRate+'</div><div class="stat-label">采样率</div></div>'+

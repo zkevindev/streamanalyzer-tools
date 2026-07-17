@@ -42,6 +42,10 @@ type ConnConfig struct {
 	Handler                   Handler
 	SkipHandshakeVerification bool
 
+	// RecvTap, if set, receives a copy of every byte read from the underlying
+	// connection, including the handshake. Write errors on the tap are ignored.
+	RecvTap io.Writer
+
 	IgnoreMessagesOnNotExistStream          bool
 	IgnoreMessagesOnNotExistStreamThreshold uint32
 
@@ -87,6 +91,10 @@ func newConn(rwc io.ReadWriteCloser, config *ConnConfig) *Conn {
 	}
 	config = config.normalize()
 
+	if config.RecvTap != nil {
+		rwc = &tappedReadWriteCloser{ReadWriteCloser: rwc, tap: config.RecvTap}
+	}
+
 	conn := &Conn{
 		rwc:     rwc,
 		bufr:    bufio.NewReaderSize(rwc, config.ReaderBufferSize),
@@ -103,6 +111,19 @@ func newConn(rwc io.ReadWriteCloser, config *ConnConfig) *Conn {
 	conn.streams = newStreams(conn)
 
 	return conn
+}
+
+type tappedReadWriteCloser struct {
+	io.ReadWriteCloser
+	tap io.Writer
+}
+
+func (t *tappedReadWriteCloser) Read(b []byte) (int, error) {
+	n, err := t.ReadWriteCloser.Read(b)
+	if n > 0 {
+		_, _ = t.tap.Write(b[:n])
+	}
+	return n, err
 }
 
 func (c *Conn) GetChunkStreamer() *ChunkStreamer {

@@ -56,6 +56,10 @@ type Client struct {
 	HTTPClient  *http.Client
 	UserAgent   string
 	OnSegment   func(SegmentStats)
+	// OnSegmentData, if set, is called with the untouched segment bytes right
+	// after download, before any TS parsing. playlistURL identifies the media
+	// playlist the segment belongs to (one per rendition).
+	OnSegmentData func(playlistURL string, seq uint64, raw []byte)
 }
 
 func (c *Client) Run(ctx context.Context) error {
@@ -220,6 +224,9 @@ func (c *Client) runMediaPlaylist(ctx context.Context, hc *http.Client, playlist
 			raw, err := c.fetchBinary(ctx, hc, segURL)
 			if err != nil {
 				return fmt.Errorf("fetch segment %d failed: %w", seg.Seq, err)
+			}
+			if c.OnSegmentData != nil {
+				c.OnSegmentData(playlistURL, seg.Seq, raw)
 			}
 			stats, err := parseTSSegment(raw)
 			if err != nil {

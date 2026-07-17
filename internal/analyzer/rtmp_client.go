@@ -137,11 +137,14 @@ type RTMPClientConn struct {
 	handler *rtmpClientHandler
 }
 
-func DialRTMP(ctx context.Context, rtmpURL string) (*RTMPClientConn, error) {
+// DialRTMP connects and plays rtmpURL. If recvTap is non-nil, every byte read
+// from the socket (starting with the S0+S1+S2 handshake) is copied to it.
+func DialRTMP(ctx context.Context, rtmpURL string, recvTap io.Writer) (*RTMPClientConn, error) {
 	handler := newRTMPClientHandler()
 	client, stream, target, err := rtmp.DialAndPlay(ctx, rtmpURL, handler, &rtmp.PlayOptions{
 		ChunkSize: 128,
 		Start:     -2,
+		RecvTap:   recvTap,
 	})
 	if err != nil {
 		return nil, err
@@ -167,8 +170,8 @@ type RTMPDecoder struct {
 	doneCh   <-chan struct{}
 }
 
-func NewRTMPDecoder(ctx context.Context, rtmpURL string) (*RTMPDecoder, error) {
-	conn, err := DialRTMP(ctx, rtmpURL)
+func NewRTMPDecoder(ctx context.Context, rtmpURL string, recvTap io.Writer) (*RTMPDecoder, error) {
+	conn, err := DialRTMP(ctx, rtmpURL, recvTap)
 	if err != nil {
 		return nil, err
 	}

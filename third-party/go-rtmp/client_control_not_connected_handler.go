@@ -55,6 +55,15 @@ func (h *clientControlNotConnectedHandler) onCommand(
 
 		return nil
 
+	case *message.NetStreamOnStatus:
+		// Some servers report play status on the control stream instead of on
+		// the created stream, so hand it to whichever stream is waiting.
+		l.Infof("OnStatus (control stream): Level = %s, Code = %s, Description = %s",
+			cmd.InfoObject.Level, cmd.InfoObject.Code, cmd.InfoObject.Description)
+		h.sh.stream.conn.streams.notifyPlayStatus(cmd)
+
+		return nil
+
 	default:
 		return internal.ErrPassThroughMsg
 	}

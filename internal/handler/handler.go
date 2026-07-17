@@ -9,8 +9,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 
+	"streamanalyzer/internal/analysis"
 	"streamanalyzer/internal/analyzer"
 	"streamanalyzer/internal/models"
 	"streamanalyzer/internal/offline"
@@ -47,6 +47,8 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 		api.GET("/task/:id/status", h.GetTaskStatus)
 		api.GET("/task/:id/data", h.GetTaskData)
 		api.GET("/task/:id/xlsx", h.DownloadXLSX)
+		api.GET("/task/:id/dump", h.ListTaskDumpFiles)
+		api.GET("/task/:id/dump/*name", h.DownloadTaskDumpFile)
 
 		offlineAPI := api.Group("/offline")
 		{
@@ -277,6 +279,7 @@ func (h *Handler) readTaskXLSXData(taskID string) (*models.ChartData, error) {
 	}
 
 	secondStatsMap := make(map[int]*models.SecondStat)
+	frames := make([]analysis.Frame, 0, len(records))
 
 	for i, record := range records {
 		if i == 0 {
@@ -360,17 +363,50 @@ func (h *Handler) readTaskXLSXData(taskID string) (*models.ChartData, error) {
 		if len(record) > 17 && chartData.MetadataJSON == "" && record[17] != "" {
 			chartData.MetadataJSON = record[17]
 		}
+		if len(record) > 18 && record[18] != "" {
+			chartData.VideoProfile = record[18]
+		}
+		if len(record) > 19 {
+			if lv, err := strconv.Atoi(record[19]); err == nil && lv > 0 {
+				chartData.VideoLevel = lv
+			}
+		}
 
 		if len(record) <= 15 || record[15] == "" {
 			// During live write/flush, a partially written row may appear transiently.
 			// Skip invalid rows instead of failing the whole API response.
 			continue
 		}
-		recordedAt, err := time.ParseInLocation("2006-01-02 15:04:05", record[15], time.Local)
+		recordedAt, err := storage.ParseRecordedAt(record[15])
 		if err != nil {
 			continue
 		}
 		second := int(recordedAt.Unix())
+
+		if videoLen > 0 || audioLen > 0 {
+			fr := analysis.Frame{
+				IsVideo:   videoLen > 0,
+				DTS:       dts,
+				Len:       videoLen + audioLen,
+				FrameType: record[11],
+				IsKey:     record[12] == "1",
+				ArrivalMs: recordedAt.UnixMilli(),
+			}
+			if fr.IsVideo {
+				if pts, err := strconv.ParseInt(record[9], 10, 64); err == nil {
+					fr.PTS = pts
+				} else {
+					fr.PTS = dts
+				}
+				if cts, err := strconv.ParseInt(record[10], 10, 64); err == nil {
+					fr.CTS = cts
+				}
+				if len(record) > 21 {
+					fr.NALUTypes = record[21]
+				}
+			}
+			frames = append(frames, fr)
+		}
 		if _, ok := secondStatsMap[second]; !ok {
 			secondStatsMap[second] = &models.SecondStat{Second: second}
 		}
@@ -396,6 +432,14 @@ func (h *Handler) readTaskXLSXData(taskID string) (*models.ChartData, error) {
 		stat.VideoBitrate = float64(stat.VideoBytes*8) / 1000.0
 		stat.AudioBitrate = float64(stat.AudioBytes*8) / 1000.0
 		chartData.SecondStats = append(chartData.SecondStats, stat)
+	}
+
+	if res := analysis.Analyze(frames, chartData.SecondStats); res != nil {
+		chartData.Health = res.Health
+		chartData.AVSyncPoints = res.AVSync
+		chartData.JitterPoints = res.Jitter
+		chartData.FrameKinds = res.FrameKind
+		chartData.NALUStats = res.NALU
 	}
 
 	if idx, err := f.GetSheetIndex("hls"); err == nil && idx >= 0 {
@@ -500,6 +544,52 @@ func (h *Handler) DownloadXLSX(c *gin.Context) {
 	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s.xlsx", taskID))
 	c.Header("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 	c.File(xlsxPath)
+}
+
+func (h *Handler) ListTaskDumpFiles(c *gin.Context) {
+	taskID := c.Param("id")
+	// Make bytes buffered by a still-running task visible before listing sizes.
+	h.analyzer.FlushDump(taskID)
+
+	files, err := h.analyzer.ListDumpFiles(taskID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"files": files,
+		// A capped dump is truncated, not corrupt — say so rather than let the
+		// missing tail look like a stream problem.
+		"limit_reached": h.analyzer.DumpLimitReached(taskID),
+		"max_dump_mb":   h.analyzer.MaxDumpMB(),
+	})
+}
+
+func (h *Handler) DownloadTaskDumpFile(c *gin.Context) {
+	taskID := c.Param("id")
+	h.analyzer.FlushDump(taskID)
+
+	name := strings.TrimPrefix(filepath.ToSlash(filepath.Clean(c.Param("name"))), "/")
+	if name == "" || strings.Contains(name, "..") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid file name"})
+		return
+	}
+
+	base := h.analyzer.DumpDir(taskID)
+	full := filepath.Join(base, name)
+	if !strings.HasPrefix(full, base+string(os.PathSeparator)) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid path"})
+		return
+	}
+	if _, err := os.Stat(full); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "dump file not found"})
+		return
+	}
+
+	c.Header("Content-Description", "File Transfer")
+	c.Header("Content-Disposition", fmt.Sprintf("attachment; filename=%s", filepath.Base(full)))
+	c.Header("Content-Type", "application/octet-stream")
+	c.File(full)
 }
 
 var upgrader = websocket.Upgrader{

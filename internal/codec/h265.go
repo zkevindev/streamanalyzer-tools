@@ -91,7 +91,8 @@ func parseH265SPS(nal []byte) (*VideoMeta, error) {
 	if err := r.skipBits(1); err != nil { // sps_temporal_id_nesting_flag
 		return nil, err
 	}
-	if err := skipHEVCProfileTierLevel(r, int(maxSubLayersMinus1)); err != nil {
+	var profileIDC, levelIDC int
+	if err := skipHEVCProfileTierLevel(r, int(maxSubLayersMinus1), &profileIDC, &levelIDC); err != nil {
 		return nil, err
 	}
 	if _, err := r.readUE(); err != nil { // sps_seq_parameter_set_id
@@ -142,13 +143,40 @@ func parseH265SPS(nal []byte) (*VideoMeta, error) {
 	}
 	width := int(picWidthInLumaSamples - subWidthC*(left+right))
 	height := int(picHeightInLumaSamples - subHeightC*(top+bottom))
-	return &VideoMeta{Width: width, Height: height}, nil
+	return &VideoMeta{
+		Width:       width,
+		Height:      height,
+		Profile:     profileIDC,
+		Level:       levelIDC,
+		ProfileName: h265ProfileName(profileIDC),
+	}, nil
 }
 
-func skipHEVCProfileTierLevel(r *bitReader, maxSubLayersMinus1 int) error {
+func h265ProfileName(profileIDC int) string {
+	switch profileIDC {
+	case 1:
+		return "Main"
+	case 2:
+		return "Main 10"
+	case 3:
+		return "Main Still Picture"
+	case 4:
+		return "Range Extensions"
+	default:
+		return fmt.Sprintf("Profile %d", profileIDC)
+	}
+}
+
+// skipHEVCProfileTierLevel consumes profile_tier_level. profile/level report
+// general_profile_idc and general_level_idc; they are 0 when unreadable.
+func skipHEVCProfileTierLevel(r *bitReader, maxSubLayersMinus1 int, profile, level *int) error {
 	// general_profile_space(2) + general_tier_flag(1) + general_profile_idc(5)
-	if err := r.skipBits(8); err != nil {
+	head, err := r.readBits(8)
+	if err != nil {
 		return err
+	}
+	if profile != nil {
+		*profile = int(head & 0x1f)
 	}
 	// general_profile_compatibility_flags(32)
 	if err := r.skipBits(32); err != nil {
@@ -159,8 +187,12 @@ func skipHEVCProfileTierLevel(r *bitReader, maxSubLayersMinus1 int) error {
 		return err
 	}
 	// general_level_idc(8)
-	if err := r.skipBits(8); err != nil {
+	lvl, err := r.readBits(8)
+	if err != nil {
 		return err
+	}
+	if level != nil {
+		*level = int(lvl)
 	}
 	subLayerProfilePresent := make([]uint8, maxSubLayersMinus1)
 	subLayerLevelPresent := make([]uint8, maxSubLayersMinus1)

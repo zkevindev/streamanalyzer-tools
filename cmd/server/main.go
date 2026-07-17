@@ -20,8 +20,16 @@ type Config struct {
 	Server struct {
 		Addr    string `yaml:"addr"`
 		DataDir string `yaml:"data_dir"`
+		// MaxDumpMB caps the raw dump of a single task. A live pull dumps
+		// indefinitely otherwise (a 4 Mbps stream is ~1.8 GB/hour).
+		// Omit for the default; set to 0 for unlimited. It is a pointer so an
+		// explicit 0 is distinguishable from the field being absent.
+		MaxDumpMB *int `yaml:"max_dump_mb"`
 	} `yaml:"server"`
 }
+
+// defaultMaxDumpMB applies when max_dump_mb is absent from the config file.
+const defaultMaxDumpMB = 2048
 
 func loadConfig(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
@@ -39,6 +47,12 @@ func loadConfig(path string) (*Config, error) {
 	}
 	if cfg.Server.DataDir == "" {
 		cfg.Server.DataDir = "./data"
+	}
+	if cfg.Server.MaxDumpMB == nil {
+		def := defaultMaxDumpMB
+		cfg.Server.MaxDumpMB = &def
+	} else if *cfg.Server.MaxDumpMB < 0 {
+		*cfg.Server.MaxDumpMB = 0 // negative is meaningless; treat as unlimited
 	}
 
 	return &cfg, nil
@@ -59,7 +73,12 @@ func main() {
 	}
 	defer xlsxStorage.Close()
 
-	streamAnalyzer := analyzer.NewStreamAnalyzer(xlsxStorage)
+	streamAnalyzer := analyzer.NewStreamAnalyzer(xlsxStorage, *cfg.Server.MaxDumpMB)
+	if *cfg.Server.MaxDumpMB > 0 {
+		log.Printf("Dump limit: %d MB per task", *cfg.Server.MaxDumpMB)
+	} else {
+		log.Printf("Dump limit: unlimited")
+	}
 
 	offlineMgr := offline.NewManager(cfg.Server.DataDir)
 	offlineMgr.LoadExisting()
