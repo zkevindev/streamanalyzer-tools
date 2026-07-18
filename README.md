@@ -135,7 +135,7 @@ go build ./cmd/desktop
 
 ### 多平台桌面产物
 
-仓库包含 `.github/workflows/desktop-build.yml`，使用各平台的原生 GitHub Actions runner 构建桌面程序，避免 Wails/WebView 跨平台交叉编译问题。可在 GitHub 的 **Actions → Build desktop apps → Run workflow** 手动运行；推送 `v*` 版本标签时也会自动运行。
+仓库包含 `.github/workflows/desktop-build.yml`，使用各平台的原生 GitHub Actions runner 构建桌面程序，避免 Wails/WebView 跨平台交叉编译问题。每次推送到 `main`、推送 `v*` 版本标签时都会自动运行，也可在 GitHub 的 **Actions → Build desktop apps → Run workflow** 手动运行。
 
 构建完成后，在对应 workflow run 的 **Artifacts** 中下载：
 
