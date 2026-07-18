@@ -144,6 +144,8 @@ go build ./cmd/desktop
 - `streamanalyzer-macos-amd64`：Intel Mac `StreamAnalyzer-amd64.dmg`
 - `streamanalyzer-linux-amd64`：Linux `streamanalyzer`
 
+推送 `v*` 标签时，上述文件还会自动附加到对应的 GitHub Release；如果该 Release 尚不存在，workflow 会自动创建。
+
 这些是未签名产物。对外正式发布时，Windows 建议增加代码签名，macOS 需要 Developer ID 签名及 notarization；Linux 用户还需安装 GTK3 和 WebKitGTK 运行库，或继续封装为 deb/rpm/AppImage。
 
 ## API
