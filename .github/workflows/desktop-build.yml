@@ -1,0 +1,94 @@
+name: Build desktop apps
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+env:
+  WAILS_VERSION: v2.12.0
+
+jobs:
+  windows:
+    name: Windows (amd64)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install Wails
+        shell: pwsh
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@${env:WAILS_VERSION}
+      - name: Build executable
+        shell: pwsh
+        run: wails build -platform windows/amd64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: streamanalyzer-windows-amd64
+          path: build/bin/streamanalyzer.exe
+          if-no-files-found: error
+
+  macos:
+    name: macOS (${{ matrix.arch }})
+    strategy:
+      matrix:
+        include:
+          - arch: arm64
+            runner: macos-15
+          - arch: amd64
+            runner: macos-15-intel
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install Wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@"${WAILS_VERSION}"
+      - name: Build application
+        run: >-
+          wails build
+          -platform darwin/${{ matrix.arch }}
+          -ldflags "-extldflags=-Wl,-framework,UniformTypeIdentifiers"
+      - name: Create DMG
+        run: >-
+          hdiutil create
+          -volname "StreamAnalyzer"
+          -srcfolder build/bin/streamanalyzer.app
+          -ov -format UDZO
+          build/bin/StreamAnalyzer-${{ matrix.arch }}.dmg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: streamanalyzer-macos-${{ matrix.arch }}
+          path: build/bin/StreamAnalyzer-${{ matrix.arch }}.dmg
+          if-no-files-found: error
+
+  linux:
+    name: Linux (amd64)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Install native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev
+      - name: Install Wails
+        run: go install github.com/wailsapp/wails/v2/cmd/wails@"${WAILS_VERSION}"
+      - name: Build executable
+        run: wails build -platform linux/amd64 -tags webkit2_41
+      - uses: actions/upload-artifact@v4
+        with:
+          name: streamanalyzer-linux-amd64
+          path: build/bin/streamanalyzer
+          if-no-files-found: error

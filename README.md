@@ -96,6 +96,56 @@ go build -o bin/server ./cmd/server
 - `GET /offline`：离线文件解析（标题 **离线文件解析 · Stream Analyzer**；支持 raw/pcap/flv/ts/mp4 等）
 - `GET /history`：历史记录（标题 **历史记录 · Stream Analyzer**）
 
+## 桌面 GUI（Wails）
+
+项目已支持 Wails 桌面入口。桌面版会在本机随机端口启动内置 Stream Analyzer 服务，并在 Wails 窗口中加载现有 Web UI；实时接口、离线分析、下载和 WebSocket 预览沿用同一套后端能力。
+
+首次使用先安装 Wails CLI：
+
+```bash
+go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
+wails doctor
+```
+
+开发/调试：
+
+```bash
+wails dev
+```
+
+打包当前平台应用：
+
+```bash
+wails build
+```
+
+macOS 构建产物位于：
+
+```text
+build/bin/streamanalyzer.app
+```
+
+也可以不经过 Wails 打包、直接编译桌面入口做快速验证：
+
+```bash
+go build ./cmd/desktop
+```
+
+分发给别人时建议在目标平台本机打包：macOS 生成 `.app`，Windows 可配合 `wails build -nsis` 生成安装包，Linux 可再封装为 deb/rpm/AppImage。macOS 正式外发通常还需要开发者签名和 notarization。
+
+### 多平台桌面产物
+
+仓库包含 `.github/workflows/desktop-build.yml`，使用各平台的原生 GitHub Actions runner 构建桌面程序，避免 Wails/WebView 跨平台交叉编译问题。可在 GitHub 的 **Actions → Build desktop apps → Run workflow** 手动运行；推送 `v*` 版本标签时也会自动运行。
+
+构建完成后，在对应 workflow run 的 **Artifacts** 中下载：
+
+- `streamanalyzer-windows-amd64`：Windows `streamanalyzer.exe`
+- `streamanalyzer-macos-arm64`：Apple Silicon Mac `StreamAnalyzer-arm64.dmg`
+- `streamanalyzer-macos-amd64`：Intel Mac `StreamAnalyzer-amd64.dmg`
+- `streamanalyzer-linux-amd64`：Linux `streamanalyzer`
+
+这些是未签名产物。对外正式发布时，Windows 建议增加代码签名，macOS 需要 Developer ID 签名及 notarization；Linux 用户还需安装 GTK3 和 WebKitGTK 运行库，或继续封装为 deb/rpm/AppImage。
+
 ## API
 
 ### 创建任务

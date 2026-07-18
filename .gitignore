@@ -1,5 +1,6 @@
 # Binaries
 bin/
+build/bin/
 *.exe
 *.exe~
 *.dll
@@ -11,6 +12,9 @@ bin/
 
 # Output of the go coverage tool
 *.out
+
+# Wails generated frontend bindings
+frontend/wailsjs/
 
 # Data directory
 data/

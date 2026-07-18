@@ -59,11 +59,11 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 		}
 	}
 
-	r.Static("/static", "./internal/handler/static")
-	r.GET("/", func(c *gin.Context) { c.File("./internal/handler/static/index.html") })
-	r.GET("/realtime", func(c *gin.Context) { c.File("./internal/handler/static/realtime.html") })
-	r.GET("/history", func(c *gin.Context) { c.File("./internal/handler/static/history.html") })
-	r.GET("/offline", func(c *gin.Context) { c.File("./internal/handler/static/offline.html") })
+	r.StaticFS("/static", embeddedStaticHTTPFS())
+	r.GET("/", func(c *gin.Context) { serveEmbeddedStaticFile(c, "index.html") })
+	r.GET("/realtime", func(c *gin.Context) { serveEmbeddedStaticFile(c, "realtime.html") })
+	r.GET("/history", func(c *gin.Context) { serveEmbeddedStaticFile(c, "history.html") })
+	r.GET("/offline", func(c *gin.Context) { serveEmbeddedStaticFile(c, "offline.html") })
 	r.GET("/ws/preview/:id", h.PreviewWebSocket)
 }
 
