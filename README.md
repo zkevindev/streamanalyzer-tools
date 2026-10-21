@@ -6,7 +6,7 @@
 
 - 支持 `http-flv`、`rtmp` 与 **`hls`** 三种实时任务类型（HLS 为 **TS 切片维度**，与 FLV/RTMP 的帧级秒级图表不同）
 - **HLS 实时分析**：拉取 media playlist，逐 `.ts` 切片统计 URI、playlist 序号、时长、体积；从 PES 解析音视频 **PTS/DTS（90 kHz）**、PAT/PMT/PES 计数；切片内首视频 PTS 与首音频 PTS 之差（AV）。若 PES 头仅有 PTS、无 DTS 字段，则展示时 **DTS 按与 PTS 相同处理**（常见于 HLS 切片）
-- **HLS 投递质量**（首页「HLS 投递」）：对 master 或 media 播放列表做有限次 HTTP 测量，统计 TTFB、吞吐分位、缓存命中、CDN、多码率余量和 PTS 时长偏差。入口是 `/hls-stats`，不替换上面的实时切片分析
+- **HLS 分析**（首页「HLS 分析」）：对 master 或 media 播放列表做有限次分析，统计 TTFB、吞吐分位、缓存命中、CDN、多码率余量和 PTS 时长偏差。入口是 `/hls-stats`，不替换上面的实时切片分析
 - 支持 Legacy 与 Enhanced（ExHeader/FourCC）两种 FLV 头部模式
 - 帧级数据采集：`DTS` / `PTS` / 帧类型 / GOP / 码率 / 接收 FPS
 - 秒级聚合：每秒心跳行（无数据秒也会记录，便于发现抖动/断流）
@@ -96,7 +96,7 @@ go build -o bin/server ./cmd/server
 - `GET /realtime`：实时拉流分析（标题 **实时拉流分析 · Stream Analyzer**）
 - `GET /offline`：离线文件解析（标题 **离线文件解析 · Stream Analyzer**；支持 raw/pcap/flv/ts/mp4 等）
 - `GET /history`：历史记录（标题 **历史记录 · Stream Analyzer**）
-- `GET /hls-stats`：HLS 投递质量（标题 **HLS 投递质量 · Stream Analyzer**）
+- `GET /hls-stats`：HLS 分析（标题 **HLS 分析 · Stream Analyzer**）
 
 ## 桌面 GUI（Wails）
 
@@ -203,9 +203,9 @@ go build ./cmd/desktop
 - `GET /api/offline/tasks/:id`：获取任务与 `summary.json`
 - `GET /api/offline/tasks/:id/files/*name`：下载离线产物文件（raw/video/audio/summary 等）
 
-### HLS 投递质量
+### HLS 分析
 
-和实时 `type=hls` 分开。投递质量只抽样 HTTP 分片，不写 XLSX，也不解析整路 PES。
+和实时 `type=hls` 分开。这里按播放列表抽样分片，不写 XLSX，也不解析整路 PES。
 
 - `POST /api/hls-stats/tasks`：创建任务，立即返回 `{id,status}`
 - `GET /api/hls-stats/tasks/:id`：查询状态和报告
