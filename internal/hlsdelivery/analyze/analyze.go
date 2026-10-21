@@ -409,11 +409,7 @@ func (r *runner) loadPlaylist(ctx context.Context, rawURL string) (string, *m3u8
 	}
 	pl, err := m3u8.Parse(string(res.Body))
 	if err != nil {
-		snippet := strings.TrimSpace(string(res.Body))
-		if len(snippet) > 80 {
-			snippet = snippet[:80]
-		}
-		return res.URL, nil, res, fmt.Errorf("%w（响应开头: %q）", err, snippet)
+		return res.URL, nil, res, err
 	}
 	base := res.URL
 	if base == "" {
@@ -515,16 +511,24 @@ func (r *runner) loadInit(ctx context.Context, mediaURL string, m *m3u8.Map, cac
 	if err != nil {
 		return nil
 	}
-	if b, ok := cache[u]; ok {
+	key := initCacheKey(u, m.ByteRange)
+	if b, ok := cache[key]; ok {
 		return b
 	}
 	res := r.get(ctx, u, maxSegment, "", m.ByteRange)
 	if res.Err != nil || res.Status >= 400 {
-		cache[u] = nil
+		cache[key] = nil
 		return nil
 	}
-	cache[u] = res.Body
+	cache[key] = res.Body
 	return res.Body
+}
+
+func initCacheKey(rawURL string, br *m3u8.ByteRange) string {
+	if br == nil {
+		return rawURL
+	}
+	return fmt.Sprintf("%s#%d+%d", rawURL, br.Offset, br.Length)
 }
 
 func (r *runner) loadKey(ctx context.Context, mediaURL string, key *m3u8.Key, cache map[string][]byte) ([]byte, error) {

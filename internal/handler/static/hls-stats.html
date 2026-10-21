@@ -195,6 +195,18 @@
         ["缓存命中", fmt(s.cache_hit_rate_pct, "%")],
         ["PTS", s.pts_continuity || "-"]
       ].map(([k, v]) => "<div class='stat'><b>" + escapeHtml(String(v)) + "</b><span>" + k + "</span></div>").join("");
+      const pl = report.playlist;
+      let playlistLine = "";
+      if (pl) {
+        const bits = [];
+        if (pl.live) bits.push("直播");
+        else if ((report.variants || []).length && !pl.segment_count) bits.push("主播放列表");
+        if (pl.target_duration_s) bits.push("目标 " + pl.target_duration_s + "s");
+        if (pl.segment_count) bits.push(pl.segment_count + " 个分片");
+        if (pl.media_sequence) bits.push("序号 " + pl.media_sequence);
+        if (pl.encrypted) bits.push("已加密");
+        if (bits.length) playlistLine = "<p>" + escapeHtml(bits.join(" · ")) + "</p>";
+      }
       const infra = report.infrastructure || {};
       const cdn = [infra.cdn_detected, infra.edge_location].filter(Boolean).join(" · ");
       const tested = report.tested_variant ? (report.tested_variant.resolution || "") + " " + (report.tested_variant.bandwidth_kbps || "") + " kbps" : "";
@@ -211,6 +223,7 @@
       ).join("");
       return "<section class='card'><p class='muted'>" + escapeHtml(report.url || "") + "</p>" +
         (tested ? "<p>测试档 " + escapeHtml(tested) + "</p>" : "") +
+        playlistLine +
         (cdn ? "<p>CDN " + escapeHtml(cdn) + "</p>" : "") +
         "<div class='stats'>" + cards + "</div>" +
         (recs ? "<ul class='notes'>" + recs + "</ul>" : "") +

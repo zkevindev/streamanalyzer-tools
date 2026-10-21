@@ -125,6 +125,7 @@ func (r *runner) monitor(ctx context.Context, rawURL string, opt Options, starte
 		} else {
 			quietSince = time.Time{}
 			loggedStale = false
+			stale = false
 			for _, seg := range fresh {
 				if ctx.Err() != nil {
 					break

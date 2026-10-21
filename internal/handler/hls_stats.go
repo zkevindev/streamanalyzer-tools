@@ -146,6 +146,16 @@ func (h *Handler) CreateHLSStatsTask(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "compare 需要 url_b"})
 		return
 	}
+	if err := analyze.ValidateURL(req.URL); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if req.URLB != "" {
+		if err := analyze.ValidateURL(req.URLB); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	job := &hlsStatsJob{
@@ -165,7 +175,7 @@ func (h *Handler) CreateHLSStatsTask(c *gin.Context) {
 	}
 
 	go h.runHLSStats(ctx, job.ID, req, opt)
-	c.JSON(http.StatusOK, gin.H{"id": job.ID, "status": job.Status})
+	c.JSON(http.StatusOK, gin.H{"id": job.ID, "status": "running"})
 }
 
 func (h *Handler) GetHLSStatsTask(c *gin.Context) {

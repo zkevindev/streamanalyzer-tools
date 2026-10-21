@@ -3,6 +3,7 @@ package analyze
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -239,6 +240,105 @@ func TestAnalyzeUnknownCacheHit(t *testing.T) {
 	view := summaryView(rep.Summary)
 	if _, ok := view["cache_hit_rate_pct"]; ok {
 		t.Fatalf("view cache: %#v", view["cache_hit_rate_pct"])
+	}
+}
+
+func TestValidateURL(t *testing.T) {
+	if err := ValidateURL("file:///etc/passwd"); err == nil {
+		t.Fatal("file url accepted")
+	}
+	if err := ValidateURL("http://169.254.169.254/latest/meta-data/"); err == nil {
+		t.Fatal("link-local accepted")
+	}
+	if err := ValidateURL("http://127.0.0.1:8087/a.m3u8"); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateURL("http://192.168.1.8/live.m3u8"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRedirectToLinkLocal(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://169.254.169.254/latest/meta-data/", http.StatusFound)
+	}))
+	defer srv.Close()
+	got := newRunner(Options{Timeout: 2 * time.Second}).get(context.Background(), srv.URL+"/a.m3u8", maxPlaylist, "", nil)
+	if got.Err == nil {
+		t.Fatal("redirect to link-local was followed")
+	}
+}
+
+func TestInitCacheIncludesByteRange(t *testing.T) {
+	var hits []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits = append(hits, r.Header.Get("Range"))
+		_, _ = w.Write([]byte(r.Header.Get("Range")))
+	}))
+	defer srv.Close()
+	r := newRunner(Options{Timeout: 2 * time.Second})
+	cache := map[string][]byte{}
+	a := &m3u8.ByteRange{Offset: 0, Length: 100}
+	b := &m3u8.ByteRange{Offset: 100, Length: 50}
+	gotA := r.loadInit(context.Background(), srv.URL+"/pl.m3u8", &m3u8.Map{URI: "init.mp4", ByteRange: a}, cache)
+	gotB := r.loadInit(context.Background(), srv.URL+"/pl.m3u8", &m3u8.Map{URI: "init.mp4", ByteRange: b}, cache)
+	again := r.loadInit(context.Background(), srv.URL+"/pl.m3u8", &m3u8.Map{URI: "init.mp4", ByteRange: a}, cache)
+	if string(gotA) == string(gotB) || string(again) != string(gotA) {
+		t.Fatalf("a %q b %q again %q", gotA, gotB, again)
+	}
+	if len(hits) != 2 {
+		t.Fatalf("fetches %v", hits)
+	}
+}
+
+func TestManifestMediaJSON(t *testing.T) {
+	srv := testHLSServer(t)
+	defer srv.Close()
+	rep, err := Manifest(context.Background(), srv.URL+"/hi.m3u8", Options{
+		Headers: http.Header{"Authorization": []string{"Bearer test"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(ReportValue(rep))
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	for _, want := range []string{`"segment_count":4`, `"target_duration_s":4`, `"media_sequence":8`, `"type":"VOD"`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing %s in %s", want, text)
+		}
+	}
+}
+
+func TestMonitorClearsStale(t *testing.T) {
+	start := time.Now()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, ".ts") {
+			_, _ = w.Write([]byte("seg"))
+			return
+		}
+		body := "#EXTM3U\n#EXT-X-TARGETDURATION:1\n#EXT-X-MEDIA-SEQUENCE:1\n#EXTINF:1.0,\na.ts\n#EXTINF:1.0,\nb.ts\n"
+		if time.Since(start) > 3200*time.Millisecond {
+			body += "#EXTINF:1.0,\nc.ts\n"
+		}
+		_, _ = w.Write([]byte(body))
+	}))
+	defer srv.Close()
+	rep, err := Monitor(context.Background(), srv.URL+"/live.m3u8", Options{
+		Timeout:  2 * time.Second,
+		Duration: 6 * time.Second,
+		Segments: 5,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Stale {
+		t.Fatal("stale flag remained after the playlist advanced")
+	}
+	if rep.Summary.SegmentsFetched < 3 {
+		t.Fatalf("fetched %d", rep.Summary.SegmentsFetched)
 	}
 }
 

@@ -356,10 +356,14 @@ func compatibleReport(rep *Report) any {
 
 func manifestJSON(rep *Report) map[string]any {
 	return map[string]any{
-		"tool":     rep.Tool,
-		"version":  rep.Version,
-		"url":      rep.URL,
-		"variants": variantViews(rep.Variants),
+		"tool":           rep.Tool,
+		"version":        rep.Version,
+		"url":            rep.URL,
+		"type":           rep.StreamType,
+		"live":           rep.Live,
+		"playlist":       rep.Playlist,
+		"variants":       variantViews(rep.Variants),
+		"infrastructure": infraView(rep.Infrastructure),
 	}
 }
 

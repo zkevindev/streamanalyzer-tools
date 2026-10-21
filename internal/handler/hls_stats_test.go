@@ -107,6 +107,20 @@ func TestHLSStatsAPI(t *testing.T) {
 	}
 }
 
+func TestHLSStatsRejectsFileURL(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	h := NewHandler(nil, nil, nil)
+	r := gin.New()
+	h.RegisterRoutes(r)
+	req := httptest.NewRequest(http.MethodPost, "/api/hls-stats/tasks", strings.NewReader(`{"command":"manifest","url":"file:///etc/passwd"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("%d %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestHLSStatsStoreLimit(t *testing.T) {
 	var s hlsStatsStore
 	for i := 0; i < hlsStatsMaxJobs; i++ {
