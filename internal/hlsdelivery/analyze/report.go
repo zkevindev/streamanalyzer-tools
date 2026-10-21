@@ -481,10 +481,6 @@ func segmentViews(in []SegmentResult) []map[string]any {
 }
 
 func summaryView(s Summary) map[string]any {
-	hit := 0.0
-	if s.CacheHitRatePct != nil {
-		hit = *s.CacheHitRatePct
-	}
 	out := map[string]any{
 		"segments_fetched":    s.SegmentsFetched,
 		"segments_failed":     s.SegmentsFailed,
@@ -496,9 +492,13 @@ func summaryView(s Summary) map[string]any {
 		"p95_throughput_kbps": s.P95ThroughputKbps,
 		"min_throughput_kbps": s.MinThroughputKbps,
 		"max_throughput_kbps": s.MaxThroughputKbps,
-		"cache_hit_rate_pct":  hit,
-		"pts_continuity":      s.PTSContinuity,
 		"discontinuities":     s.Discontinuities,
+	}
+	if s.CacheHitRatePct != nil {
+		out["cache_hit_rate_pct"] = *s.CacheHitRatePct
+	}
+	if s.PTSContinuity != "" {
+		out["pts_continuity"] = s.PTSContinuity
 	}
 	if bd := breakdownView(s.ErrorBreakdown); len(bd) > 0 {
 		out["error_breakdown"] = bd

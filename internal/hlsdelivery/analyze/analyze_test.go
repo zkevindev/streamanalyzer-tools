@@ -173,6 +173,75 @@ func TestChooseAndABR(t *testing.T) {
 	}
 }
 
+func TestPTSContinuityFrameGap(t *testing.T) {
+	a0, a1 := int64(0), int64(270000)
+	b0, b1 := int64(273000), int64(543000)
+	segs := []SegmentResult{
+		{PTSStart: &a0, PTSEnd: &a1},
+		{PTSStart: &b0, PTSEnd: &b1},
+	}
+	if got := ptsContinuity(segs); got != "OK" {
+		t.Fatalf("frame gap: %q", got)
+	}
+	jump := b0 + 90000*2
+	segs[1].PTSStart = &jump
+	if got := ptsContinuity(segs); got != "ISSUES" {
+		t.Fatalf("jump: %q", got)
+	}
+	if got := ptsContinuity(nil); got != "" {
+		t.Fatalf("empty: %q", got)
+	}
+	if got := ptsContinuity(segs[:1]); got != "" {
+		t.Fatalf("single: %q", got)
+	}
+	missing := int64(-1)
+	unknown := []SegmentResult{{PTSStart: &missing, PTSEnd: &missing}, {PTSStart: &missing, PTSEnd: &missing}}
+	if got := ptsContinuity(unknown); got != "" {
+		t.Fatalf("no pts: %q", got)
+	}
+}
+
+func TestSummaryOmitsUnknownCacheHit(t *testing.T) {
+	view := summaryView(Summary{})
+	if _, ok := view["cache_hit_rate_pct"]; ok {
+		t.Fatalf("unknown rate present: %#v", view["cache_hit_rate_pct"])
+	}
+	if _, ok := view["pts_continuity"]; ok {
+		t.Fatalf("unknown continuity present: %#v", view["pts_continuity"])
+	}
+	rate := 12.5
+	view = summaryView(Summary{CacheHitRatePct: &rate, PTSContinuity: "OK"})
+	if view["cache_hit_rate_pct"] != 12.5 || view["pts_continuity"] != "OK" {
+		t.Fatalf("%#v", view)
+	}
+}
+
+func TestAnalyzeUnknownCacheHit(t *testing.T) {
+	srv := testHLSServer(t)
+	defer srv.Close()
+	rep, err := Analyze(context.Background(), srv.URL+"/live.m3u8", Options{
+		Timeout:    2 * time.Second,
+		Duration:   5 * time.Second,
+		Segments:   2,
+		VariantSet: true,
+		Variant:    -1,
+		Headers:    http.Header{"Authorization": []string{"Bearer test"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.Summary.CacheHitRatePct != nil {
+		t.Fatalf("cache: %v", *rep.Summary.CacheHitRatePct)
+	}
+	if rep.Summary.PTSContinuity != "" {
+		t.Fatalf("pts: %q", rep.Summary.PTSContinuity)
+	}
+	view := summaryView(rep.Summary)
+	if _, ok := view["cache_hit_rate_pct"]; ok {
+		t.Fatalf("view cache: %#v", view["cache_hit_rate_pct"])
+	}
+}
+
 func TestCDNHeaders(t *testing.T) {
 	h := http.Header{}
 	h.Set("Server", "cloudflare")

@@ -20,6 +20,8 @@ const (
 	hlsStatsMaxTimeout = time.Minute
 )
 
+var errHLSStatsFull = errors.New("同时运行的任务已达上限")
+
 type hlsStatsRequest struct {
 	Command             string            `json:"command"`
 	URL                 string            `json:"url"`
@@ -60,23 +62,31 @@ type hlsStatsStore struct {
 	order []string
 }
 
-func (s *hlsStatsStore) put(job *hlsStatsJob) {
+func (s *hlsStatsStore) put(job *hlsStatsJob) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.jobs == nil {
 		s.jobs = map[string]*hlsStatsJob{}
 	}
-	s.jobs[job.ID] = job
-	s.order = append(s.order, job.ID)
-	for len(s.order) > hlsStatsMaxJobs {
-		old := s.order[0]
-		s.order = s.order[1:]
-		if prev := s.jobs[old]; prev != nil && prev.Status == "running" {
-			s.order = append(s.order, old)
+	for len(s.order) >= hlsStatsMaxJobs {
+		evicted := false
+		for i, id := range s.order {
+			prev := s.jobs[id]
+			if prev != nil && prev.Status == "running" {
+				continue
+			}
+			s.order = append(s.order[:i], s.order[i+1:]...)
+			delete(s.jobs, id)
+			evicted = true
 			break
 		}
-		delete(s.jobs, old)
+		if !evicted {
+			return errHLSStatsFull
+		}
 	}
+	s.jobs[job.ID] = job
+	s.order = append(s.order, job.ID)
+	return nil
 }
 
 func (s *hlsStatsStore) get(id string) (hlsStatsView, bool) {
@@ -148,7 +158,11 @@ func (h *Handler) CreateHLSStatsTask(c *gin.Context) {
 		},
 		cancel: cancel,
 	}
-	h.hlsStats.put(job)
+	if err := h.hlsStats.put(job); err != nil {
+		cancel()
+		c.JSON(http.StatusTooManyRequests, gin.H{"error": err.Error()})
+		return
+	}
 
 	go h.runHLSStats(ctx, job.ID, req, opt)
 	c.JSON(http.StatusOK, gin.H{"id": job.ID, "status": job.Status})

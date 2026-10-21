@@ -103,6 +103,19 @@ func TestFMP4SyncSample(t *testing.T) {
 	}
 }
 
+func TestFMP4UsesVideoTrackOnly(t *testing.T) {
+	init := testInitTrack(2, 90000)
+	audio := testFragmentTrack(1, false, 48000)
+	video := testFragmentTrack(2, true, 90000)
+	info := Inspect(append(audio, video...), init)
+	if info.Keyframe == nil || !*info.Keyframe {
+		t.Fatalf("keyframe: %+v", info)
+	}
+	if !info.DurationKnown || abs(info.Duration-1) > 0.001 {
+		t.Fatalf("duration: %+v", info)
+	}
+}
+
 func TestDecryptAES128(t *testing.T) {
 	key := []byte("0123456789abcdef")
 	iv := IVForSequence(10)
@@ -149,6 +162,10 @@ func abs(v float64) float64 {
 }
 
 func testInit(timescale uint32) []byte {
+	return testInitTrack(1, timescale)
+}
+
+func testInitTrack(trackID, timescale uint32) []byte {
 	mdhdRest := make([]byte, 20)
 	binary.BigEndian.PutUint32(mdhdRest[8:12], timescale)
 	mdhd := box("mdhd", fullbox(0, 0, mdhdRest))
@@ -161,13 +178,20 @@ func testInit(timescale uint32) []byte {
 	stbl := box("stbl", stsd)
 	minf := box("minf", stbl)
 	mdia := box("mdia", append(append(mdhd, hdlr...), minf...))
-	trak := box("trak", mdia)
+	tkhdBody := make([]byte, 16)
+	binary.BigEndian.PutUint32(tkhdBody[8:12], trackID)
+	tkhd := box("tkhd", fullbox(0, 0, tkhdBody))
+	trak := box("trak", append(tkhd, mdia...))
 	return box("moov", trak)
 }
 
 func testFragment(sync bool, sampleDuration uint32) []byte {
+	return testFragmentTrack(1, sync, sampleDuration)
+}
+
+func testFragmentTrack(trackID uint32, sync bool, sampleDuration uint32) []byte {
 	tfhdRest := make([]byte, 12)
-	binary.BigEndian.PutUint32(tfhdRest[0:4], 1)
+	binary.BigEndian.PutUint32(tfhdRest[0:4], trackID)
 	binary.BigEndian.PutUint32(tfhdRest[4:8], sampleDuration)
 	tfhd := box("tfhd", fullbox(0, 0x000028, tfhdRest))
 	first := uint32(0)

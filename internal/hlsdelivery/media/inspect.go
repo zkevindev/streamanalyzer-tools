@@ -378,19 +378,23 @@ func pcrDistance(a, b uint64) uint64 {
 
 func inspectMP4(segment, init []byte) Info {
 	info := Info{Format: "mp4"}
+	var trackID uint32
 	if len(init) > 0 {
-		info.Timescale, info.Codec = inspectInit(init)
+		info.Timescale, info.Codec, trackID = inspectInit(init)
 	}
-	if info.Timescale == 0 {
-		ts, codec := inspectInit(segment)
-		if ts != 0 {
+	if info.Timescale == 0 || trackID == 0 {
+		ts, codec, id := inspectInit(segment)
+		if info.Timescale == 0 && ts != 0 {
 			info.Timescale = ts
 		}
 		if info.Codec == "" {
 			info.Codec = codec
 		}
+		if trackID == 0 {
+			trackID = id
+		}
 	}
-	start, known, ticks, haveTicks := inspectFragment(segment)
+	start, known, ticks, haveTicks := inspectFragment(segment, trackID)
 	if known {
 		info.Keyframe = &start
 	}
@@ -401,9 +405,10 @@ func inspectMP4(segment, init []byte) Info {
 	return info
 }
 
-func inspectInit(data []byte) (uint32, string) {
+func inspectInit(data []byte) (uint32, string, uint32) {
 	var timescale uint32
 	var codec string
+	var trackID uint32
 	walkBoxes(data, func(typ string, payload []byte) {
 		if typ != "moov" {
 			return
@@ -412,19 +417,20 @@ func inspectInit(data []byte) (uint32, string) {
 			if typ != "trak" {
 				return
 			}
-			ts, video, c := inspectTrak(payload)
+			ts, video, c, id := inspectTrak(payload)
 			if video && timescale == 0 {
 				timescale = ts
+				trackID = id
 				if c != "" {
 					codec = c
 				}
 			}
 		})
 	})
-	return timescale, codec
+	return timescale, codec, trackID
 }
 
-func inspectTrak(data []byte) (timescale uint32, video bool, codec string) {
+func inspectTrak(data []byte) (timescale uint32, video bool, codec string, trackID uint32) {
 	var walk func([]byte)
 	walk = func(buf []byte) {
 		walkBoxes(buf, func(typ string, payload []byte) {
@@ -443,6 +449,10 @@ func inspectTrak(data []byte) (timescale uint32, video bool, codec string) {
 				if hdlrIsVideo(payload) {
 					video = true
 				}
+			case "tkhd":
+				if id := tkhdTrackID(payload); id != 0 {
+					trackID = id
+				}
 			case "avc1", "avc3", "hvc1", "hev1", "dvh1", "av01":
 				video = true
 				codec = typ
@@ -450,7 +460,20 @@ func inspectTrak(data []byte) (timescale uint32, video bool, codec string) {
 		})
 	}
 	walk(data)
-	return timescale, video, codec
+	return timescale, video, codec, trackID
+}
+
+func tkhdTrackID(payload []byte) uint32 {
+	if len(payload) < 16 {
+		return 0
+	}
+	if payload[0] == 1 {
+		if len(payload) < 24 {
+			return 0
+		}
+		return binary.BigEndian.Uint32(payload[20:24])
+	}
+	return binary.BigEndian.Uint32(payload[12:16])
 }
 
 func mdhdTimescale(payload []byte) uint32 {
@@ -473,10 +496,11 @@ func hdlrIsVideo(payload []byte) bool {
 	return string(payload[8:12]) == "vide"
 }
 
-func inspectFragment(data []byte) (sync bool, known bool, ticks uint64, haveTicks bool) {
+func inspectFragment(data []byte, videoTrackID uint32) (sync bool, known bool, ticks uint64, haveTicks bool) {
 	var defaultFlags uint32
 	var haveDefault bool
 	var defaultDuration uint32
+	var trackID uint32
 	var firstFlags uint32
 	var haveFirst bool
 	var sawTrun bool
@@ -488,13 +512,16 @@ func inspectFragment(data []byte) (sync bool, known bool, ticks uint64, haveTick
 			case "moof":
 				walk(payload)
 			case "traf":
-				savedFlags, savedHave, savedDur := defaultFlags, haveDefault, defaultDuration
-				defaultFlags, haveDefault, defaultDuration = 0, false, 0
+				savedFlags, savedHave, savedDur, savedTrack := defaultFlags, haveDefault, defaultDuration, trackID
+				defaultFlags, haveDefault, defaultDuration, trackID = 0, false, 0, 0
 				walk(payload)
-				defaultFlags, haveDefault, defaultDuration = savedFlags, savedHave, savedDur
+				defaultFlags, haveDefault, defaultDuration, trackID = savedFlags, savedHave, savedDur, savedTrack
 			case "tfhd":
-				defaultFlags, haveDefault, defaultDuration = parseTFHD(payload)
+				trackID, defaultFlags, haveDefault, defaultDuration = parseTFHD(payload)
 			case "trun":
+				if videoTrackID != 0 && trackID != videoTrackID {
+					return
+				}
 				if sawTrun {
 					extra, okDur := sumTrun(payload, defaultDuration)
 					if okDur {
@@ -524,41 +551,42 @@ func inspectFragment(data []byte) (sync bool, known bool, ticks uint64, haveTick
 	return firstFlags&0x00010000 == 0, true, ticks, haveTicks
 }
 
-func parseTFHD(payload []byte) (flags uint32, haveFlags bool, defaultDuration uint32) {
+func parseTFHD(payload []byte) (trackID uint32, flags uint32, haveFlags bool, defaultDuration uint32) {
 	_, boxFlags, rest, ok := parseFullBox(payload)
 	if !ok || len(rest) < 4 {
-		return 0, false, 0
+		return 0, 0, false, 0
 	}
-	rest = rest[4:] // track id
+	trackID = binary.BigEndian.Uint32(rest[:4])
+	rest = rest[4:]
 	if boxFlags&0x000001 != 0 {
 		if len(rest) < 8 {
-			return 0, false, 0
+			return trackID, 0, false, 0
 		}
 		rest = rest[8:]
 	}
 	if boxFlags&0x000002 != 0 {
 		if len(rest) < 4 {
-			return 0, false, 0
+			return trackID, 0, false, 0
 		}
 		rest = rest[4:]
 	}
 	if boxFlags&0x000008 != 0 {
 		if len(rest) < 4 {
-			return 0, false, 0
+			return trackID, 0, false, 0
 		}
 		defaultDuration = binary.BigEndian.Uint32(rest[:4])
 		rest = rest[4:]
 	}
 	if boxFlags&0x000010 != 0 {
 		if len(rest) < 4 {
-			return 0, false, 0
+			return trackID, 0, false, 0
 		}
 		rest = rest[4:]
 	}
 	if boxFlags&0x000020 != 0 && len(rest) >= 4 {
-		return binary.BigEndian.Uint32(rest[:4]), true, defaultDuration
+		return trackID, binary.BigEndian.Uint32(rest[:4]), true, defaultDuration
 	}
-	return 0, false, defaultDuration
+	return trackID, 0, false, defaultDuration
 }
 
 func parseFirstTrun(payload []byte, defaultFlags uint32, haveDefault bool, defaultDuration uint32) (uint32, bool, uint64, bool) {

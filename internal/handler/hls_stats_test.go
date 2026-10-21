@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -103,5 +104,34 @@ func TestHLSStatsAPI(t *testing.T) {
 	}
 	if view.Status != "failed" || view.ExitCode != 5 {
 		t.Fatalf("missing %+v", view)
+	}
+}
+
+func TestHLSStatsStoreLimit(t *testing.T) {
+	var s hlsStatsStore
+	for i := 0; i < hlsStatsMaxJobs; i++ {
+		job := &hlsStatsJob{hlsStatsView: hlsStatsView{ID: fmt.Sprintf("r%d", i), Status: "running"}}
+		if err := s.put(job); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.put(&hlsStatsJob{hlsStatsView: hlsStatsView{ID: "overflow", Status: "running"}}); err != errHLSStatsFull {
+		t.Fatalf("overflow: %v", err)
+	}
+	if len(s.order) != hlsStatsMaxJobs || len(s.jobs) != hlsStatsMaxJobs {
+		t.Fatalf("order %d jobs %d", len(s.order), len(s.jobs))
+	}
+	s.finish("r10", "done", 0, "", nil)
+	if err := s.put(&hlsStatsJob{hlsStatsView: hlsStatsView{ID: "fresh", Status: "running"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := s.jobs["r10"]; ok {
+		t.Fatal("finished job should be evicted")
+	}
+	if _, ok := s.jobs["r0"]; !ok {
+		t.Fatal("oldest running job should stay")
+	}
+	if _, ok := s.jobs["fresh"]; !ok || len(s.jobs) != hlsStatsMaxJobs {
+		t.Fatalf("jobs %d", len(s.jobs))
 	}
 }

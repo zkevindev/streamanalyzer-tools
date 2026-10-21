@@ -667,11 +667,10 @@ func summarize(command, pageURL string, opt Options, pl *m3u8.Playlist, obs []ob
 		rep.Summary.P50ThroughputKbps = metrics.Quantile(rates, 0.50)
 		rep.Summary.P95ThroughputKbps = metrics.Quantile(rates, 0.05)
 	}
-	rate := 0.0
 	if classified > 0 {
-		rate = 100 * float64(hits) / float64(classified)
+		rate := 100 * float64(hits) / float64(classified)
+		rep.Summary.CacheHitRatePct = &rate
 	}
-	rep.Summary.CacheHitRatePct = &rate
 	rep.Infrastructure.CacheHits = hits
 	rep.Infrastructure.CacheMisses = classified - hits
 	rep.Infrastructure.IPFlips = flips
@@ -989,26 +988,43 @@ func countDiscontinuities(pl *m3u8.Playlist) int {
 	return n
 }
 
+// ptsContinuitySlack 是相邻分片 PTS 允许的偏差，单位是 90 kHz tick。
+// 上一片的 PTSEnd 是最后一帧的时间戳，下一片的 PTSStart 通常再晚一帧
+// （30fps 大约 3000 tick）。B 帧重排还会再偏几帧，所以用 0.5 秒作为断开阈值。
+const ptsContinuitySlack int64 = 45000
+
 func ptsContinuity(segs []SegmentResult) string {
 	var prev int64
 	var have bool
+	checked := 0
 	for _, seg := range segs {
 		if seg.PTSStart == nil || *seg.PTSStart < 0 || seg.PTSEnd == nil || *seg.PTSEnd < 0 {
 			continue
 		}
 		if have {
-			gap := *seg.PTSStart - prev
-			if gap < 0 {
-				gap += 1 << 33
-			}
-			if gap > 90 {
+			if !ptsAdjacent(prev, *seg.PTSStart) {
 				return "ISSUES"
 			}
+			checked++
 		}
 		prev = *seg.PTSEnd
 		have = true
 	}
+	if checked == 0 {
+		return ""
+	}
 	return "OK"
+}
+
+func ptsAdjacent(prevEnd, nextStart int64) bool {
+	const mod int64 = 1 << 33
+	gap := nextStart - prevEnd
+	if gap > mod/2 {
+		gap -= mod
+	} else if gap < -mod/2 {
+		gap += mod
+	}
+	return gap >= -ptsContinuitySlack && gap <= ptsContinuitySlack
 }
 
 func noteInfra(infra *Infrastructure, h http.Header) {
