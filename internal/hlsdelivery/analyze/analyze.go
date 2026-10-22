@@ -183,6 +183,7 @@ type ABRVariant struct {
 // SegmentResult 是一个分片的测量。
 type SegmentResult struct {
 	Sequence           int      `json:"sequence"`
+	Discontinuity      bool     `json:"discontinuity,omitempty"`
 	URL                string   `json:"url"`
 	DeclaredDurationS  float64  `json:"declared_duration_s"`
 	HTTPStatus         int      `json:"http_status,omitempty"`
@@ -419,7 +420,7 @@ func (r *runner) loadPlaylist(ctx context.Context, rawURL string) (string, *m3u8
 }
 
 func (r *runner) pullOne(ctx context.Context, mediaURL string, seg m3u8.Segment, opt Options, inits map[string][]byte, keys map[string][]byte) observation {
-	out := observation{Result: SegmentResult{Sequence: seg.Sequence, DeclaredDurationS: seg.Duration}}
+	out := observation{Result: SegmentResult{Sequence: seg.Sequence, Discontinuity: seg.Discontinuity, DeclaredDurationS: seg.Duration}}
 	u, err := resolveURL(mediaURL, seg.URI)
 	if err != nil {
 		out.Result.Error = err.Error()
@@ -1002,6 +1003,9 @@ func ptsContinuity(segs []SegmentResult) string {
 	var have bool
 	checked := 0
 	for _, seg := range segs {
+		if seg.Discontinuity {
+			have = false
+		}
 		if seg.PTSStart == nil || *seg.PTSStart < 0 || seg.PTSEnd == nil || *seg.PTSEnd < 0 {
 			continue
 		}

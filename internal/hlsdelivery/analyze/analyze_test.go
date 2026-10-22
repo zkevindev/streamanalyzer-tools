@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -202,6 +203,53 @@ func TestPTSContinuityFrameGap(t *testing.T) {
 	}
 }
 
+func TestPTSContinuityDiscontinuity(t *testing.T) {
+	a0, a1 := int64(900000), int64(1170000)
+	b0, b1 := int64(0), int64(270000)
+	c0, c1 := int64(273000), int64(543000)
+	before := SegmentResult{PTSStart: &a0, PTSEnd: &a1}
+	after := SegmentResult{Discontinuity: true, PTSStart: &b0, PTSEnd: &b1}
+	contiguous := SegmentResult{PTSStart: &c0, PTSEnd: &c1}
+	for _, tc := range []struct {
+		name string
+		segs []SegmentResult
+		want string
+	}{
+		{"only declared boundary", []SegmentResult{before, after}, ""},
+		{"continuous after reset", []SegmentResult{before, after, contiguous}, "OK"},
+		{"unparsed boundary", []SegmentResult{before, {Discontinuity: true}, contiguous}, ""},
+		{"failed boundary", []SegmentResult{before, {Discontinuity: true, Error: "HTTP 500"}, contiguous}, ""},
+		{"undeclared jump after reset", []SegmentResult{before, after, before}, "ISSUES"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ptsContinuity(tc.segs); got != tc.want {
+				t.Fatalf("continuity = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestAnalyzePreservesDiscontinuity(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, ".m3u8") {
+			_, _ = fmt.Fprint(w, "#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXTINF:4,\na.ts\n#EXT-X-DISCONTINUITY\n#EXTINF:4,\nb.ts\n#EXT-X-ENDLIST\n")
+			return
+		}
+		_, _ = w.Write(media.SyntheticMPEGTS(true))
+	}))
+	defer srv.Close()
+	rep, err := Analyze(context.Background(), srv.URL+"/index.m3u8", Options{Segments: 2, ParseSegments: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rep.Segments) != 2 || rep.Segments[0].Discontinuity || !rep.Segments[1].Discontinuity {
+		t.Fatalf("segment markers: %+v", rep.Segments)
+	}
+	if rep.Summary.Discontinuities != 1 {
+		t.Fatalf("discontinuities = %d", rep.Summary.Discontinuities)
+	}
+}
+
 func TestSummaryOmitsUnknownCacheHit(t *testing.T) {
 	view := summaryView(Summary{})
 	if _, ok := view["cache_hit_rate_pct"]; ok {
@@ -273,7 +321,13 @@ func TestInitCacheIncludesByteRange(t *testing.T) {
 	var hits []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits = append(hits, r.Header.Get("Range"))
-		_, _ = w.Write([]byte(r.Header.Get("Range")))
+		w.Header().Set("Content-Range", "bytes "+strings.TrimPrefix(r.Header.Get("Range"), "bytes=")+"/150")
+		w.WriteHeader(http.StatusPartialContent)
+		if r.Header.Get("Range") == "bytes=0-99" {
+			_, _ = w.Write(bytes.Repeat([]byte("a"), 100))
+		} else {
+			_, _ = w.Write(bytes.Repeat([]byte("b"), 50))
+		}
 	}))
 	defer srv.Close()
 	r := newRunner(Options{Timeout: 2 * time.Second})

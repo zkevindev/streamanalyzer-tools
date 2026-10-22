@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"net/http/httptrace"
 	"net/url"
+	"strconv"
+	"strings"
 	"time"
 
 	"streamanalyzer/internal/hlsdelivery/m3u8"
@@ -171,8 +173,8 @@ func (r *runner) get(ctx context.Context, rawURL string, limit int64, accept str
 	}
 	if byteRange != nil {
 		end := byteRange.Offset + byteRange.Length - 1
-		if end < byteRange.Offset {
-			end = byteRange.Offset
+		if byteRange.Offset < 0 || byteRange.Length <= 0 || end < byteRange.Offset {
+			return &fetched{URL: rawURL, Err: errors.New("无效的字节范围"), Kind: "other"}
 		}
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", byteRange.Offset, end))
 	}
@@ -209,6 +211,12 @@ func (r *runner) get(ctx context.Context, rawURL string, limit int64, accept str
 		return &fetched{URL: rawURL, TTFB: ttfb, Total: total, IP: ip, Addr: addr, Err: err, Kind: kind}
 	}
 	defer resp.Body.Close()
+	if byteRange != nil && resp.StatusCode < 400 {
+		if err := validateRangeResponse(resp, byteRange); err != nil {
+			return &fetched{URL: resp.Request.URL.String(), Status: resp.StatusCode, Header: resp.Header.Clone(),
+				TTFB: ttfb, Total: time.Since(start), IP: ip, Addr: addr, Err: err, Kind: "other"}
+		}
+	}
 	body, readErr := io.ReadAll(io.LimitReader(resp.Body, limit+1))
 	total = time.Since(start)
 	if ttfb == 0 {
@@ -241,8 +249,31 @@ func (r *runner) get(ctx context.Context, rawURL string, limit int64, accept str
 	case resp.StatusCode >= 400:
 		f.Err = fmt.Errorf("HTTP %d", resp.StatusCode)
 		f.Kind = "http"
+	case byteRange != nil && len(body) != byteRange.Length:
+		f.Err = fmt.Errorf("字节范围响应长度为 %d，预期 %d", len(body), byteRange.Length)
+		f.Kind = "eof"
 	}
 	return f
+}
+
+func validateRangeResponse(resp *http.Response, br *m3u8.ByteRange) error {
+	if resp.StatusCode != http.StatusPartialContent {
+		return fmt.Errorf("服务器未返回请求的字节范围: HTTP %d", resp.StatusCode)
+	}
+	end := br.Offset + br.Length - 1
+	prefix := fmt.Sprintf("bytes %d-%d/", br.Offset, end)
+	contentRange := resp.Header.Get("Content-Range")
+	if !strings.HasPrefix(contentRange, prefix) {
+		return fmt.Errorf("Content-Range 与请求的字节范围不匹配: %q", contentRange)
+	}
+	total := strings.TrimPrefix(contentRange, prefix)
+	if total != "*" {
+		size, err := strconv.ParseInt(total, 10, 64)
+		if err != nil || size <= int64(end) {
+			return fmt.Errorf("无效的 Content-Range: %q", contentRange)
+		}
+	}
+	return nil
 }
 
 func isTimeout(err error) bool {
