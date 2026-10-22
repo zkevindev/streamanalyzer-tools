@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>HLS 分析 · Stream Analyzer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    :root{--bg:#fafaf9;--surface:#fff;--border:#e8e6e1;--text:#1a1918;--muted:#78716c;--accent:#d97757;--accent-hover:#c4684a;--radius:1rem;--shadow:0 2px 12px rgba(0,0,0,.05)}
+    body{font-family:'Outfit',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);min-height:100dvh;padding:2rem;line-height:1.5}
+    .container{max-width:1100px;margin:0 auto}
+    .nav-bar{display:flex;gap:.5rem;flex-wrap:wrap;margin-bottom:1.5rem}
+    .nav-item{color:var(--muted);text-decoration:none;font-size:.875rem;padding:.4rem .75rem;border-radius:8px}
+    .nav-item.active,.nav-item:hover{color:var(--text);background:rgba(0,0,0,.04)}
+    h1{font-size:1.375rem;font-weight:700;letter-spacing:-.02em}
+    .desc{color:var(--muted);font-size:.875rem;margin:.35rem 0 1.25rem}
+    .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.25rem;box-shadow:var(--shadow);margin-bottom:1rem}
+    .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:.75rem}
+    label{display:block;font-size:.75rem;font-weight:600;color:var(--muted);margin-bottom:.3rem}
+    input,select{width:100%;padding:.55rem .7rem;border:1px solid var(--border);border-radius:.5rem;font:inherit;background:#fff}
+    input:focus,select:focus{outline:none;border-color:var(--accent)}
+    .wide{grid-column:1/-1}
+    .row{display:flex;gap:.75rem;align-items:center;margin-top:1rem;flex-wrap:wrap}
+    button{background:var(--accent);color:#fff;border:0;border-radius:8px;padding:.65rem 1.1rem;font:inherit;font-weight:600;cursor:pointer}
+    button:hover{background:var(--accent-hover)}
+    button.ghost{background:#1a1918}
+    .check{display:flex;align-items:center;gap:.4rem;font-size:.875rem;color:var(--text)}
+    .check input{width:auto}
+    .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:.75rem}
+    .stat{background:#fafaf9;border:1px solid var(--border);border-radius:.75rem;padding:.75rem}
+    .stat b{display:block;font-size:1.05rem}
+    .stat span{color:var(--muted);font-size:.75rem}
+    table{width:100%;border-collapse:collapse;font-size:.8125rem}
+    th,td{text-align:left;padding:.45rem .4rem;border-bottom:1px solid var(--border);white-space:nowrap}
+    .wrap{overflow:auto}
+    .notes{margin:.5rem 0 0 1rem;color:var(--text)}
+    .err{color:#b91c1c;font-size:.875rem}
+    .muted{color:var(--muted);font-size:.875rem}
+    @media(max-width:640px){body{padding:1rem}}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <nav class="nav-bar">
+      <a href="/" class="nav-item">入口</a>
+      <a href="/realtime" class="nav-item">实时分析</a>
+      <a href="/hls-stats" class="nav-item active">HLS 分析</a>
+      <a href="/offline" class="nav-item">离线分析</a>
+      <a href="/history" class="nav-item">历史记录</a>
+    </nav>
+    <h1>HLS 分析</h1>
+    <p class="desc">分析播放列表和分片。实时页里的 HLS 仍然看 PTS/DTS，两边互不替代。</p>
+    <form class="card" id="form">
+      <div class="grid">
+        <div class="wide">
+          <label for="url">播放列表地址</label>
+          <input id="url" placeholder="https://example.com/live/index.m3u8" required>
+        </div>
+        <div class="wide" id="urlBWrap" hidden>
+          <label for="urlB">对比地址</label>
+          <input id="urlB" placeholder="第二路 m3u8">
+        </div>
+        <div>
+          <label for="command">命令</label>
+          <select id="command">
+            <option value="analyze">analyze 抽样分片</option>
+            <option value="manifest">manifest 只看播放列表</option>
+            <option value="monitor">monitor 看直播窗口</option>
+            <option value="compare">compare 比较两路</option>
+          </select>
+        </div>
+        <div>
+          <label for="segments">分片数</label>
+          <input id="segments" type="number" min="1" value="10">
+        </div>
+        <div>
+          <label for="variant">变体序号</label>
+          <input id="variant" type="number" value="-1">
+        </div>
+        <div>
+          <label for="duration">整次时长</label>
+          <input id="duration" value="30s">
+        </div>
+        <div>
+          <label for="timeout">单次超时</label>
+          <input id="timeout" value="10s">
+        </div>
+        <div>
+          <label for="errorThreshold">错误率阈值 %</label>
+          <input id="errorThreshold" type="number" min="0" step="0.1" value="0">
+        </div>
+        <label class="check"><input id="parse" type="checkbox">解析分片 PTS / 关键帧</label>
+        <label class="check"><input id="all" type="checkbox">全部变体</label>
+      </div>
+      <div class="row">
+        <button type="submit" id="run">开始分析</button>
+        <button type="button" class="ghost" id="stop" hidden>停止</button>
+        <span class="muted" id="state"></span>
+      </div>
+    </form>
+    <div id="out"></div>
+  </div>
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let taskId = "";
+    let timer = 0;
+    $("command").addEventListener("change", () => {
+      $("urlBWrap").hidden = $("command").value !== "compare";
+    });
+    $("form").addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const body = {
+        command: $("command").value,
+        url: $("url").value.trim(),
+        url_b: $("urlB").value.trim(),
+        segments: Number($("segments").value || 10),
+        variant: Number($("variant").value),
+        all_variants: $("all").checked,
+        parse_segments: $("parse").checked,
+        duration: $("duration").value.trim(),
+        timeout: $("timeout").value.trim(),
+        error_threshold: Number($("errorThreshold").value || 0)
+      };
+      $("state").textContent = "提交中";
+      $("out").innerHTML = "";
+      const res = await fetch("/api/hls-stats/tasks", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(body)
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        $("state").textContent = data.error || "提交失败";
+        return;
+      }
+      taskId = data.id;
+      $("stop").hidden = false;
+      poll();
+    });
+    $("stop").addEventListener("click", async () => {
+      if (!taskId) return;
+      await fetch("/api/hls-stats/tasks/" + taskId, {method: "DELETE"});
+    });
+    async function poll() {
+      clearTimeout(timer);
+      const res = await fetch("/api/hls-stats/tasks/" + taskId);
+      const data = await res.json();
+      $("state").textContent = statusText(data);
+      if (data.status === "running" || data.status === "stopping") {
+        timer = setTimeout(poll, 800);
+        return;
+      }
+      $("stop").hidden = true;
+      render(data);
+    }
+    function statusText(data) {
+      if (data.status === "running") return "分析中";
+      if (data.status === "stopping") return "正在停止";
+      if (data.status === "canceled") return "已取消";
+      if (data.status === "failed") return "失败，退出码 " + data.exit_code + (data.error ? "：" + data.error : "");
+      return "完成，退出码 " + data.exit_code;
+    }
+    function render(data) {
+      const report = data.report;
+      if (!report) {
+        $("out").innerHTML = data.error ? '<p class="err">' + escapeHtml(data.error) + "</p>" : "";
+        return;
+      }
+      if (report.notes) {
+        $("out").innerHTML = renderCompare(report);
+        return;
+      }
+      if (report.results) {
+        $("out").innerHTML = report.results.map(renderOne).join("");
+        return;
+      }
+      $("out").innerHTML = renderOne(report);
+    }
+    function renderCompare(report) {
+      const notes = (report.notes || []).map((n) => "<li>" + escapeHtml(n) + "</li>").join("");
+      return "<div class='card'><h2>对比</h2><ul class='notes'>" + notes + "</ul></div>" +
+        renderOne(report.a) + renderOne(report.b);
+    }
+    function renderOne(report) {
+      if (!report) return "";
+      const s = report.summary || {};
+      const cards = [
+        ["类型", report.type || "-"],
+        ["成功 / 失败 / 跳过", (s.segments_fetched ?? "-") + " / " + (s.segments_failed ?? "-") + " / " + (s.segments_skipped ?? 0)],
+        ["错误率", fmt(s.error_rate_pct, "%")],
+        ["平均 TTFB", fmt(s.avg_ttfb_ms, " ms")],
+        ["平均吞吐", fmtKbps(s.avg_throughput_kbps)],
+        ["最差 5%", fmtKbps(s.p95_throughput_kbps)],
+        ["缓存命中", fmt(s.cache_hit_rate_pct, "%")],
+        ["PTS", s.pts_continuity || "-"]
+      ].map(([k, v]) => "<div class='stat'><b>" + escapeHtml(String(v)) + "</b><span>" + k + "</span></div>").join("");
+      const pl = report.playlist;
+      let playlistLine = "";
+      if (pl) {
+        const bits = [];
+        if (pl.live) bits.push("直播");
+        else if ((report.variants || []).length && !pl.segment_count) bits.push("主播放列表");
+        if (pl.target_duration_s) bits.push("目标 " + pl.target_duration_s + "s");
+        if (pl.segment_count) bits.push(pl.segment_count + " 个分片");
+        if (pl.media_sequence) bits.push("序号 " + pl.media_sequence);
+        if (pl.encrypted) bits.push("已加密");
+        if (bits.length) playlistLine = "<p>" + escapeHtml(bits.join(" · ")) + "</p>";
+      }
+      const infra = report.infrastructure || {};
+      const cdn = [infra.cdn_detected, infra.edge_location].filter(Boolean).join(" · ");
+      const tested = report.tested_variant ? (report.tested_variant.resolution || "") + " " + (report.tested_variant.bandwidth_kbps || "") + " kbps" : "";
+      const recs = (report.recommendations || []).map((n) => "<li>" + escapeHtml(n) + "</li>").join("");
+      const variants = ((report.manifest && report.manifest.variants) || report.variants || []).map((v) =>
+        "<tr><td>" + escapeHtml(v.resolution || "") + "</td><td>" + escapeHtml(String(v.bandwidth_kbps ?? "")) + "</td><td>" + escapeHtml(v.codecs || "") + "</td><td>" + escapeHtml(v.url || "") + "</td></tr>"
+      ).join("");
+      const segs = (report.segments || []).map((seg) =>
+        "<tr><td>" + seg.sequence + "</td><td>" + escapeHtml(String(seg.http_status ?? "")) + "</td><td>" +
+        escapeHtml(String(seg.ttfb_ms ?? "")) + "</td><td>" + escapeHtml(fmtKbps(seg.throughput_kbps)) + "</td><td>" +
+        escapeHtml(seg.cache_status || "") + "</td><td>" + escapeHtml(String(seg.pts_start ?? "")) + "</td><td>" +
+        escapeHtml(seg.starts_with_keyframe === undefined ? "" : String(seg.starts_with_keyframe)) + "</td><td>" +
+        escapeHtml(seg.gap ? "EXT-X-GAP（跳过）" : (seg.error || "")) + "</td></tr>"
+      ).join("");
+      return "<section class='card'><p class='muted'>" + escapeHtml(report.url || "") + "</p>" +
+        (tested ? "<p>测试档 " + escapeHtml(tested) + "</p>" : "") +
+        playlistLine +
+        (cdn ? "<p>CDN " + escapeHtml(cdn) + "</p>" : "") +
+        "<div class='stats'>" + cards + "</div>" +
+        (recs ? "<ul class='notes'>" + recs + "</ul>" : "") +
+        (variants ? "<div class='wrap'><table><thead><tr><th>分辨率</th><th>kbps</th><th>编码</th><th>地址</th></tr></thead><tbody>" + variants + "</tbody></table></div>" : "") +
+        (segs ? "<div class='wrap'><table><thead><tr><th>序号</th><th>HTTP</th><th>TTFB</th><th>吞吐</th><th>缓存</th><th>PTS</th><th>关键帧</th><th>状态 / 错误</th></tr></thead><tbody>" + segs + "</tbody></table></div>" : "") +
+        "</section>";
+    }
+    function fmt(n, unit) {
+      if (n === undefined || n === null || n === "") return "-";
+      const v = Number(n);
+      if (!Number.isFinite(v)) return "-";
+      return (Math.round(v * 10) / 10) + unit;
+    }
+    function fmtKbps(n) {
+      if (n === undefined || n === null || n === "") return "-";
+      const v = Number(n);
+      if (!Number.isFinite(v) || v <= 0) return "-";
+      if (v >= 1000) return (v / 1000).toFixed(1) + " Mbps";
+      return Math.round(v) + " kbps";
+    }
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[ch]));
+    }
+  </script>
+</body>
+</html>

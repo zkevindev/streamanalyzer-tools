@@ -121,7 +121,7 @@
     }
 
     .card:nth-child(1){animation-delay:.1s}
-    .card:nth-child(2){animation-delay:.2s}
+    .card:nth-child(3){animation-delay:.3s}
 
     .card::before{
       content:'';
@@ -163,6 +163,11 @@
     .card:nth-child(2) .card-icon{
       background:linear-gradient(135deg,#f0f4ff,#fff);
       color:#6a9bcc;
+    }
+
+    .card:nth-child(3) .card-icon{
+      background:linear-gradient(135deg,#ecfdf5,#fff);
+      color:#059669;
     }
 
     .card-icon svg{
@@ -291,6 +296,22 @@
         <p>支持上传 RTMP raw（含握手）、Wireshark pcap/pcapng、FLV（.flv）、MPEG-TS（.ts）与 MP4（.mp4）。FLV 可展示 metadata 与逐帧明细；MP4 可生成文本报告并导出 Annex-B / ADTS；TS 可解析 PAT/PMT/PES、PTS/DTS 与视频 NALU 明细，并导出各 PID ES 文件。</p>
         <a class="btn secondary" href="/offline">
           进入离线分析
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
+          </svg>
+        </a>
+      </div>
+
+      <div class="card">
+        <div class="card-icon">
+          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 0 1 3 19.875v-6.75ZM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V8.625ZM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 0 1-1.125-1.125V4.125Z" />
+          </svg>
+        </div>
+        <h2>HLS 分析</h2>
+        <p>分析播放列表和分片的 TTFB、吞吐、缓存命中、CDN 和多码率余量。不替代实时 HLS 的 PTS/DTS 分析。</p>
+        <a class="btn" href="/hls-stats">
+          进入 HLS 分析
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
             <path stroke-linecap="round" stroke-linejoin="round" d="M13.5 4.5 21 12m0 0-7.5 7.5M21 12H3" />
           </svg>

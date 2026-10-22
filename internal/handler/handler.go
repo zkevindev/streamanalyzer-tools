@@ -26,6 +26,7 @@ type Handler struct {
 	analyzer *analyzer.StreamAnalyzer
 	storage  *storage.CSVStorage
 	offline  *offline.Manager
+	hlsStats hlsStatsStore
 }
 
 func NewHandler(analyzer *analyzer.StreamAnalyzer, storage *storage.CSVStorage, offlineMgr *offline.Manager) *Handler {
@@ -57,6 +58,13 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 			offlineAPI.GET("/tasks/:id", h.GetOfflineTask)
 			offlineAPI.GET("/tasks/:id/files/*name", h.DownloadOfflineFile)
 		}
+
+		hlsStats := api.Group("/hls-stats")
+		{
+			hlsStats.POST("/tasks", h.CreateHLSStatsTask)
+			hlsStats.GET("/tasks/:id", h.GetHLSStatsTask)
+			hlsStats.DELETE("/tasks/:id", h.StopHLSStatsTask)
+		}
 	}
 
 	r.StaticFS("/static", embeddedStaticHTTPFS())
@@ -64,6 +72,7 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	r.GET("/realtime", func(c *gin.Context) { serveEmbeddedStaticFile(c, "realtime.html") })
 	r.GET("/history", func(c *gin.Context) { serveEmbeddedStaticFile(c, "history.html") })
 	r.GET("/offline", func(c *gin.Context) { serveEmbeddedStaticFile(c, "offline.html") })
+	r.GET("/hls-stats", func(c *gin.Context) { serveEmbeddedStaticFile(c, "hls-stats.html") })
 	r.GET("/ws/preview/:id", h.PreviewWebSocket)
 }
 

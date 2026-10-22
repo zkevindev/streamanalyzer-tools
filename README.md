@@ -6,6 +6,7 @@
 
 - 支持 `http-flv`、`rtmp` 与 **`hls`** 三种实时任务类型（HLS 为 **TS 切片维度**，与 FLV/RTMP 的帧级秒级图表不同）
 - **HLS 实时分析**：拉取 media playlist，逐 `.ts` 切片统计 URI、playlist 序号、时长、体积；从 PES 解析音视频 **PTS/DTS（90 kHz）**、PAT/PMT/PES 计数；切片内首视频 PTS 与首音频 PTS 之差（AV）。若 PES 头仅有 PTS、无 DTS 字段，则展示时 **DTS 按与 PTS 相同处理**（常见于 HLS 切片）
+- **HLS 分析**（首页「HLS 分析」）：对 master 或 media 播放列表做有限次分析，统计 TTFB、吞吐分位、缓存命中、CDN、多码率余量和 PTS 时长偏差。入口是 `/hls-stats`，不替换上面的实时切片分析
 - 支持 Legacy 与 Enhanced（ExHeader/FourCC）两种 FLV 头部模式
 - 帧级数据采集：`DTS` / `PTS` / 帧类型 / GOP / 码率 / 接收 FPS
 - 秒级聚合：每秒心跳行（无数据秒也会记录，便于发现抖动/断流）
@@ -95,6 +96,7 @@ go build -o bin/server ./cmd/server
 - `GET /realtime`：实时拉流分析（标题 **实时拉流分析 · Stream Analyzer**）
 - `GET /offline`：离线文件解析（标题 **离线文件解析 · Stream Analyzer**；支持 raw/pcap/flv/ts/mp4 等）
 - `GET /history`：历史记录（标题 **历史记录 · Stream Analyzer**）
+- `GET /hls-stats`：HLS 分析（标题 **HLS 分析 · Stream Analyzer**）
 
 ## 桌面 GUI（Wails）
 
@@ -200,6 +202,33 @@ go build ./cmd/desktop
 - `GET /api/offline/tasks`：列出任务
 - `GET /api/offline/tasks/:id`：获取任务与 `summary.json`
 - `GET /api/offline/tasks/:id/files/*name`：下载离线产物文件（raw/video/audio/summary 等）
+
+### HLS 分析
+
+和实时 `type=hls` 分开。这里按播放列表抽样分片，不写 XLSX，也不解析整路 PES。
+
+- `POST /api/hls-stats/tasks`：创建任务，立即返回 `{id,status}`
+- `GET /api/hls-stats/tasks/:id`：查询状态和报告
+- `DELETE /api/hls-stats/tasks/:id`：取消正在跑的任务
+
+```json
+{
+  "command": "analyze",
+  "url": "https://example.com/live/index.m3u8",
+  "segments": 10,
+  "variant": -1,
+  "parse_segments": true,
+  "duration": "30s",
+  "timeout": "10s",
+  "error_threshold": 0
+}
+```
+
+`command` 可以是 `analyze`、`manifest`、`monitor`、`compare`。`compare` 还要带 `url_b`。`variant` 为 `-1` 时测最高码率，`0` 测最低码率。阈值为 `0` 时不产生对应退出码。报告在 `report` 字段里，`exit_code` 为 2/3/4/5/6 时 HTTP 状态仍是 200，任务状态为 `done` 或 `failed`。
+
+分析报告的 `playlist` 包含目标时长、媒体序号、分片数和加密状态。`EXT-X-GAP` 声明的缺片不发起请求，计入 `summary.segments_skipped`，不计入分片错误率。监控期间的播放列表刷新故障单独记录在 `playlist_refresh`（失败总次数、结束时连续失败次数和最后错误）及报告建议中；恢复后仍保留故障记录。
+
+启用 `parse_segments` 时，`EXT-X-MAP` 初始化段下载失败会记为对应分片失败，报告保留媒体请求的 `http_status`，并在可用时补充 `init_http_status`。停止任务后，状态从 `stopping` 变为 `canceled`，已采集的部分报告仍可查询。
 
 `summary.json` 中包含每个 flow 的方向与产物路径。`flv` / `mp4` 模式会包含逐帧明细（DTS/PTS/长度/帧类型）；每条 flow 的 **`video_codec` / `audio_codec`**（如 `h264`、`aac`）在网页「codec」列中合并为 `h264 / aac` 展示。`ts` 模式会包含 `PAT/PMT/PES/NALU` 统计、PID 明细和 PES 明细，网页端会据此渲染统计卡片与表格。
 
