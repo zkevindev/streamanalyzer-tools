@@ -144,8 +144,8 @@ func TestMonitor(t *testing.T) {
 	if rep.Summary.SegmentsFetched != 2 {
 		t.Fatalf("fetched %d", rep.Summary.SegmentsFetched)
 	}
-	if rep.LiveLatencyMS == nil || *rep.LiveLatencyMS < 2900 || *rep.LiveLatencyMS > 3100 {
-		t.Fatalf("latency %v", rep.LiveLatencyMS)
+	if rep.LiveLatencyMS != nil || rep.EdgeLagMS != nil {
+		t.Fatalf("latency should be unknown without program time: viewer=%v edge=%v", rep.LiveLatencyMS, rep.EdgeLagMS)
 	}
 }
 
@@ -224,6 +224,39 @@ func TestPTSContinuityDiscontinuity(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := ptsContinuity(tc.segs); got != tc.want {
 				t.Fatalf("continuity = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestPTSContinuityUnparsedSegment(t *testing.T) {
+	a0, a1 := int64(0), int64(270000)
+	c0, c1 := int64(720000), int64(990000)
+	d0, d1 := int64(993000), int64(1263000)
+	before := SegmentResult{PTSStart: &a0, PTSEnd: &a1}
+	after := SegmentResult{PTSStart: &c0, PTSEnd: &c1}
+	next := SegmentResult{PTSStart: &d0, PTSEnd: &d1}
+	missing := int64(-1)
+	for _, tc := range []struct {
+		name string
+		gap  SegmentResult
+	}{
+		{"download failed", SegmentResult{Error: "HTTP 500"}},
+		{"no timestamps", SegmentResult{PTSStart: &missing, PTSEnd: &missing}},
+		{"missing start", SegmentResult{PTSEnd: &a1}},
+		{"missing end", SegmentResult{PTSStart: &a0}},
+		{"negative start", SegmentResult{PTSStart: &missing, PTSEnd: &a1}},
+		{"negative end", SegmentResult{PTSStart: &a0, PTSEnd: &missing}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ptsContinuity([]SegmentResult{before, tc.gap, after}); got != "" {
+				t.Fatalf("unobserved boundaries = %q, want unknown", got)
+			}
+			if got := ptsContinuity([]SegmentResult{before, tc.gap, after, next}); got != "OK" {
+				t.Fatalf("continuous after missing segment = %q", got)
+			}
+			if got := ptsContinuity([]SegmentResult{before, tc.gap, after, before}); got != "ISSUES" {
+				t.Fatalf("undeclared jump after missing segment = %q", got)
 			}
 		})
 	}

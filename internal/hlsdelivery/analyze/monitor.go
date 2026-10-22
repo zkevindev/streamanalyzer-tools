@@ -143,7 +143,7 @@ func (r *runner) monitor(ctx context.Context, rawURL string, opt Options, starte
 		if known {
 			r.logf("估计观看延迟 %.1fs（边缘滞后 %.1fs，播放器通常再留 3 个分片）\n", viewer.Seconds(), edge.Seconds())
 		} else {
-			r.logf("播放列表没有节目时间，按 3 个分片估算观看延迟 %.1fs\n", viewer.Seconds())
+			r.logf("直播末尾分片没有可用的节目时间，观看延迟未知\n")
 		}
 		if !wait(ctx, pollInterval(pl)) {
 			break
@@ -162,9 +162,9 @@ func (r *runner) monitor(ctx context.Context, rawURL string, opt Options, starte
 	rep.Started = started.UTC().Format(time.RFC3339)
 	rep.Stale = stale
 	viewer, edge, known := estimateLatency(lastPL, time.Now())
-	ms := float64(viewer / time.Millisecond)
-	rep.LiveLatencyMS = &ms
 	if known {
+		ms := float64(viewer / time.Millisecond)
+		rep.LiveLatencyMS = &ms
 		em := float64(edge / time.Millisecond)
 		rep.EdgeLagMS = &em
 	}
@@ -192,21 +192,17 @@ func estimateLatency(pl *m3u8.Playlist, at time.Time) (viewer, edge time.Duratio
 		target = pl.TargetDuration
 	}
 	hold := time.Duration(target * 3 * float64(time.Second))
-	var last *m3u8.Segment
-	if pl != nil {
-		for i := range pl.Segments {
-			if pl.Segments[i].HasTime {
-				last = &pl.Segments[i]
-			}
-		}
+	if pl == nil || len(pl.Segments) == 0 {
+		return 0, 0, false
 	}
-	if last == nil {
-		return hold, 0, false
+	last := &pl.Segments[len(pl.Segments)-1]
+	if !last.HasTime || last.ProgramDateTime.IsZero() {
+		return 0, 0, false
 	}
 	edgeEnd := last.ProgramDateTime.Add(time.Duration(last.Duration * float64(time.Second)))
 	lag := at.Sub(edgeEnd)
 	if lag < 0 || lag > 5*time.Minute {
-		return hold, 0, false
+		return 0, 0, false
 	}
 	return lag + hold, lag, true
 }

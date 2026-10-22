@@ -282,6 +282,12 @@ func Manifest(ctx context.Context, rawURL string, opt Options) (*Report, error) 
 
 // Compare 用相同选项分析两路地址并比较汇总指标。
 func Compare(ctx context.Context, left, right string, opt Options) (*CompareReport, error) {
+	opt = opt.withDefaults()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, opt.Duration)
+	defer cancel()
 	a, err := Analyze(ctx, left, opt)
 	if err != nil {
 		return nil, err
@@ -1007,6 +1013,7 @@ func ptsContinuity(segs []SegmentResult) string {
 			have = false
 		}
 		if seg.PTSStart == nil || *seg.PTSStart < 0 || seg.PTSEnd == nil || *seg.PTSEnd < 0 {
+			have = false
 			continue
 		}
 		if have {
