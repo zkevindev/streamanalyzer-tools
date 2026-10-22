@@ -96,3 +96,25 @@ func TestParseRejectsHTML(t *testing.T) {
 		t.Fatal("expected error")
 	}
 }
+
+func TestParseGap(t *testing.T) {
+	for _, declaration := range []string{
+		"#EXT-X-GAP\n#EXTINF:4,\n",
+		"#EXTINF:4,\n#EXT-X-GAP\n",
+	} {
+		pl, err := Parse("#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:10\n#EXT-X-PROGRAM-DATE-TIME:2026-10-21T09:00:00Z\n" +
+			"#EXTINF:4,\na.ts\n" + declaration + "gap.ts\n#EXTINF:4,\nc.ts\n")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(pl.Segments) != 3 || pl.Segments[0].Gap || !pl.Segments[1].Gap || pl.Segments[2].Gap {
+			t.Fatalf("gap markers: %+v", pl.Segments)
+		}
+		if pl.Segments[1].Sequence != 11 || pl.Segments[2].Sequence != 12 {
+			t.Fatalf("gap changed media sequence: %+v", pl.Segments)
+		}
+		if !pl.Segments[2].ProgramDateTime.Equal(pl.Segments[0].ProgramDateTime.Add(8 * time.Second)) {
+			t.Fatalf("gap removed declared time: %+v", pl.Segments)
+		}
+	}
+}

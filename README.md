@@ -226,6 +226,8 @@ go build ./cmd/desktop
 
 `command` 可以是 `analyze`、`manifest`、`monitor`、`compare`。`compare` 还要带 `url_b`。`variant` 为 `-1` 时测最高码率，`0` 测最低码率。阈值为 `0` 时不产生对应退出码。报告在 `report` 字段里，`exit_code` 为 2/3/4/5/6 时 HTTP 状态仍是 200，任务状态为 `done` 或 `failed`。
 
+分析报告的 `playlist` 包含目标时长、媒体序号、分片数和加密状态。`EXT-X-GAP` 声明的缺片不发起请求，计入 `summary.segments_skipped`，不计入分片错误率。监控期间的播放列表刷新故障单独记录在 `playlist_refresh`（失败总次数、结束时连续失败次数和最后错误）及报告建议中；恢复后仍保留故障记录。
+
 `summary.json` 中包含每个 flow 的方向与产物路径。`flv` / `mp4` 模式会包含逐帧明细（DTS/PTS/长度/帧类型）；每条 flow 的 **`video_codec` / `audio_codec`**（如 `h264`、`aac`）在网页「codec」列中合并为 `h264 / aac` 展示。`ts` 模式会包含 `PAT/PMT/PES/NALU` 统计、PID 明细和 PES 明细，网页端会据此渲染统计卡片与表格。
 
 说明：

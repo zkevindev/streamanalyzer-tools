@@ -78,6 +78,18 @@ func TestHLSStatsAPI(t *testing.T) {
 	if !strings.Contains(string(raw), `"segments_fetched":1`) && !strings.Contains(string(raw), `"segments_fetched": 1`) {
 		t.Fatalf("report %s", raw)
 	}
+	var report struct {
+		Playlist struct {
+			TargetDurationS float64 `json:"target_duration_s"`
+			SegmentCount    int     `json:"segment_count"`
+		} `json:"playlist"`
+	}
+	if err := json.Unmarshal(raw, &report); err != nil {
+		t.Fatal(err)
+	}
+	if report.Playlist.TargetDurationS != 4 || report.Playlist.SegmentCount != 1 {
+		t.Fatalf("HTTP report missing playlist metadata: %s", raw)
+	}
 
 	missing := httptest.NewRequest(http.MethodPost, "/api/hls-stats/tasks", strings.NewReader(`{"command":"analyze","duration":"5s","timeout":"2s","url":"`+media.URL+`/missing.m3u8"}`))
 	missing.Header.Set("Content-Type", "application/json")

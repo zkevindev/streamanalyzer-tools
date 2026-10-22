@@ -39,7 +39,14 @@ func (r *runner) monitor(ctx context.Context, rawURL string, opt Options, starte
 		lastPL      *m3u8.Playlist
 		variants    []m3u8.Variant
 		playlistH   http.Header
+		refresh     PlaylistRefreshStats
 	)
+	recordRefreshFailure := func(err error) {
+		refresh.Failures++
+		refresh.ConsecutiveFailures++
+		refresh.LastError = err.Error()
+		r.logf("播放列表刷新失败: %v\n", err)
+	}
 	inits := map[string][]byte{}
 	keys := map[string][]byte{}
 
@@ -52,7 +59,10 @@ func (r *runner) monitor(ctx context.Context, rawURL string, opt Options, starte
 			if lastPL == nil {
 				return nil, manifestErr(err)
 			}
-			r.logf("播放列表刷新失败: %v\n", err)
+			if ctx.Err() != nil {
+				break
+			}
+			recordRefreshFailure(err)
 			if !wait(ctx, time.Second) {
 				break
 			}
@@ -76,7 +86,10 @@ func (r *runner) monitor(ctx context.Context, rawURL string, opt Options, starte
 				if lastPL == nil {
 					return nil, manifestErr(err)
 				}
-				r.logf("媒体播放列表刷新失败: %v\n", err)
+				if ctx.Err() != nil {
+					break
+				}
+				recordRefreshFailure(err)
 				if !wait(ctx, time.Second) {
 					break
 				}
@@ -87,11 +100,13 @@ func (r *runner) monitor(ctx context.Context, rawURL string, opt Options, starte
 			if lastPL == nil {
 				return nil, &ExitError{Code: 6, Msg: "媒体播放列表里没有分片"}
 			}
+			recordRefreshFailure(fmt.Errorf("媒体播放列表里没有分片"))
 			if !wait(ctx, pollInterval(pl)) {
 				break
 			}
 			continue
 		}
+		refresh.ConsecutiveFailures = 0
 		lastPL = pl
 		variants = master
 		if res != nil {
@@ -162,7 +177,7 @@ func (r *runner) monitor(ctx context.Context, rawURL string, opt Options, starte
 	rep.Started = started.UTC().Format(time.RFC3339)
 	rep.Stale = stale
 	viewer, edge, known := estimateLatency(lastPL, time.Now())
-	if known {
+	if known && refresh.ConsecutiveFailures == 0 {
 		ms := float64(viewer / time.Millisecond)
 		rep.LiveLatencyMS = &ms
 		em := float64(edge / time.Millisecond)
@@ -171,6 +186,18 @@ func (r *runner) monitor(ctx context.Context, rawURL string, opt Options, starte
 	if stale {
 		rep.Recommendations = append(rep.Recommendations, "播放列表长时间没有新分片，直播可能已经停了，或者打包端没有继续切片")
 		rep.Infrastructure.PlaylistWarnings = append(rep.Infrastructure.PlaylistWarnings, rep.Recommendations[len(rep.Recommendations)-1])
+	}
+	if refresh.Failures > 0 {
+		rep.PlaylistRefresh = &refresh
+		warning := fmt.Sprintf("监控期间播放列表刷新失败 %d 次", refresh.Failures)
+		if refresh.ConsecutiveFailures > 0 {
+			warning += fmt.Sprintf("，结束时连续 %d 次失败，当前无法确认直播是否继续更新", refresh.ConsecutiveFailures)
+		} else {
+			warning += "，已恢复"
+		}
+		warning += "；最后错误: " + refresh.LastError
+		rep.Recommendations = append(rep.Recommendations, warning)
+		rep.Infrastructure.PlaylistWarnings = append(rep.Infrastructure.PlaylistWarnings, warning)
 	}
 	if rep.Variant == nil && len(variants) > 0 {
 		one := opt

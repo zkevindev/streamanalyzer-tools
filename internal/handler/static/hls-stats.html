@@ -187,7 +187,7 @@
       const s = report.summary || {};
       const cards = [
         ["类型", report.type || "-"],
-        ["成功 / 失败", (s.segments_fetched ?? "-") + " / " + (s.segments_failed ?? "-")],
+        ["成功 / 失败 / 跳过", (s.segments_fetched ?? "-") + " / " + (s.segments_failed ?? "-") + " / " + (s.segments_skipped ?? 0)],
         ["错误率", fmt(s.error_rate_pct, "%")],
         ["平均 TTFB", fmt(s.avg_ttfb_ms, " ms")],
         ["平均吞吐", fmtKbps(s.avg_throughput_kbps)],
@@ -219,7 +219,7 @@
         escapeHtml(String(seg.ttfb_ms ?? "")) + "</td><td>" + escapeHtml(fmtKbps(seg.throughput_kbps)) + "</td><td>" +
         escapeHtml(seg.cache_status || "") + "</td><td>" + escapeHtml(String(seg.pts_start ?? "")) + "</td><td>" +
         escapeHtml(seg.starts_with_keyframe === undefined ? "" : String(seg.starts_with_keyframe)) + "</td><td>" +
-        escapeHtml(seg.error || "") + "</td></tr>"
+        escapeHtml(seg.gap ? "EXT-X-GAP（跳过）" : (seg.error || "")) + "</td></tr>"
       ).join("");
       return "<section class='card'><p class='muted'>" + escapeHtml(report.url || "") + "</p>" +
         (tested ? "<p>测试档 " + escapeHtml(tested) + "</p>" : "") +
@@ -228,7 +228,7 @@
         "<div class='stats'>" + cards + "</div>" +
         (recs ? "<ul class='notes'>" + recs + "</ul>" : "") +
         (variants ? "<div class='wrap'><table><thead><tr><th>分辨率</th><th>kbps</th><th>编码</th><th>地址</th></tr></thead><tbody>" + variants + "</tbody></table></div>" : "") +
-        (segs ? "<div class='wrap'><table><thead><tr><th>序号</th><th>HTTP</th><th>TTFB</th><th>吞吐</th><th>缓存</th><th>PTS</th><th>关键帧</th><th>错误</th></tr></thead><tbody>" + segs + "</tbody></table></div>" : "") +
+        (segs ? "<div class='wrap'><table><thead><tr><th>序号</th><th>HTTP</th><th>TTFB</th><th>吞吐</th><th>缓存</th><th>PTS</th><th>关键帧</th><th>状态 / 错误</th></tr></thead><tbody>" + segs + "</tbody></table></div>" : "") +
         "</section>";
     }
     function fmt(n, unit) {

@@ -149,6 +149,9 @@ func writeOne(w io.Writer, rep *Report) {
 	fmt.Fprintln(w, "\n分片")
 	fmt.Fprintf(w, "  成功            %d\n", rep.Summary.SegmentsFetched)
 	fmt.Fprintf(w, "  失败            %d\n", rep.Summary.SegmentsFailed)
+	if rep.Summary.SegmentsSkipped > 0 {
+		fmt.Fprintf(w, "  声明缺片（跳过） %d\n", rep.Summary.SegmentsSkipped)
+	}
 	fmt.Fprintf(w, "  错误率          %.2f%%\n", rep.Summary.ErrorRatePct)
 	fmt.Fprintf(w, "  平均 TTFB       %s\n", formatMS(rep.Summary.AvgTTFBMS))
 	fmt.Fprintf(w, "  平均吞吐        %s\n", formatRate(rep.Summary.AvgThroughputKbps))
@@ -309,6 +312,9 @@ func exitReason(code int) string {
 
 // FormatSegmentLine 是分析过程中的一行进度。
 func FormatSegmentLine(seg SegmentResult) string {
+	if seg.Gap {
+		return fmt.Sprintf("seq=%-6d EXT-X-GAP（跳过）", seg.Sequence)
+	}
 	state := seg.CacheStatus
 	if seg.Error != "" {
 		state = seg.Error
@@ -375,6 +381,8 @@ func analyzeJSON(rep *Report) map[string]any {
 		"url":            rep.URL,
 		"type":           rep.StreamType,
 		"duration_s":     rep.DurationS,
+		"live":           rep.Live,
+		"playlist":       rep.Playlist,
 		"timestamp":      rep.Started,
 		"segments":       segmentViews(rep.Segments),
 		"summary":        summaryView(rep.Summary),
@@ -387,6 +395,9 @@ func analyzeJSON(rep *Report) map[string]any {
 			"download_ms":     "milliseconds",
 			"latency_s":       "seconds",
 		},
+	}
+	if rep.PlaylistRefresh != nil {
+		out["playlist_refresh"] = rep.PlaylistRefresh
 	}
 	if len(rep.Variants) > 0 {
 		out["manifest"] = map[string]any{
@@ -449,6 +460,12 @@ func segmentViews(in []SegmentResult) []map[string]any {
 			"download_ms":         seg.DownloadMS,
 			"throughput_kbps":     seg.ThroughputKbps,
 		}
+		if seg.Gap {
+			item["gap"] = true
+		}
+		if seg.Discontinuity {
+			item["discontinuity"] = true
+		}
 		if seg.HTTPStatus > 0 {
 			item["http_status"] = seg.HTTPStatus
 		}
@@ -497,6 +514,9 @@ func summaryView(s Summary) map[string]any {
 		"min_throughput_kbps": s.MinThroughputKbps,
 		"max_throughput_kbps": s.MaxThroughputKbps,
 		"discontinuities":     s.Discontinuities,
+	}
+	if s.SegmentsSkipped > 0 {
+		out["segments_skipped"] = s.SegmentsSkipped
 	}
 	if s.CacheHitRatePct != nil {
 		out["cache_hit_rate_pct"] = *s.CacheHitRatePct

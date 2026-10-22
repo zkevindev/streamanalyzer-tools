@@ -53,6 +53,7 @@ type Segment struct {
 	Sequence        int
 	ByteRange       *ByteRange
 	Discontinuity   bool
+	Gap             bool
 	ProgramDateTime time.Time
 	HasTime         bool
 	Key             *Key
@@ -96,6 +97,7 @@ func Parse(text string) (*Playlist, error) {
 	var carry time.Time
 	var carryOK bool
 	var discontinuity bool
+	var gap bool
 	var nextByte int
 
 	for _, line := range strings.Split(text, "\n") {
@@ -118,6 +120,8 @@ func Parse(text string) (*Playlist, error) {
 				pl.EndList = true
 			case line == "#EXT-X-INDEPENDENT-SEGMENTS":
 				pl.IndependentSegments = true
+			case line == "#EXT-X-GAP":
+				gap = true
 			case line == "#EXT-X-DISCONTINUITY":
 				discontinuity = true
 				carryOK = false
@@ -204,6 +208,8 @@ func Parse(text string) (*Playlist, error) {
 			continue
 		}
 		seg.URI = line
+		seg.Gap = gap
+		gap = false
 		seg.Sequence = pl.MediaSequence + len(pl.Segments)
 		if pendingPDT != nil {
 			seg.ProgramDateTime = *pendingPDT

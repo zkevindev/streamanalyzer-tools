@@ -74,28 +74,36 @@ func (e *ExitError) Unwrap() error { return e.Err }
 
 // Report 是一次播放列表或分片分析的结果。
 type Report struct {
-	Tool            string          `json:"tool"`
-	Version         string          `json:"version"`
-	Command         string          `json:"command"`
-	SchemaVersion   string          `json:"schema_version,omitempty"`
-	URL             string          `json:"url"`
-	StreamType      string          `json:"type,omitempty"`
-	Started         string          `json:"started"`
-	DurationS       float64         `json:"duration_s"`
-	Live            bool            `json:"live"`
-	Playlist        PlaylistInfo    `json:"playlist"`
-	Variant         *VariantInfo    `json:"variant,omitempty"`
-	Variants        []VariantInfo   `json:"variants,omitempty"`
-	Summary         Summary         `json:"summary"`
-	Infrastructure  Infrastructure  `json:"infrastructure"`
-	ABR             *ABRReport      `json:"abr,omitempty"`
-	Recommendations []string        `json:"recommendations,omitempty"`
-	Segments        []SegmentResult `json:"segments,omitempty"`
-	Results         []Report        `json:"results,omitempty"`
-	LiveLatencyMS   *float64        `json:"live_latency_ms,omitempty"`
-	EdgeLagMS       *float64        `json:"edge_lag_ms,omitempty"`
-	Stale           bool            `json:"stale,omitempty"`
-	ExitCode        int             `json:"exit_code"`
+	Tool            string                `json:"tool"`
+	Version         string                `json:"version"`
+	Command         string                `json:"command"`
+	SchemaVersion   string                `json:"schema_version,omitempty"`
+	URL             string                `json:"url"`
+	StreamType      string                `json:"type,omitempty"`
+	Started         string                `json:"started"`
+	DurationS       float64               `json:"duration_s"`
+	Live            bool                  `json:"live"`
+	Playlist        PlaylistInfo          `json:"playlist"`
+	PlaylistRefresh *PlaylistRefreshStats `json:"playlist_refresh,omitempty"`
+	Variant         *VariantInfo          `json:"variant,omitempty"`
+	Variants        []VariantInfo         `json:"variants,omitempty"`
+	Summary         Summary               `json:"summary"`
+	Infrastructure  Infrastructure        `json:"infrastructure"`
+	ABR             *ABRReport            `json:"abr,omitempty"`
+	Recommendations []string              `json:"recommendations,omitempty"`
+	Segments        []SegmentResult       `json:"segments,omitempty"`
+	Results         []Report              `json:"results,omitempty"`
+	LiveLatencyMS   *float64              `json:"live_latency_ms,omitempty"`
+	EdgeLagMS       *float64              `json:"edge_lag_ms,omitempty"`
+	Stale           bool                  `json:"stale,omitempty"`
+	ExitCode        int                   `json:"exit_code"`
+}
+
+// PlaylistRefreshStats 单独记录监控期间的播放列表刷新故障，不计入分片错误率。
+type PlaylistRefreshStats struct {
+	Failures            int    `json:"failures"`
+	ConsecutiveFailures int    `json:"consecutive_failures"`
+	LastError           string `json:"last_error"`
 }
 
 // PlaylistInfo 描述播放列表本身。
@@ -125,6 +133,7 @@ type VariantInfo struct {
 type Summary struct {
 	SegmentsFetched   int            `json:"segments_fetched"`
 	SegmentsFailed    int            `json:"segments_failed"`
+	SegmentsSkipped   int            `json:"segments_skipped,omitempty"`
 	ErrorRatePct      float64        `json:"error_rate_pct"`
 	AvgTTFBMS         float64        `json:"avg_ttfb_ms"`
 	AvgDownloadMS     float64        `json:"avg_download_ms"`
@@ -184,6 +193,7 @@ type ABRVariant struct {
 type SegmentResult struct {
 	Sequence           int      `json:"sequence"`
 	Discontinuity      bool     `json:"discontinuity,omitempty"`
+	Gap                bool     `json:"gap,omitempty"`
 	URL                string   `json:"url"`
 	DeclaredDurationS  float64  `json:"declared_duration_s"`
 	HTTPStatus         int      `json:"http_status,omitempty"`
@@ -426,14 +436,17 @@ func (r *runner) loadPlaylist(ctx context.Context, rawURL string) (string, *m3u8
 }
 
 func (r *runner) pullOne(ctx context.Context, mediaURL string, seg m3u8.Segment, opt Options, inits map[string][]byte, keys map[string][]byte) observation {
-	out := observation{Result: SegmentResult{Sequence: seg.Sequence, Discontinuity: seg.Discontinuity, DeclaredDurationS: seg.Duration}}
+	out := observation{Result: SegmentResult{Sequence: seg.Sequence, Discontinuity: seg.Discontinuity, Gap: seg.Gap, DeclaredDurationS: seg.Duration}}
 	u, err := resolveURL(mediaURL, seg.URI)
+	out.Result.URL = u
+	if seg.Gap {
+		return out
+	}
 	if err != nil {
 		out.Result.Error = err.Error()
 		out.Result.ErrorKind = "other"
 		return out
 	}
-	out.Result.URL = u
 	res := r.get(ctx, u, maxSegment, "", seg.ByteRange)
 	out.IP = res.IP
 	out.Header = res.Header
@@ -590,6 +603,11 @@ func summarize(command, pageURL string, opt Options, pl *m3u8.Playlist, obs []ob
 
 	for _, item := range obs {
 		seg := item.Result
+		if seg.Gap {
+			rep.Summary.SegmentsSkipped++
+			rep.Segments = append(rep.Segments, seg)
+			continue
+		}
 		if strings.Contains(seg.URL, "?") {
 			query = true
 		}
