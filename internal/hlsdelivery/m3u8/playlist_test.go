@@ -1,6 +1,7 @@
 package m3u8
 
 import (
+	"fmt"
 	"testing"
 	"time"
 )
@@ -57,6 +58,54 @@ seg2.cmfv
 	}
 	if pl.Segments[2].HasTime || !pl.Segments[2].Discontinuity || pl.Segments[2].Sequence != 12 {
 		t.Fatalf("seg2: %+v", pl.Segments[2])
+	}
+}
+
+func TestSegmentMetadataBoundAtURI(t *testing.T) {
+	for _, afterEXTINF := range []bool{false, true} {
+		for _, explicitTime := range []bool{false, true} {
+			t.Run(fmt.Sprintf("after_EXTINF=%v/explicit_time=%v", afterEXTINF, explicitTime), func(t *testing.T) {
+				text := "#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXT-X-KEY:METHOD=AES-128,URI=old.key\n#EXT-X-MAP:URI=old.mp4\n" +
+					"#EXT-X-PROGRAM-DATE-TIME:2026-10-21T09:00:00Z\n#EXTINF:4,first\na.m4s\n"
+				tags := "#EXT-X-DISCONTINUITY\n#EXT-X-KEY:METHOD=AES-128,URI=new.key\n#EXT-X-MAP:URI=new.mp4\n"
+				if explicitTime {
+					// Explicit time belongs to this segment regardless of its order relative to discontinuity.
+					tags = "#EXT-X-PROGRAM-DATE-TIME:2026-10-21T10:00:00Z\n" + tags
+				}
+				if afterEXTINF {
+					text += "#EXTINF:4,changed\n" + tags
+				} else {
+					text += tags + "#EXTINF:4,changed\n"
+				}
+				text += "b.m4s\n#EXTINF:4,inherited\nc.m4s\n#EXTINF:4,clear key\n#EXT-X-KEY:METHOD=NONE\n#EXT-X-MAP:URI=last.mp4\nd.m4s\n"
+				pl, err := Parse(text)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(pl.Segments) != 4 {
+					t.Fatalf("segments=%+v", pl.Segments)
+				}
+				a, b, c, d := pl.Segments[0], pl.Segments[1], pl.Segments[2], pl.Segments[3]
+				if a.Key == nil || a.Key.URI != "old.key" || a.Map == nil || a.Map.URI != "old.mp4" || a.Discontinuity {
+					t.Fatalf("earlier segment changed: %+v", a)
+				}
+				if b.Key == nil || b.Key.URI != "new.key" || b.Map == nil || b.Map.URI != "new.mp4" || !b.Discontinuity {
+					t.Fatalf("new metadata not bound to segment URI: %+v", b)
+				}
+				if c.Key != b.Key || c.Map != b.Map || c.Discontinuity || c.HasTime != explicitTime || b.HasTime != explicitTime {
+					t.Fatalf("incorrect metadata inheritance: b=%+v c=%+v", b, c)
+				}
+				if explicitTime && !c.ProgramDateTime.Equal(b.ProgramDateTime.Add(4*time.Second)) {
+					t.Fatalf("explicit program time lost: b=%+v c=%+v", b, c)
+				}
+				if d.Key != nil || d.Map == nil || d.Map.URI != "last.mp4" || d.Discontinuity {
+					t.Fatalf("METHOD=NONE or map change shifted: %+v", d)
+				}
+				if pl.Map != a.Map {
+					t.Fatalf("playlist init differs from first segment: %+v", pl.Map)
+				}
+			})
+		}
 	}
 }
 

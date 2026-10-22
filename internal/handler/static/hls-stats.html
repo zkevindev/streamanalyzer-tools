@@ -149,7 +149,7 @@
       const res = await fetch("/api/hls-stats/tasks/" + taskId);
       const data = await res.json();
       $("state").textContent = statusText(data);
-      if (data.status === "running") {
+      if (data.status === "running" || data.status === "stopping") {
         timer = setTimeout(poll, 800);
         return;
       }
@@ -158,6 +158,8 @@
     }
     function statusText(data) {
       if (data.status === "running") return "分析中";
+      if (data.status === "stopping") return "正在停止";
+      if (data.status === "canceled") return "已取消";
       if (data.status === "failed") return "失败，退出码 " + data.exit_code + (data.error ? "：" + data.error : "");
       return "完成，退出码 " + data.exit_code;
     }

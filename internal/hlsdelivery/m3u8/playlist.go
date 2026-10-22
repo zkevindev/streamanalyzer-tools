@@ -125,7 +125,6 @@ func Parse(text string) (*Playlist, error) {
 			case line == "#EXT-X-DISCONTINUITY":
 				discontinuity = true
 				carryOK = false
-				pendingPDT = nil
 				nextByte = 0
 			case strings.HasPrefix(line, "#EXT-X-STREAM-INF:"):
 				v := parseVariant(parseAttributes(line[len("#EXT-X-STREAM-INF:"):]))
@@ -150,9 +149,6 @@ func Parse(text string) (*Playlist, error) {
 					return nil, err
 				}
 				currentMap = m
-				if len(pl.Segments) == 0 {
-					pl.Map = m
-				}
 			case strings.HasPrefix(line, "#EXT-X-KEY:"):
 				k, err := parseKey(parseAttributes(line[len("#EXT-X-KEY:"):]))
 				if err != nil {
@@ -175,22 +171,18 @@ func Parse(text string) (*Playlist, error) {
 				pendingPDT = &t
 			case strings.HasPrefix(line, "#EXTINF:"):
 				dur, title := parseEXTINF(line)
-				s := &Segment{
-					Duration:      dur,
-					Title:         title,
-					Key:           currentKey,
-					Map:           currentMap,
-					Discontinuity: discontinuity,
+				if seg == nil {
+					seg = &Segment{}
 				}
-				discontinuity = false
-				seg = s
+				seg.Duration = dur
+				seg.Title = title
 			case strings.HasPrefix(line, "#EXT-X-BYTERANGE:"):
 				br, err := parseByteRange(strings.TrimPrefix(line, "#EXT-X-BYTERANGE:"), nextByte)
 				if err != nil {
 					return nil, err
 				}
 				if seg == nil {
-					seg = &Segment{Key: currentKey, Map: currentMap}
+					seg = &Segment{}
 				}
 				seg.ByteRange = br
 				nextByte = br.Offset + br.Length
@@ -208,8 +200,15 @@ func Parse(text string) (*Playlist, error) {
 			continue
 		}
 		seg.URI = line
+		seg.Key = currentKey
+		seg.Map = currentMap
+		seg.Discontinuity = discontinuity
+		discontinuity = false
 		seg.Gap = gap
 		gap = false
+		if len(pl.Segments) == 0 {
+			pl.Map = currentMap
+		}
 		seg.Sequence = pl.MediaSequence + len(pl.Segments)
 		if pendingPDT != nil {
 			seg.ProgramDateTime = *pendingPDT

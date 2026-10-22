@@ -72,7 +72,7 @@ func (s *hlsStatsStore) put(job *hlsStatsJob) error {
 		evicted := false
 		for i, id := range s.order {
 			prev := s.jobs[id]
-			if prev != nil && prev.Status == "running" {
+			if prev != nil && (prev.Status == "running" || prev.Status == "stopping") {
 				continue
 			}
 			s.order = append(s.order[:i], s.order[i+1:]...)
@@ -106,22 +106,34 @@ func (s *hlsStatsStore) finish(id, status string, exitCode int, errMsg string, r
 	if job == nil {
 		return
 	}
+	if job.Status == "stopping" {
+		status, exitCode, errMsg = "canceled", 1, "任务已取消"
+	}
 	job.Status = status
 	job.ExitCode = exitCode
 	job.Error = errMsg
 	job.Report = report
 	job.Finished = time.Now().UTC()
+	if job.cancel != nil {
+		job.cancel()
+		job.cancel = nil
+	}
 }
 
-func (s *hlsStatsStore) cancel(id string) bool {
+func (s *hlsStatsStore) cancel(id string) (string, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	job := s.jobs[id]
-	if job == nil || job.cancel == nil {
-		return job != nil
+	if job == nil {
+		return "", false
 	}
-	job.cancel()
-	return true
+	if job.Status == "running" {
+		job.Status = "stopping"
+		if job.cancel != nil {
+			job.cancel()
+		}
+	}
+	return job.Status, true
 }
 
 func (h *Handler) CreateHLSStatsTask(c *gin.Context) {
@@ -188,15 +200,15 @@ func (h *Handler) GetHLSStatsTask(c *gin.Context) {
 }
 
 func (h *Handler) StopHLSStatsTask(c *gin.Context) {
-	if !h.hlsStats.cancel(c.Param("id")) {
+	status, ok := h.hlsStats.cancel(c.Param("id"))
+	if !ok {
 		c.JSON(http.StatusNotFound, gin.H{"error": "任务不存在"})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"status": "stopping"})
+	c.JSON(http.StatusOK, gin.H{"status": status})
 }
 
 func (h *Handler) runHLSStats(ctx context.Context, id string, req hlsStatsRequest, opt analyze.Options) {
-	defer h.hlsStats.cancel(id)
 	var (
 		report   any
 		exitCode int
@@ -225,6 +237,10 @@ func (h *Handler) runHLSStats(ctx context.Context, id string, req hlsStatsReques
 		var rep *analyze.Report
 		rep, err = analyze.Analyze(ctx, req.URL, opt)
 		exitCode, report = packReport(rep, err)
+	}
+	if errors.Is(ctx.Err(), context.Canceled) {
+		h.hlsStats.finish(id, "canceled", 1, "任务已取消", report)
+		return
 	}
 	if err != nil {
 		h.hlsStats.finish(id, "failed", exitCode, err.Error(), report)

@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -119,6 +120,105 @@ func TestHLSStatsAPI(t *testing.T) {
 	}
 }
 
+func TestHLSStatsCancellationPreservesPartialReport(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	for _, command := range []string{"analyze", "monitor"} {
+		t.Run(command, func(t *testing.T) {
+			blocked := make(chan struct{})
+			media := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/index.m3u8":
+					_, _ = fmt.Fprint(w, "#EXTM3U\n#EXT-X-TARGETDURATION:4\n#EXTINF:4,\nfast.ts\n#EXTINF:4,\nslow.ts\n")
+				case "/slow.ts":
+					close(blocked)
+					<-r.Context().Done()
+				default:
+					_, _ = fmt.Fprint(w, "segment")
+				}
+			}))
+			defer media.Close()
+			h := NewHandler(nil, nil, nil)
+			router := gin.New()
+			h.RegisterRoutes(router)
+			request := func(method, path, body string) *httptest.ResponseRecorder {
+				req := httptest.NewRequest(method, path, strings.NewReader(body))
+				req.Header.Set("Content-Type", "application/json")
+				rec := httptest.NewRecorder()
+				router.ServeHTTP(rec, req)
+				return rec
+			}
+			created := request(http.MethodPost, "/api/hls-stats/tasks", fmt.Sprintf(
+				`{"command":%q,"url":%q,"segments":2,"duration":"5s","timeout":"4s"}`, command, media.URL+"/index.m3u8"))
+			if created.Code != http.StatusOK {
+				t.Fatalf("create: %d %s", created.Code, created.Body.String())
+			}
+			var view hlsStatsView
+			if err := json.Unmarshal(created.Body.Bytes(), &view); err != nil {
+				t.Fatal(err)
+			}
+			id := view.ID
+			defer h.hlsStats.cancel(id)
+			select {
+			case <-blocked:
+			case <-time.After(3 * time.Second):
+				t.Fatal("second segment was never requested")
+			}
+			path := "/api/hls-stats/tasks/" + id
+			stopped := request(http.MethodDelete, path, "")
+			if stopped.Code != http.StatusOK || !strings.Contains(stopped.Body.String(), "stopping") {
+				t.Fatalf("stop: %d %s", stopped.Code, stopped.Body.String())
+			}
+			deadline := time.Now().Add(2 * time.Second)
+			for {
+				got := request(http.MethodGet, path, "")
+				if err := json.Unmarshal(got.Body.Bytes(), &view); err != nil {
+					t.Fatal(err)
+				}
+				if view.Status != "stopping" && view.Status != "running" {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("cancellation did not finish: %+v", view)
+				}
+				time.Sleep(10 * time.Millisecond)
+			}
+			if view.Status != "canceled" || view.ExitCode != 1 || view.Error != "任务已取消" || view.Finished.IsZero() || view.Report == nil {
+				t.Fatalf("cancellation lost: %+v", view)
+			}
+			raw, err := json.Marshal(view.Report)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !strings.Contains(string(raw), `"segments_fetched":1`) {
+				t.Fatalf("partial report lost: %s", raw)
+			}
+			again := request(http.MethodDelete, path, "")
+			if !strings.Contains(again.Body.String(), "canceled") {
+				t.Fatalf("repeated stop changed terminal state: %s", again.Body.String())
+			}
+		})
+	}
+}
+
+func TestHLSStatsCancelWinsFinalTransition(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var store hlsStatsStore
+	if err := store.put(&hlsStatsJob{hlsStatsView: hlsStatsView{ID: "job", Status: "running"}, cancel: cancel}); err != nil {
+		t.Fatal(err)
+	}
+	if status, ok := store.cancel("job"); !ok || status != "stopping" || ctx.Err() != context.Canceled {
+		t.Fatalf("stop state=%s found=%v context=%v", status, ok, ctx.Err())
+	}
+	// Model a worker that checked its context just before the stop request arrived.
+	partial := map[string]any{"segments_fetched": 1}
+	store.finish("job", "done", 0, "", partial)
+	view, _ := store.get("job")
+	if view.Status != "canceled" || view.ExitCode != 1 || view.Report == nil {
+		t.Fatalf("completion overwrote requested cancellation: %+v", view)
+	}
+}
+
 func TestHLSStatsRejectsFileURL(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	h := NewHandler(nil, nil, nil)
@@ -137,6 +237,9 @@ func TestHLSStatsStoreLimit(t *testing.T) {
 	var s hlsStatsStore
 	for i := 0; i < hlsStatsMaxJobs; i++ {
 		job := &hlsStatsJob{hlsStatsView: hlsStatsView{ID: fmt.Sprintf("r%d", i), Status: "running"}}
+		if i == 0 {
+			job.Status = "stopping"
+		}
 		if err := s.put(job); err != nil {
 			t.Fatal(err)
 		}

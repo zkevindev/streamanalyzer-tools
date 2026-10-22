@@ -469,6 +469,9 @@ func segmentViews(in []SegmentResult) []map[string]any {
 		if seg.HTTPStatus > 0 {
 			item["http_status"] = seg.HTTPStatus
 		}
+		if seg.InitHTTPStatus > 0 {
+			item["init_http_status"] = seg.InitHTTPStatus
+		}
 		if seg.CacheStatus != "" {
 			item["cache_status"] = seg.CacheStatus
 		}

@@ -197,6 +197,7 @@ type SegmentResult struct {
 	URL                string   `json:"url"`
 	DeclaredDurationS  float64  `json:"declared_duration_s"`
 	HTTPStatus         int      `json:"http_status,omitempty"`
+	InitHTTPStatus     int      `json:"init_http_status,omitempty"`
 	Bytes              int      `json:"bytes,omitempty"`
 	RemoteAddr         string   `json:"remote_addr,omitempty"`
 	TTFBMS             float64  `json:"ttfb_ms"`
@@ -499,7 +500,19 @@ func (r *runner) pullOne(ctx context.Context, mediaURL string, seg m3u8.Segment,
 		}
 		body = plain
 	}
-	init := r.loadInit(ctx, mediaURL, seg.Map, inits)
+	init, err := r.loadInit(ctx, mediaURL, seg.Map, inits)
+	if err != nil {
+		out.OK = false
+		out.Result.Error = "初始化段失败: " + err.Error()
+		out.Result.ErrorKind = "other"
+		out.Result.ThroughputKbps = 0
+		var fetchErr *initFetchError
+		if errors.As(err, &fetchErr) {
+			out.Result.InitHTTPStatus = fetchErr.status
+			out.Result.ErrorKind = fetchErr.kind
+		}
+		return out
+	}
 	info := media.Inspect(body, init)
 	if info.Keyframe != nil {
 		v := *info.Keyframe
@@ -523,25 +536,39 @@ func (r *runner) pullOne(ctx context.Context, mediaURL string, seg m3u8.Segment,
 	return out
 }
 
-func (r *runner) loadInit(ctx context.Context, mediaURL string, m *m3u8.Map, cache map[string][]byte) []byte {
-	if m == nil || m.URI == "" {
-		return nil
+type initFetchError struct {
+	err    error
+	status int
+	kind   string
+}
+
+func (e *initFetchError) Error() string { return e.err.Error() }
+func (e *initFetchError) Unwrap() error { return e.err }
+
+func (r *runner) loadInit(ctx context.Context, mediaURL string, m *m3u8.Map, cache map[string][]byte) ([]byte, error) {
+	if m == nil {
+		return nil, nil
+	}
+	if m.URI == "" {
+		return nil, errors.New("EXT-X-MAP 缺少 URI")
 	}
 	u, err := resolveURL(mediaURL, m.URI)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	key := initCacheKey(u, m.ByteRange)
 	if b, ok := cache[key]; ok {
-		return b
+		return b, nil
 	}
 	res := r.get(ctx, u, maxSegment, "", m.ByteRange)
-	if res.Err != nil || res.Status >= 400 {
-		cache[key] = nil
-		return nil
+	if res.Err != nil {
+		return nil, &initFetchError{err: fmt.Errorf("%s: %w", u, res.Err), status: res.Status, kind: failureKind(res)}
+	}
+	if len(res.Body) == 0 {
+		return nil, &initFetchError{err: fmt.Errorf("%s: 初始化段为空", u), status: res.Status, kind: "other"}
 	}
 	cache[key] = res.Body
-	return res.Body
+	return res.Body, nil
 }
 
 func initCacheKey(rawURL string, br *m3u8.ByteRange) string {
@@ -664,7 +691,11 @@ func summarize(command, pageURL string, opt Options, pl *m3u8.Playlist, obs []ob
 			}
 		} else {
 			rep.Summary.SegmentsFailed++
-			addBreakdown(&rep.Summary.ErrorBreakdown, seg.ErrorKind, seg.HTTPStatus)
+			status := seg.HTTPStatus
+			if seg.InitHTTPStatus != 0 {
+				status = seg.InitHTTPStatus
+			}
+			addBreakdown(&rep.Summary.ErrorBreakdown, seg.ErrorKind, status)
 		}
 		rep.Segments = append(rep.Segments, seg)
 	}

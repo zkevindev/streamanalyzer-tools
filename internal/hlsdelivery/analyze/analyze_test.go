@@ -367,9 +367,18 @@ func TestInitCacheIncludesByteRange(t *testing.T) {
 	cache := map[string][]byte{}
 	a := &m3u8.ByteRange{Offset: 0, Length: 100}
 	b := &m3u8.ByteRange{Offset: 100, Length: 50}
-	gotA := r.loadInit(context.Background(), srv.URL+"/pl.m3u8", &m3u8.Map{URI: "init.mp4", ByteRange: a}, cache)
-	gotB := r.loadInit(context.Background(), srv.URL+"/pl.m3u8", &m3u8.Map{URI: "init.mp4", ByteRange: b}, cache)
-	again := r.loadInit(context.Background(), srv.URL+"/pl.m3u8", &m3u8.Map{URI: "init.mp4", ByteRange: a}, cache)
+	gotA, err := r.loadInit(context.Background(), srv.URL+"/pl.m3u8", &m3u8.Map{URI: "init.mp4", ByteRange: a}, cache)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gotB, err := r.loadInit(context.Background(), srv.URL+"/pl.m3u8", &m3u8.Map{URI: "init.mp4", ByteRange: b}, cache)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := r.loadInit(context.Background(), srv.URL+"/pl.m3u8", &m3u8.Map{URI: "init.mp4", ByteRange: a}, cache)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if string(gotA) == string(gotB) || string(again) != string(gotA) {
 		t.Fatalf("a %q b %q again %q", gotA, gotB, again)
 	}
