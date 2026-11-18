@@ -177,7 +177,7 @@ go install github.com/wailsapp/wails/v3/cmd/wails3@v3.1.0
 wails3 build
 ```
 
-macOS 运行 `wails3 task package:darwin` 生成 `build/bin/streamanalyzer.app` 和对应的 DMG。Windows 和 Linux 的可执行文件也位于 `build/bin/`。
+在 GTK3 环境的 Linux 上，安装 CLI 时使用 `go install -tags gtk3 github.com/wailsapp/wails/v3/cmd/wails3@v3.1.0`。macOS 运行 `wails3 task package:darwin` 生成 `build/bin/streamanalyzer.app` 和对应的 DMG。Windows 和 Linux 的可执行文件也位于 `build/bin/`。
 
 ### 多平台桌面产物
 

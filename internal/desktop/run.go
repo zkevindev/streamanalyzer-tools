@@ -35,8 +35,13 @@ func Run() {
 		Assets: application.AssetOptions{Handler: Shell{
 			App: desktop,
 			SaveFile: func(filename string) (string, error) {
-				return app.Dialog.SaveFile().SetMessage("保存排障产物").SetFilename(filename).
+				path, err := app.Dialog.SaveFile().SetMessage("保存排障产物").SetFilename(filename).
 					CanCreateDirectories(true).AttachToWindow(window).PromptForSingleSelection()
+				// Wails exposes Windows dialog cancellation through an internal error sentinel.
+				if runtime.GOOS == "windows" && path == "" && err != nil && err.Error() == "cancelled by user" {
+					return "", nil
+				}
+				return path, err
 			},
 		}},
 		OnShutdown: desktop.Shutdown,
