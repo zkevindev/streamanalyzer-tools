@@ -48,3 +48,5 @@ details[open] > summary .event-summary::before { content: "▾ "; }
 .session-timeline { margin:.25rem 0; padding:0; list-style:none; }
 .session-timeline li { display:grid; grid-template-columns:6.5rem minmax(0,1fr); align-items:baseline; gap:.6rem; padding:.4rem 0; border-bottom:1px solid var(--border); overflow-wrap:anywhere; }
 .session-timeline time { color:var(--muted); font: .8rem var(--font-data); }
+
+.recording-config { margin-top:.65rem; }

@@ -23,21 +23,22 @@ var (
 )
 
 type Config struct {
-	PlatformHost string       `json:"platform_host"`
-	PlatformPort int          `json:"platform_port"`
-	SIPTransport string       `json:"sip_transport,omitempty"`
-	PlatformID   string       `json:"platform_id"`
-	Domain       string       `json:"domain"`
-	DeviceID     string       `json:"device_id"`
-	ChannelID    string       `json:"channel_id"`
-	Username     string       `json:"username"`
-	Password     string       `json:"password"`
-	LocalIP      string       `json:"local_ip"`
-	LocalPort    int          `json:"local_port"`
-	Heartbeat    int          `json:"heartbeat_seconds"`
-	Faults       *FaultConfig `json:"faults,omitempty"`
-	CaptureRTP   bool         `json:"capture_rtp,omitempty"`
-	AudioCodec   string       `json:"audio_codec,omitempty"`
+	PlatformHost   string       `json:"platform_host"`
+	PlatformPort   int          `json:"platform_port"`
+	SIPTransport   string       `json:"sip_transport,omitempty"`
+	PlatformID     string       `json:"platform_id"`
+	Domain         string       `json:"domain"`
+	DeviceID       string       `json:"device_id"`
+	ChannelID      string       `json:"channel_id"`
+	Username       string       `json:"username"`
+	Password       string       `json:"password"`
+	LocalIP        string       `json:"local_ip"`
+	LocalPort      int          `json:"local_port"`
+	Heartbeat      int          `json:"heartbeat_seconds"`
+	Faults         *FaultConfig `json:"faults,omitempty"`
+	CaptureRTP     bool         `json:"capture_rtp,omitempty"`
+	RecordingStart string       `json:"recording_start,omitempty"`
+	AudioCodec     string       `json:"audio_codec,omitempty"`
 }
 
 func (c *Config) validate() error {
@@ -48,6 +49,7 @@ func (c *Config) validate() error {
 	c.Domain = strings.TrimSpace(c.Domain)
 	c.LocalIP = strings.TrimSpace(c.LocalIP)
 	c.Username = strings.TrimSpace(c.Username)
+	c.RecordingStart = strings.TrimSpace(c.RecordingStart)
 	c.SIPTransport = strings.ToLower(strings.TrimSpace(c.SIPTransport))
 	switch c.SIPTransport {
 	case "":
@@ -127,6 +129,7 @@ type Status struct {
 	MediaLocal     string          `json:"media_local,omitempty"`
 	MediaError     string          `json:"media_error,omitempty"`
 	MediaTarget    string          `json:"media_target,omitempty"`
+	Recording      *RecordingInfo  `json:"recording,omitempty"`
 	MediaSource    SourceInfo      `json:"media_source"`
 	RTPPackets     uint64          `json:"rtp_packets"`
 	VideoFrames    uint64          `json:"video_frames"`
@@ -177,6 +180,10 @@ func (m *Manager) StartFile(ctx context.Context, cfg Config, name string, input 
 	if err != nil {
 		return err
 	}
+	if err := media.setRecording(cfg.RecordingStart, time.Now()); err != nil {
+		media.remove()
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {
@@ -214,6 +221,9 @@ func (m *Manager) start(cfg Config, media *localMedia) {
 		status: Status{State: "registering", MediaState: "idle",
 			Platform: net.JoinHostPort(cfg.PlatformHost, strconv.Itoa(cfg.PlatformPort)), SIPTransport: cfg.SIPTransport,
 			DeviceID: cfg.DeviceID, ChannelID: cfg.ChannelID, MediaSource: source},
+	}
+	if media != nil {
+		d.status.Recording = media.recording
 	}
 	m.device = d
 	go d.run()

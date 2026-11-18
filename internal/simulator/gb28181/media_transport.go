@@ -22,15 +22,17 @@ const (
 )
 
 type mediaOffer struct {
-	target    netip.AddrPort
-	transport mediaTransport
-	payload   byte
-	ssrc      uint32
-	y         string
+	mode       string
+	start, end int64
+	target     netip.AddrPort
+	transport  mediaTransport
+	payload    byte
+	ssrc       uint32
+	y          string
 }
 
 func parseOffer(body []byte) (mediaOffer, error) {
-	var offer mediaOffer
+	offer := mediaOffer{mode: "Play"}
 	var sessionIP, videoIP string
 	var sessionSetup, videoSetup string
 	var protocol string
@@ -45,8 +47,18 @@ func parseOffer(body []byte) (mediaOffer, error) {
 		}
 		switch key {
 		case "s":
-			if !strings.EqualFold(value, "Play") {
-				return offer, errors.New("只接受 s=Play 实时点播")
+			switch {
+			case strings.EqualFold(value, "Play"):
+				offer.mode = "Play"
+			case strings.EqualFold(value, "Playback"):
+				offer.mode = "Playback"
+			default:
+				return offer, errors.New("只接受 s=Play 或 s=Playback")
+			}
+		case "t":
+			if fields := strings.Fields(value); len(fields) == 2 {
+				offer.start, _ = strconv.ParseInt(fields[0], 10, 64)
+				offer.end, _ = strconv.ParseInt(fields[1], 10, 64)
 			}
 		case "c":
 			if inVideo {
@@ -79,6 +91,9 @@ func parseOffer(body []byte) (mediaOffer, error) {
 		}
 	}
 
+	if offer.mode == "Playback" && (offer.start <= 0 || offer.end <= offer.start) {
+		return offer, errors.New("录像回放需要有效的 SDP t= 起止时间")
+	}
 	if payloads == nil {
 		return offer, errors.New("SDP 缺少视频媒体描述")
 	}
@@ -163,8 +178,12 @@ func (s *mediaSession) sdpAnswer(channel, ip string, port int) []byte {
 	case mediaTCPPassive:
 		protocol, attributes = "TCP/RTP/AVP", "a=setup:passive\r\na=connection:new\r\n"
 	}
-	return []byte(fmt.Sprintf("v=0\r\no=%s 0 0 IN IP4 %s\r\ns=Play\r\nc=IN IP4 %s\r\nt=0 0\r\nm=video %d %s %d\r\na=sendonly\r\na=rtpmap:%d PS/90000\r\n%sy=%s\r\n",
-		channel, ip, ip, port, protocol, s.offer.payload, s.offer.payload, attributes, s.offer.y))
+	start, end := int64(0), int64(0)
+	if s.offer.mode == "Playback" {
+		start, end = s.offer.start, s.offer.end
+	}
+	return []byte(fmt.Sprintf("v=0\r\no=%s 0 0 IN IP4 %s\r\ns=%s\r\nc=IN IP4 %s\r\nt=%d %d\r\nm=video %d %s %d\r\na=sendonly\r\na=rtpmap:%d PS/90000\r\n%sy=%s\r\n",
+		channel, ip, s.offer.mode, ip, start, end, port, protocol, s.offer.payload, s.offer.payload, attributes, s.offer.y))
 }
 
 func (s *mediaSession) connect(localIP, platformIP net.IP) (net.Conn, error) {

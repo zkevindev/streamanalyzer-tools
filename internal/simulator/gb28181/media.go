@@ -5,7 +5,9 @@ import (
 	"context"
 	_ "embed"
 	"encoding/binary"
+	"errors"
 	"fmt"
+	"io"
 	"math/rand/v2"
 	"net"
 	"strconv"
@@ -28,6 +30,8 @@ var (
 type mediaSession struct {
 	offer     mediaOffer
 	evidence  *sessionEvidence
+	flow      *sipFlow
+	playback  *playbackSession
 	localIP   net.IP
 	conn      net.Conn
 	listener  *net.TCPListener
@@ -76,6 +80,9 @@ func (d *device) onInvite(flow *sipFlow, req *sip.Request, tx sip.ServerTransact
 	}
 	callID := req.CallID().Value()
 	remoteTag, _ := req.From().Params.Get("tag")
+	if d.media != nil && d.media.callID != callID && d.status.MediaState == "playback_done" {
+		d.closeMediaLocked()
+	}
 	if active := d.media; active != nil {
 		d.mu.Unlock()
 		if callID == active.callID && remoteTag == active.remoteTag && req.CSeq().SeqNo == active.cseq {
@@ -86,13 +93,26 @@ func (d *device) onInvite(flow *sipFlow, req *sip.Request, tx sip.ServerTransact
 		return
 	}
 
-	session := &mediaSession{offer: offer, evidence: d.newEvidence(callID, offer.transport), localIP: flow.local.Addr().AsSlice(), callID: callID, remoteTag: remoteTag,
+	session := &mediaSession{offer: offer, flow: flow, evidence: d.newEvidence(callID, offer.transport), localIP: flow.local.Addr().AsSlice(), callID: callID, remoteTag: remoteTag,
 		cseq: req.CSeq().SeqNo, acked: make(chan struct{})}
 	d.status.MediaTransport = offer.transport
 	d.status.VideoFrames, d.status.AudioPackets = 0, 0
 	d.status.MediaLocal, d.status.MediaTarget, d.status.MediaError, d.status.RTPPackets = "", "", "", 0
 	if offer.transport != mediaTCPPassive {
 		d.status.MediaTarget = offer.target.String()
+	}
+	if offer.mode == "Playback" {
+		span, err := d.file.playbackRange(&session.offer)
+		session.evidence.Mode = "playback"
+		if err != nil {
+			reason := "录像回放协商失败：" + err.Error()
+			session.evidence.mark("failed", reason, time.Now(), true)
+			d.status.MediaState, d.status.MediaError = "failed", reason
+			d.mu.Unlock()
+			d.respond(req, tx, 488, "Not Acceptable Here")
+			return
+		}
+		session.playback = &playbackSession{window: span, commands: make(chan playbackCommand, 8)}
 	}
 	port, err := session.prepare(session.localIP)
 	if err != nil {
@@ -375,7 +395,28 @@ func (d *device) stream(session *mediaSession) {
 		}
 		return nil
 	}
-	if d.file != nil {
+	if session.playback != nil {
+		controlMark := func(stage, detail string) {
+			d.mu.Lock()
+			defer d.mu.Unlock()
+			if d.media != session {
+				return
+			}
+			session.evidence.mark(stage, detail, time.Now(), false)
+			switch stage {
+			case "playback_pause":
+				phase = "paused"
+			default:
+				phase = "streaming"
+			}
+			d.status.MediaState = phase
+		}
+		err = session.playback.run(ctx, d.file, send, controlMark)
+		if errors.Is(err, io.EOF) {
+			d.finishPlayback(session)
+			return
+		}
+	} else if d.file != nil {
 		err = d.file.play(ctx, send)
 	} else {
 		err = playTestPattern(ctx, send)
