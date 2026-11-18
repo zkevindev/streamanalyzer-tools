@@ -8,7 +8,7 @@ const states = {
   idle: '未启动', registering: '正在注册', registered: '已注册',
   retrying: '正在重注册', stopping: '正在停止', stopped: '已停止', failed: '注册失败',
 };
-const mediaStates = { idle: '等待点播', waiting_ack: '等待 ACK', starting_source: '正在读取视频', streaming: '正在推流', failed: '点播失败' };
+const mediaStates = { idle: '等待点播', waiting_ack: '等待 ACK', starting_source: '正在读取视频', delaying: '延迟起播', streaming: '正在推流', failed: '点播失败' };
 const mediaTransports = { udp: 'UDP', 'tcp-active': 'TCP（设备主动连接）', 'tcp-passive': 'TCP（设备被动监听）' };
 const audioLabels = { g711a: 'G.711 A-law', g711u: 'G.711 μ-law', none: '仅视频' };
 const videoFile = el('video-file');
@@ -19,6 +19,8 @@ const sessionStages = {
   invite: '收到 INVITE', invite_ok: '发送 INVITE 200 OK', ack: '收到 ACK',
   media_connected: '媒体就绪', first_rtp: '发出首个 RTP 包', first_keyframe: '发完首个视频关键帧',
   bye: '收到 BYE', ended: '会话结束', failed: '会话失败',
+  fault_delay: '注入起播延迟', fault_loss: '注入 UDP 丢包', fault_reorder: '注入 UDP 乱序',
+  fault_timestamp: '注入时间戳跳变', fault_mute: '中断音频', fault_udp_only: '跳过 UDP 包故障',
 };
 let liveSessions = [];
 let active = false;
@@ -126,6 +128,8 @@ function renderSessions(sessions) {
   capture.textContent = session?.capture_enabled
     ? 'RTP 采样 ' + (session.capture_bytes || 0).toLocaleString('zh-CN') + ' 字节' + (session.capture_truncated ? '（已达上限）' : '')
     : '未启用 RTP 采样';
+  const stats = session?.fault_stats;
+  if (stats) capture.textContent += ' · 注入丢包 ' + stats.dropped_rtp + ' · 调序 ' + stats.reordered_rtp + ' · 中断音频 ' + stats.muted_audio;
   const download = el('export-evidence');
   download.hidden = !session;
   if (session) download.href = api + '/sessions/' + session.id + '/evidence.zip';
@@ -267,6 +271,15 @@ form.addEventListener('submit', (event) => {
   const config = Object.fromEntries(new FormData(form));
   for (const name of numberFields) config[name] = Number(config[name]);
   config.capture_rtp = el('capture-rtp').checked;
+  const faults = {
+    first_delay_ms: Number(el('fault-delay').value), start_ms: Number(el('fault-start').value),
+    window_ms: Number(el('fault-window').value), timestamp_jump_ms: Number(el('fault-jump').value),
+    drop_every: Number(el('fault-drop').value), reorder_every: Number(el('fault-reorder').value),
+    mute_audio: el('fault-mute').checked,
+  };
+  if (faults.first_delay_ms || faults.timestamp_jump_ms || faults.drop_every || faults.reorder_every || faults.mute_audio) {
+    config.faults = faults;
+  }
   const file = videoFile.files[0];
   if (!file) {
     void change('/start', config);

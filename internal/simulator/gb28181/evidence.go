@@ -35,6 +35,8 @@ type SessionReport struct {
 	Transport        mediaTransport `json:"transport,omitempty"`
 	Source           SourceInfo     `json:"source"`
 	Timeline         []SessionMark  `json:"timeline"`
+	Faults           *FaultConfig   `json:"faults,omitempty"`
+	FaultStats       *FaultStats    `json:"fault_stats,omitempty"`
 	CaptureEnabled   bool           `json:"capture_enabled"`
 	CaptureBytes     int            `json:"capture_bytes,omitempty"`
 	CaptureTruncated bool           `json:"capture_truncated,omitempty"`
@@ -51,7 +53,7 @@ func (d *device) newEvidence(callID string, transport mediaTransport) *sessionEv
 	rand.Read(id[:])
 	ev := &sessionEvidence{SessionReport: SessionReport{
 		ID: hex.EncodeToString(id[:]), CallID: truncate(callID, 240), Start: time.Now(),
-		Transport: transport, Source: d.status.MediaSource, CaptureEnabled: d.cfg.CaptureRTP,
+		Transport: transport, Source: d.status.MediaSource, CaptureEnabled: d.cfg.CaptureRTP, Faults: d.cfg.Faults,
 	}}
 	for i := len(d.status.Events) - 1; i >= 0; i-- {
 		event := d.status.Events[i]
