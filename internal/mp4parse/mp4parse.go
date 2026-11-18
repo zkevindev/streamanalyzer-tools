@@ -2,11 +2,12 @@
 package mp4parse
 
 import (
-	"bytes"
 	"fmt"
 	"io"
 	"os"
 	"strings"
+
+	"streamanalyzer/internal/codec"
 
 	"github.com/abema/go-mp4"
 	"github.com/sunfish-shogi/bufseekio"
@@ -533,7 +534,7 @@ func writeLengthPrefixedNALAnnexB(r io.ReadSeeker, tr *mp4.Track, naluLenSize in
 			if _, err := io.ReadFull(r, buf[:s.Size]); err != nil {
 				return err
 			}
-			annex, err := lengthPrefixedNALToAnnexB(buf[:s.Size], naluLenSize)
+			annex, err := codec.LengthPrefixedNALToAnnexB(buf[:s.Size], naluLenSize)
 			if err != nil {
 				return fmt.Errorf("sample #%d length-prefix→annexb: %w", sampleIdx, err)
 			}
@@ -588,32 +589,6 @@ func writeAACTrackADTS(r io.ReadSeeker, tr *mp4.Track, asc []byte, w io.Writer) 
 		}
 	}
 	return nil
-}
-
-// lengthPrefixedNALToAnnexB 将 MP4 样本中 AVCC/HVCC 风格的长度前缀 NAL 转为 Annex B（H.264/H.265 均适用）。
-func lengthPrefixedNALToAnnexB(payload []byte, naluLenSize int) ([]byte, error) {
-	if naluLenSize < 1 || naluLenSize > 4 {
-		naluLenSize = 4
-	}
-	var out bytes.Buffer
-	off := 0
-	for off+naluLenSize <= len(payload) {
-		n := 0
-		for i := 0; i < naluLenSize; i++ {
-			n = (n << 8) | int(payload[off+i])
-		}
-		off += naluLenSize
-		if n <= 0 || off+n > len(payload) {
-			return nil, fmt.Errorf("invalid nalu size")
-		}
-		out.Write([]byte{0x00, 0x00, 0x00, 0x01})
-		out.Write(payload[off : off+n])
-		off += n
-	}
-	if off != len(payload) {
-		return nil, fmt.Errorf("trailing bytes in length-prefixed payload")
-	}
-	return out.Bytes(), nil
 }
 
 func buildADTSHeader(asc []byte, aacRawLen int) ([]byte, error) {

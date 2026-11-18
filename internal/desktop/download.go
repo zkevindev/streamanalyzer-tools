@@ -23,24 +23,29 @@ func (s Shell) download(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "下载请求无效", http.StatusBadRequest)
 		return
 	}
-	id, err := hex.DecodeString(request.ID)
-	if err != nil || len(id) != 16 {
-		http.Error(w, "排障记录无效", http.StatusBadRequest)
-		return
-	}
-
-	switch request.Name {
-	case "evidence.zip", "report.json", "dump", "stream.flv":
-	default:
-		http.Error(w, "产物类型无效", http.StatusBadRequest)
-		return
+	var path string
+	if request.Name == "gb28181-trace.json" && request.ID == "" {
+		path = "/api/simulators/gb28181/trace.json"
+	} else {
+		id, err := hex.DecodeString(request.ID)
+		if err != nil || len(id) != 16 {
+			http.Error(w, "排障记录无效", http.StatusBadRequest)
+			return
+		}
+		switch request.Name {
+		case "evidence.zip", "report.json", "dump", "stream.flv":
+			path = "/api/diagnostics/runs/" + request.ID + "/" + request.Name
+		default:
+			http.Error(w, "产物类型无效", http.StatusBadRequest)
+			return
+		}
 	}
 	server := s.App.server.URL()
 	if server == "" {
 		http.Error(w, "本地服务尚未启动", http.StatusConflict)
 		return
 	}
-	source := server + "/api/diagnostics/runs/" + request.ID + "/" + request.Name
+	source := server + path
 	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, source, nil)
 	if err != nil {
 		http.Error(w, "无法读取本地排障产物", http.StatusInternalServerError)
