@@ -57,6 +57,7 @@ const explanationPrompt = "你是流媒体排障助手。请用中文，仅返�
 	"。结论限于采样点。每个假设必须引用输入 findings 中真实存在的 ID。" +
 	"播放器首屏是从提交采样到视频呈现的观测，loadeddata_estimate 表示估算。" +
 	"卡顿排除启动等待、暂停、跳转和后台时段。source 为 independent_pull 时播放器与采样使用独立连接，不能把两条连接的时间相关性当作根因。" +
+	"stall_investigations 为选定卡顿的补查时序证据。截图和片段像素未提供给你，不得声称已看见画面、黑屏或解码结果。请引用真实证据 ID，明确观测和待验证假设。" +
 	"没有足够证据时，给出简洁摘要并返回空 hypotheses。"
 
 type modelClient struct {
@@ -196,6 +197,24 @@ type modelHTTPRequest struct {
 	FailureCode  string         `json:"failure_code,omitempty"`
 }
 
+type modelStallInvestigation struct {
+	ID                  string               `json:"id"`
+	Stall               PlayerStall          `json:"stall"`
+	Source              string               `json:"source"`
+	WindowStartMS       int64                `json:"window_start_ms"`
+	WindowEndMS         int64                `json:"window_end_ms"`
+	Gaps                []ReceptionGap       `json:"gaps"`
+	BufferSamples       []PlayerBufferSample `json:"buffer_samples"`
+	Keyframes           []Event              `json:"keyframes"`
+	Requests            []modelHTTPRequest   `json:"requests,omitempty"`
+	Notes               []string             `json:"notes"`
+	MediaStatus         string               `json:"media_status"`
+	MediaAlignment      string               `json:"media_alignment,omitempty"`
+	ClipCount           int                  `json:"clip_count"`
+	ScreenshotCount     int                  `json:"screenshot_count"`
+	ImagePixelsProvided bool                 `json:"image_pixels_provided"`
+}
+
 func modelRequestTimings(requests []HTTPRequestTiming) []modelHTTPRequest {
 	var result []modelHTTPRequest
 	for _, request := range requests {
@@ -212,22 +231,23 @@ func modelRequestTimings(requests []HTTPRequestTiming) []modelHTTPRequest {
 func modelInput(report Report) ([]byte, error) {
 	obs := report.Manifest.Observation
 	input := struct {
-		Protocol          string             `json:"protocol"`
-		ElapsedMS         int64              `json:"elapsed_ms"`
-		HTTPStatus        int                `json:"http_status"`
-		TTFBMS            *int64             `json:"ttfb_ms,omitempty"`
-		EndReason         string             `json:"end_reason"`
-		Metrics           Metrics            `json:"metrics"`
-		HLS               *HLSMetrics        `json:"hls,omitempty"`
-		MPEGTS            *MPEGTSMetrics     `json:"mpegts,omitempty"`
-		FirstPayloadMS    *int64             `json:"first_payload_ms,omitempty"`
-		Stages            []CaptureStage     `json:"stages,omitempty"`
-		Requests          []modelHTTPRequest `json:"requests,omitempty"`
-		RequestsTruncated int                `json:"requests_truncated,omitempty"`
-		FailureStage      string             `json:"failure_stage,omitempty"`
-		FailureCode       string             `json:"failure_code,omitempty"`
-		Findings          []modelFinding     `json:"findings"`
-		Player            *modelPlayer       `json:"player,omitempty"`
+		Protocol            string                    `json:"protocol"`
+		ElapsedMS           int64                     `json:"elapsed_ms"`
+		HTTPStatus          int                       `json:"http_status"`
+		TTFBMS              *int64                    `json:"ttfb_ms,omitempty"`
+		EndReason           string                    `json:"end_reason"`
+		Metrics             Metrics                   `json:"metrics"`
+		HLS                 *HLSMetrics               `json:"hls,omitempty"`
+		MPEGTS              *MPEGTSMetrics            `json:"mpegts,omitempty"`
+		FirstPayloadMS      *int64                    `json:"first_payload_ms,omitempty"`
+		Stages              []CaptureStage            `json:"stages,omitempty"`
+		Requests            []modelHTTPRequest        `json:"requests,omitempty"`
+		RequestsTruncated   int                       `json:"requests_truncated,omitempty"`
+		FailureStage        string                    `json:"failure_stage,omitempty"`
+		FailureCode         string                    `json:"failure_code,omitempty"`
+		Findings            []modelFinding            `json:"findings"`
+		Player              *modelPlayer              `json:"player,omitempty"`
+		StallInvestigations []modelStallInvestigation `json:"stall_investigations,omitempty"`
 	}{
 		Protocol: report.Manifest.Protocol, ElapsedMS: obs.ElapsedMS, HTTPStatus: obs.HTTPStatus, TTFBMS: obs.TTFBMS,
 		EndReason: obs.EndReason, Metrics: report.Metrics, HLS: report.HLS, MPEGTS: report.MPEGTS,
@@ -247,6 +267,21 @@ func modelInput(report Report) ([]byte, error) {
 	}
 	if len(input.Requests) == 0 {
 		input.Requests = modelRequestTimings(obs.Requests)
+	}
+	for _, item := range report.StallInvestigations {
+		entry := modelStallInvestigation{ID: item.ID, Stall: item.Stall, Source: item.Correlation.Source,
+			WindowStartMS: item.Correlation.WindowStartMS, WindowEndMS: item.Correlation.WindowEndMS,
+			Gaps: item.Correlation.Gaps, BufferSamples: item.Correlation.BufferSamples, Keyframes: item.Correlation.Keyframes,
+			Requests: modelRequestTimings(item.Correlation.Requests), Notes: item.Correlation.Notes,
+			MediaStatus: item.Media.Status, MediaAlignment: item.Media.Alignment}
+		for _, asset := range item.Media.Assets {
+			if asset.Kind == "clip" {
+				entry.ClipCount++
+			} else if asset.Kind == "screenshot" {
+				entry.ScreenshotCount++
+			}
+		}
+		input.StallInvestigations = append(input.StallInvestigations, entry)
 	}
 	for _, finding := range report.Findings {
 		input.Findings = append(input.Findings, modelFinding{

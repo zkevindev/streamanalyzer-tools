@@ -78,6 +78,26 @@ button:disabled { opacity: .55; cursor: wait; }
 .player-buffer-chart .point { fill: var(--accent); }
 .player-buffer-chart .stall { fill: #ecc781; opacity: .55; }
 #player-stalls h4 { margin: .65rem 0 .4rem; font-size: .92rem; }
+.stall-select { width: 1rem; min-height: 1rem; margin: 0; accent-color: var(--accent); cursor: pointer; }
+#player-stalls tr[aria-selected="true"] { background: var(--accent-light); }
+.stall-investigation-heading { display: flex; align-items: center; justify-content: space-between; gap: .75rem; flex-wrap: wrap; margin: .8rem 0 .4rem; }
+.stall-investigation-heading h4 { margin: 0; font-size: 1rem; }
+.stall-investigation { border: 1px solid var(--border); border-radius: .375rem; margin: .75rem 0; padding: 0 .75rem; scroll-margin: 1rem; }
+.stall-investigation.selected { border-color: #83acd7; }
+.stall-investigation > summary { cursor: pointer; font-weight: 650; padding: .65rem 0; min-height: 2.75rem; }
+.stall-investigation .status { margin-left: .45rem; }
+.stall-investigation h5 { margin: .85rem 0 .4rem; font-size: .9rem; }
+.stall-investigation p, .stall-investigation ul { margin: .4rem 0 .65rem; }
+.stall-investigation .timing-note { overflow-wrap: anywhere; }
+.stall-media { display: grid; gap: .65rem; margin: .65rem 0; }
+.stall-media video { display: block; width: min(100%, 36rem); max-height: 25rem; background: #101d2d; border-radius: .375rem; }
+.stall-screenshots { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); gap: .65rem; }
+.stall-screenshots figure { margin: 0; padding: .45rem; border: 1px solid var(--border); border-radius: .375rem; background: var(--surface-inset); min-width: 0; }
+.stall-screenshots img { display: block; width: 100%; height: auto; aspect-ratio: 16 / 9; object-fit: contain; background: #101d2d; }
+.stall-screenshots figcaption { margin-top: .3rem; font-size: .78rem; overflow-wrap: anywhere; }
+.stall-investigation a { color: var(--accent); }
+.stall-model { border-top: 1px solid var(--border); margin-top: .8rem; padding-top: .1rem; }
+.stall-model li { margin-block: .45rem; }
 #report { margin-top: .9rem; }
 .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr)); gap: .55rem; margin: 0 0 .85rem; }
 .metrics div { padding: .65rem .7rem; min-width: 0; border: 1px solid var(--border); border-radius: .375rem; background: var(--surface-inset); }

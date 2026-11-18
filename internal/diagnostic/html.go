@@ -1,10 +1,16 @@
 package diagnostic
 
 import (
+	"bytes"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"fmt"
 	"html/template"
+	"image/jpeg"
 	"io"
 	"math"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -15,23 +21,27 @@ var httpTimingPhases = []struct{ Name, Label string }{
 }
 
 var reportPage = template.Must(template.New("report").Funcs(template.FuncMap{
-	"seconds":        func(ms int64) float64 { return float64(ms) / 1000 },
-	"finish":         endReasonText,
-	"dumpName":       dumpName,
-	"join":           strings.Join,
-	"modelProvider":  modelProviderLabel,
-	"stageName":      stageLabel,
-	"mediaArrival":   mediaArrivalLabel,
-	"phaseDuration":  requestPhaseDuration,
-	"requestKind":    httpTimingKindLabel,
-	"elapsed":        func(startMS, endMS int64) int64 { return endMS - startMS },
-	"pid":            func(pid uint16) string { return fmt.Sprintf("0x%04X", pid) },
-	"streamType":     func(streamType uint8) string { return fmt.Sprintf("0x%02X", streamType) },
-	"tsEvent":        tsEventLabel,
-	"playerState":    playerReportState,
-	"playerSource":   playerSourceLabel,
-	"playerEvidence": func(events []Event) bool { return len(events) > 0 && events[0].Artifact == playerName },
-	"intervalEnd":    func(startMS, durationMS int64) int64 { return startMS + durationMS },
+	"seconds":                func(ms int64) float64 { return float64(ms) / 1000 },
+	"finish":                 endReasonText,
+	"dumpName":               dumpName,
+	"join":                   strings.Join,
+	"modelProvider":          modelProviderLabel,
+	"stageName":              stageLabel,
+	"mediaArrival":           mediaArrivalLabel,
+	"phaseDuration":          requestPhaseDuration,
+	"requestKind":            httpTimingKindLabel,
+	"elapsed":                func(startMS, endMS int64) int64 { return endMS - startMS },
+	"pid":                    func(pid uint16) string { return fmt.Sprintf("0x%04X", pid) },
+	"streamType":             func(streamType uint8) string { return fmt.Sprintf("0x%02X", streamType) },
+	"tsEvent":                tsEventLabel,
+	"playerState":            playerReportState,
+	"playerSource":           playerSourceLabel,
+	"playerEvidence":         func(events []Event) bool { return len(events) > 0 && events[0].Artifact == playerName },
+	"intervalEnd":            func(startMS, durationMS int64) int64 { return startMS + durationMS },
+	"investigationState":     investigationStateLabel,
+	"investigationMedia":     investigationMediaLabel,
+	"investigationAlignment": investigationAlignmentLabel,
+	"investigationModel":     investigationModelLabel,
 }).Parse(`{{define "codecRows"}}
 {{with .VideoCodecs}}<dt>视频编码</dt><dd>{{join . " / "}}</dd>{{end}}
 {{with .AudioCodecs}}<dt>音频编码</dt><dd>{{join . " / "}}</dd>{{end}}
@@ -75,6 +85,13 @@ thead{color:#52657e;background:#f7f9fc}
 .player-buffer-chart .line{fill:none;stroke:#164d92;stroke-width:2}
 .player-buffer-chart .point{fill:#164d92}
 .player-buffer-chart .stall{fill:#ecc781;opacity:.55}
+.stall-investigation{border-color:#9fb4ce}
+.stall-investigation h3{margin-top:1rem}
+.stall-investigation p{overflow-wrap:anywhere}
+.stall-images{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,190px),1fr));gap:.75rem}
+.stall-images figure{margin:0;border:1px solid #d5deea;padding:.45rem;border-radius:.375rem}
+.stall-images img{display:block;width:100%;height:auto;background:#101d2d}
+.stall-images figcaption{font-size:.8rem;overflow-wrap:anywhere}
 @media print{body{background:#fff}article{break-inside:avoid}.request-timing th,.request-timing td{white-space:normal}.http-header-block:not([open])>:not(summary){display:block}}
 </style>
 </head>
@@ -179,6 +196,56 @@ thead{color:#52657e;background:#f7f9fc}
 </table></div>{{end}}
 </article>
 {{end}}
+{{if .Investigations}}
+<h2>卡顿证据补查</h2>
+<p class="timing-note">时间区间以采样开始为基准。片段与截图来自采样源流，用于复核媒体内容；原拉流等待和播放器停顿保留在时序证据中。</p>
+{{range .Investigations}}
+<article class="stall-investigation" id="investigation-{{.ID}}">
+<h3>{{.ID}} · 第 {{.StallIndex}} 次卡顿 · {{investigationState .Status}}</h3>
+<dl><dt>卡顿区间</dt><dd>{{.Stall.StartMS}}–{{.Stall.EndMS}} ms · {{.Stall.DurationMS}} ms</dd>
+<dt>补查窗口</dt><dd>{{.Correlation.WindowStartMS}}–{{.Correlation.WindowEndMS}} ms</dd>
+<dt>数据来源</dt><dd>{{playerSource .Correlation.Source}}</dd></dl>
+{{if eq .Correlation.Source "independent_pull"}}<p class="timing-note">播放器与采样使用独立连接，关联结果供对照。</p>{{end}}
+{{range .Correlation.Notes}}<p class="timing-note">{{.}}</p>{{end}}
+{{with .Chart}}
+<figure class="player-buffer-chart"><figcaption>补查窗口可播放缓冲 · 阴影为卡顿区间</figcaption>
+<svg viewBox="0 0 615 152" role="img" aria-label="卡顿补查缓冲曲线">
+{{range .YTicks}}<line x1="45" y1="{{.Position}}" x2="585" y2="{{.Position}}" class="grid"/><text x="40" y="{{.Position}}" dy=".34em" text-anchor="end">{{.Label}}</text>{{end}}
+{{range .Stalls}}<rect x="{{.X}}" y="18" width="{{.Width}}" height="94" class="stall"/>{{end}}
+<polyline points="{{.Points}}" class="line"/>
+{{if .SinglePoint}}<circle cx="{{.PointX}}" cy="{{.PointY}}" r="3" class="point"/>{{end}}
+{{range .XTicks}}<text x="{{.Position}}" y="131" text-anchor="middle">{{.Label}}</text>{{end}}
+<text x="315" y="149" text-anchor="middle">距采样开始</text>
+</svg></figure>{{end}}
+<h3>关联收流间隔</h3>
+{{if .Correlation.Gaps}}<div class="scroll"><table><thead><tr><th scope="col">媒体</th><th scope="col">开始偏移 (ms)</th><th scope="col">结束偏移 (ms)</th><th scope="col">间隔 (ms)</th></tr></thead>
+<tbody>{{range .Correlation.Gaps}}<tr><td>{{if eq .Kind "video"}}视频{{else if eq .Kind "audio"}}音频{{else}}{{.Kind}}{{end}}</td><td>{{.StartMS}}</td><td>{{.EndMS}}</td><td>{{.DurationMS}}</td></tr>{{end}}</tbody></table></div>
+{{else}}<p class="timing-note">窗口内没有可关联的音视频接收间隔记录。</p>{{end}}
+<h3>关键帧记录</h3>
+{{if .Correlation.Keyframes}}<div class="scroll"><table><thead><tr><th scope="col">到达偏移 (ms)</th><th scope="col">DTS (ms)</th><th scope="col">PTS (ms)</th><th scope="col">编码</th><th scope="col">原始条目 / 偏移</th></tr></thead>
+<tbody>{{range .Correlation.Keyframes}}<tr><td>{{.ArrivalMS}}</td><td>{{.DTS}}</td><td>{{.PTS}}</td><td>{{.Codec}}</td><td>{{if .Artifact}}{{.Artifact}}{{else}}{{.Offset}}{{end}}</td></tr>{{end}}</tbody></table></div>
+{{else}}<p class="timing-note">当前证据未识别到可关联的关键帧，不能据此判断关键帧是否缺失。</p>{{end}}
+{{if .Correlation.Requests}}<h3>关联 HTTP 请求</h3><div class="scroll"><table><thead><tr><th scope="col">请求</th><th scope="col">对象</th><th scope="col">HTTP</th><th scope="col">开始偏移 (ms)</th><th scope="col">响应头偏移 (ms)</th><th scope="col">TTFB (ms)</th></tr></thead>
+<tbody>{{range .Correlation.Requests}}<tr><td>#{{.Number}}</td><td>{{requestKind .Kind}}</td><td>{{.HTTPStatus}}</td><td>{{.StartMS}}</td><td>{{.EndMS}}</td><td>{{with .TTFBMS}}{{.}}{{else}}—{{end}}</td></tr>{{end}}</tbody></table></div>{{end}}
+<h3>关联证据</h3>
+{{range .Correlation.Findings}}<section id="case-{{.ID}}"><h4>{{.ID}} · {{.Message}}</h4><p class="timing-note">{{.StartMS}}–{{.EndMS}} ms</p>{{with .NextCheck}}<p>{{.}}</p>{{end}}
+{{if .Evidence}}<div class="scroll"><table><thead><tr><th scope="col">对象</th><th scope="col">到达偏移 (ms)</th><th scope="col">DTS (ms)</th><th scope="col">PTS (ms)</th><th scope="col">原始条目 / 偏移</th></tr></thead><tbody>{{range .Evidence}}<tr><td>{{.Kind}}</td><td>{{.ArrivalMS}}</td><td>{{.DTS}}</td><td>{{.PTS}}</td><td>{{if .Artifact}}{{.Artifact}}{{else}}{{.Offset}}{{end}}</td></tr>{{end}}</tbody></table></div>{{end}}</section>{{end}}
+<h3>异常附近的源流片段与截图</h3>
+<p>{{investigationMedia .Media.Status}}{{with .Media.Reason}} · {{.}}{{end}}</p>
+{{with .Media.Alignment}}<p class="timing-note">媒体定位方式 {{investigationAlignment .}}</p>{{end}}
+{{if .Media.StartMS}}<p class="timing-note">源流媒体时间 {{.Media.StartMS}}–{{.Media.EndMS}} ms</p>{{end}}
+{{if .Images}}<div class="stall-images">{{range .Images}}<figure><img src="{{.DataURL}}" alt="{{.Label}}"><figcaption>{{.Label}}{{with .MediaTimeMS}} · 源流媒体时间 {{.}} ms{{end}} · {{.Bytes}} 字节</figcaption></figure>{{end}}</div>{{end}}
+{{with .ImagesOmitted}}<p class="timing-note">达到报告截图内嵌上限，另有 {{.}} 张截图通过链接或证据包查看。</p>{{end}}
+{{range .OtherImages}}<p><a href="{{.Href}}">下载源流截图 · {{.Bytes}} 字节</a></p>{{end}}
+{{range .Clips}}<p><a href="{{.Href}}">下载源流片段 · {{.Bytes}} 字节</a></p>{{end}}
+{{if .Media.Assets}}<p class="timing-note">媒体文件保存在证据包中；独立 HTML 内嵌可用截图，片段通过下载链接或解压证据包后查看。</p>{{end}}
+<h3>模型建议（时序证据）</h3>
+<p class="timing-note">模型依据关联的接收间隔、缓冲与关键帧记录提出待验证建议，源流片段和截图供复核。</p>
+{{with .Explanation}}<p class="timing-note">解读来源 {{modelProvider .Provider}}{{if .Model}} · {{.Model}}{{end}}</p><p>{{.Summary}}</p>
+{{range .Hypotheses}}<h4>待验证 · {{.Claim}}</h4><p>{{range .EvidenceIDs}}<a href="#case-{{.}}">{{.}}</a> {{end}}</p><p>{{.NextCheck}}</p>{{end}}
+{{else}}<p>{{investigationModel .ModelState}}</p>{{end}}
+{{with .ModelError}}<p class="timing-note">{{.}}</p>{{end}}
+</article>{{end}}{{end}}
 {{if eq .Report.Manifest.Protocol "hls"}}
 {{with .Report.HLS}}
 <article><h2>播放列表与分片指标</h2><dl>
@@ -458,6 +525,10 @@ type playerChartData struct {
 }
 
 func playerChart(player *PlayerReport, elapsed int64) *playerChartData {
+	return playerChartRange(player, elapsed, 0)
+}
+
+func playerChartRange(player *PlayerReport, elapsed, startMS int64) *playerChartData {
 	if player == nil || len(player.BufferSamples) == 0 {
 		return nil
 	}
@@ -469,7 +540,8 @@ func playerChart(player *PlayerReport, elapsed int64) *playerChartData {
 	for _, stall := range player.Stalls {
 		duration = max(duration, stall.EndMS)
 	}
-	x := func(ms float64) float64 { return 45 + 540*max(0, ms)/float64(duration) }
+	duration = max(1, duration-startMS)
+	x := func(ms float64) float64 { return 45 + 540*max(0, ms-float64(startMS))/float64(duration) }
 	y := func(ms float64) float64 { return 112 - 94*ms/maximum }
 	chart := &playerChartData{SinglePoint: len(player.BufferSamples) == 1}
 	var points strings.Builder
@@ -484,8 +556,9 @@ func playerChart(player *PlayerReport, elapsed int64) *playerChartData {
 		chart.Stalls = append(chart.Stalls, playerChartSpan{start, max(0, end-start)})
 	}
 	chart.XTicks = []playerChartTick{
-		{x(0), "0s"}, {x(float64(duration) / 2), fmt.Sprintf("%.1fs", float64(duration)/2000)},
-		{x(float64(duration)), fmt.Sprintf("%.1fs", float64(duration)/1000)},
+		{x(float64(startMS)), fmt.Sprintf("%gs", float64(startMS)/1000)},
+		{x(float64(startMS) + float64(duration)/2), fmt.Sprintf("%.1fs", float64(startMS)/1000+float64(duration)/2000)},
+		{x(float64(startMS + duration)), fmt.Sprintf("%.1fs", float64(startMS+duration)/1000)},
 	}
 	for _, value := range []float64{0, maximum / 2, maximum} {
 		chart.YTicks = append(chart.YTicks, playerChartTick{y(value), fmt.Sprintf("%gs", value/1000)})
@@ -494,6 +567,12 @@ func playerChart(player *PlayerReport, elapsed int64) *playerChartData {
 }
 
 func RenderHTML(w io.Writer, report Report, explanation *Explanation, backURL string) error {
+	return RenderHTMLWithAssets(w, report, explanation, backURL, nil)
+}
+
+// RenderHTMLWithAssets embeds validated JPEG evidence so a saved report can
+// show source screenshots without a server or a network connection.
+func RenderHTMLWithAssets(w io.Writer, report Report, explanation *Explanation, backURL string, assets map[string][]byte) error {
 	protocol := "HTTP-FLV"
 	mpegTS, datagram, rtp := false, false, false
 	switch report.Manifest.Protocol {
@@ -533,19 +612,170 @@ func RenderHTML(w io.Writer, report Report, explanation *Explanation, backURL st
 		}
 	}
 	return reportPage.Execute(w, struct {
-		Report       Report
-		Explanation  *Explanation
-		BackURL      string
-		Protocol     string
-		MPEGTS       bool
-		Datagram     bool
-		RTP          bool
-		HTTPRequests []HTTPRequestTiming
-		HTTPPhases   []struct{ Name, Label string }
-		HTTPFailures bool
-		TimingStages []CaptureStage
-		LegacyRTMP   bool
-		PlayerChart  *playerChartData
+		Report         Report
+		Explanation    *Explanation
+		BackURL        string
+		Protocol       string
+		MPEGTS         bool
+		Datagram       bool
+		RTP            bool
+		HTTPRequests   []HTTPRequestTiming
+		HTTPPhases     []struct{ Name, Label string }
+		HTTPFailures   bool
+		TimingStages   []CaptureStage
+		LegacyRTMP     bool
+		PlayerChart    *playerChartData
+		Investigations []investigationHTML
 	}{report, explanation, backURL, protocol, mpegTS, datagram, rtp, requests, httpTimingPhases, hasHTTPFailures, stages,
-		report.Manifest.Protocol == ProtocolRTMP && !hasRTMPHandshake, playerChart(report.Player, report.Manifest.Observation.ElapsedMS)})
+		report.Manifest.Protocol == ProtocolRTMP && !hasRTMPHandshake, playerChart(report.Player, report.Manifest.Observation.ElapsedMS), investigationHTMLItems(report.StallInvestigations, backURL, assets)})
+}
+
+type investigationHTML struct {
+	StallInvestigation
+	Images        []investigationHTMLImage
+	ImagesOmitted int
+	OtherImages   []investigationHTMLClip
+	Clips         []investigationHTMLClip
+	Chart         *playerChartData
+}
+
+type investigationHTMLImage struct {
+	Label       string
+	Bytes       int64
+	MediaTimeMS *int64
+	DataURL     template.URL
+}
+
+type investigationHTMLClip struct {
+	Href  string
+	Bytes int64
+}
+
+var investigationHTMLAssetName = regexp.MustCompile(`^stalls/(S[0-9]{3})/(clip\.mp4|before\.jpg|during\.jpg|after\.jpg)$`)
+var investigationHTMLRunID = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
+
+func investigationHTMLItems(items []StallInvestigation, backURL string, assets map[string][]byte) []investigationHTML {
+	var result []investigationHTML
+	embeddedBytes := 0
+	for _, item := range items {
+		view := investigationHTML{StallInvestigation: item}
+		if len(item.Correlation.BufferSamples) > 0 {
+			view.Chart = playerChartRange(&PlayerReport{BufferSamples: item.Correlation.BufferSamples, Stalls: []PlayerStall{item.Stall}}, item.Correlation.WindowEndMS, item.Correlation.WindowStartMS)
+		}
+		for _, asset := range item.Media.Assets {
+			parts := investigationHTMLAssetName.FindStringSubmatch(asset.Name)
+			if len(parts) != 3 || parts[1] != item.ID {
+				continue
+			}
+			if asset.Kind == "clip" && parts[2] == "clip.mp4" {
+				view.Clips = append(view.Clips, investigationHTMLClip{Href: investigationAssetHTMLHref(asset.Name, backURL), Bytes: asset.Bytes})
+				continue
+			}
+			data := assets[asset.Name]
+			if asset.Kind != "screenshot" || parts[2] == "clip.mp4" || len(data) == 0 || len(data) > maxDerivedImageBytes || int64(len(data)) != asset.Bytes {
+				if asset.Kind == "screenshot" && parts[2] != "clip.mp4" {
+					view.OtherImages = append(view.OtherImages, investigationHTMLClip{Href: investigationAssetHTMLHref(asset.Name, backURL), Bytes: asset.Bytes})
+				}
+				continue
+			}
+			hash := sha256.Sum256(data)
+			if hex.EncodeToString(hash[:]) != asset.SHA256 {
+				continue
+			}
+			config, err := jpeg.DecodeConfig(bytes.NewReader(data))
+			if err != nil || config.Width < 1 || config.Height < 1 || config.Width > 8192 || config.Height > 8192 {
+				continue
+			}
+			if embeddedBytes+len(data) > 8<<20 {
+				view.ImagesOmitted++
+				view.OtherImages = append(view.OtherImages, investigationHTMLClip{Href: investigationAssetHTMLHref(asset.Name, backURL), Bytes: asset.Bytes})
+				continue
+			}
+			embeddedBytes += len(data)
+			label := "异常附近源流截图"
+			if parts[2] == "before.jpg" {
+				label = "异常前源流截图"
+			}
+			if parts[2] == "after.jpg" {
+				label = "异常后源流截图"
+			}
+			view.Images = append(view.Images, investigationHTMLImage{Label: label, Bytes: asset.Bytes, MediaTimeMS: asset.MediaTimeMS,
+				DataURL: template.URL("data:image/jpeg;base64," + base64.StdEncoding.EncodeToString(data))})
+		}
+		result = append(result, view)
+	}
+	return result
+}
+
+func investigationAssetHTMLHref(name, backURL string) string {
+	if id := strings.TrimPrefix(backURL, "/diagnostics#"); strings.HasPrefix(backURL, "/diagnostics#") && investigationHTMLRunID.MatchString(id) {
+		return "/api/diagnostics/runs/" + id + "/stall-assets/" + strings.TrimPrefix(name, "stalls/")
+	}
+	return name
+}
+
+func investigationStateLabel(state string) string {
+	switch state {
+	case "queued":
+		return "等待补查"
+	case "running":
+		return "补查中"
+	case "complete":
+		return "补查完成"
+	case "partial":
+		return "保留部分结果"
+	case "failed":
+		return "补查失败"
+	case "canceled":
+		return "补查已停止"
+	default:
+		return state
+	}
+}
+
+func investigationMediaLabel(state string) string {
+	switch state {
+	case "ready":
+		return "片段与截图已提取"
+	case "partial":
+		return "媒体产物部分可用"
+	case "unavailable":
+		return "媒体产物不可用"
+	case "failed":
+		return "媒体提取失败"
+	default:
+		return "等待提取源流媒体"
+	}
+}
+
+func investigationAlignmentLabel(alignment string) string {
+	switch alignment {
+	case "media_clock", "player_clock":
+		return "播放器媒体时间对齐"
+	case "player_clock_estimate":
+		return "根据播放器媒体时间估算"
+	case "arrival_estimate":
+		return "按接收时序估算"
+	case "independent_capture", "independent_capture_reference":
+		return "独立采样连接参考"
+	default:
+		return alignment
+	}
+}
+
+func investigationModelLabel(state string) string {
+	switch state {
+	case "pending":
+		return "正在结合时序证据生成建议"
+	case "complete":
+		return "已生成建议"
+	case "unconfigured":
+		return "尚未配置大模型，可配置后生成建议"
+	case "failed":
+		return "模型建议生成失败，可重试"
+	case "changed":
+		return "模型配置已变化，可使用当前模型重新生成建议"
+	default:
+		return "等待模型建议"
+	}
 }

@@ -21,6 +21,7 @@ func RegisterDiagnosticRoutes(r *gin.Engine, service *diagnostic.Service) {
 	})
 	api := r.Group("/api/diagnostics", localDiagnostics)
 	RegisterDiagnosticPlayerMedia(api, service)
+	RegisterStallInvestigationRoutes(api, service)
 	api.POST("/runs/:id/player", func(c *gin.Context) {
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 512<<10)
 		decoder := json.NewDecoder(c.Request.Body)
@@ -126,8 +127,8 @@ func RegisterDiagnosticRoutes(r *gin.Engine, service *diagnostic.Service) {
 			return
 		}
 		c.Header("Content-Type", "text/html; charset=utf-8")
-		c.Header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'")
-		if err := diagnostic.RenderHTML(c.Writer, *detail.Report, detail.Explanation, "/diagnostics#"+detail.ID); err != nil {
+		c.Header("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; img-src data:")
+		if err := diagnostic.RenderHTMLWithAssets(c.Writer, *detail.Report, detail.Explanation, "/diagnostics#"+detail.ID, service.StallImages(detail.ID, *detail.Report)); err != nil {
 			diagnosticError(c, err)
 		}
 	})
