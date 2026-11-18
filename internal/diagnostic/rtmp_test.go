@@ -4,13 +4,18 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"io"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -61,6 +66,18 @@ func TestRTMPDiagnosticCaptureAndReplay(t *testing.T) {
 	if report.Metrics.VideoFrames != 2 || report.Metrics.AudioFrames != 1 || report.Manifest.Observation.TTFBMS == nil {
 		t.Fatalf("unexpected RTMP metadata: %+v", report)
 	}
+	var stages []string
+	for _, stage := range report.Manifest.Observation.Stages {
+		stages = append(stages, stage.Name)
+	}
+	for _, name := range []string{"connect", "handshake", "app_connect", "create_stream", "play", "receive"} {
+		if !slices.Contains(stages, name) {
+			t.Fatalf("missing RTMP phase %s in %v", name, stages)
+		}
+	}
+	if err := validateObservationDetails(report.Manifest.Observation); err != nil {
+		t.Fatal(err)
+	}
 	if !reflect.DeepEqual(report.Metrics.VideoCodecs, []string{"h264"}) || !reflect.DeepEqual(report.Metrics.AudioCodecs, []string{"aac"}) {
 		t.Fatalf("unexpected RTMP codecs: video=%v audio=%v", report.Metrics.VideoCodecs, report.Metrics.AudioCodecs)
 	}
@@ -100,6 +117,30 @@ func TestRTMPDiagnosticCaptureAndReplay(t *testing.T) {
 	imported, err := os.ReadFile(filepath.Join(importDir, rtmpStreamName))
 	if err != nil || !bytes.Equal(imported, dump) {
 		t.Fatalf("round-trip RTMP dump mismatch: %v", err)
+	}
+}
+
+func TestRTMPSCaptureIdentifiesTLSFailureStage(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	defer server.Close()
+	target, err := url.Parse("rtmps" + strings.TrimPrefix(server.URL, "https") + "/live/stream?token=private-fixture")
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := sampleRTMP(t.Context(), t.TempDir(), target, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	observation := report.Manifest.Observation
+	if observation.FailureStage != "tls" || observation.FailureCode != "tls_error" {
+		t.Fatalf("incorrect TLS setup failure: %+v", observation)
+	}
+	if err := validateObservationDetails(observation); err != nil {
+		t.Fatal(err)
+	}
+	data, _ := json.Marshal(observation)
+	if strings.Contains(string(data), "private-fixture") {
+		t.Fatal("RTMPS timing exposed a signed playback query")
 	}
 }
 

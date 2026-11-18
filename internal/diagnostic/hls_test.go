@@ -18,6 +18,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"streamanalyzer/internal/hlsdelivery/media"
 )
 
 func TestHLSEvidenceMasterRangesEncryptionAndReplay(t *testing.T) {
@@ -49,6 +51,8 @@ func TestHLSEvidenceMasterRangesEncryptionAndReplay(t *testing.T) {
 	var keyRequests atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
+		case "/entry.m3u8":
+			http.Redirect(w, r, "/master.m3u8?auth=fixture-secret", http.StatusFound)
 		case "/master.m3u8":
 			_, _ = w.Write(master)
 		case "/media.m3u8":
@@ -83,7 +87,7 @@ func TestHLSEvidenceMasterRangesEncryptionAndReplay(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	target, err := url.Parse(srv.URL + "/master.m3u8?auth=fixture-secret")
+	target, err := url.Parse(srv.URL + "/entry.m3u8?auth=fixture-secret")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,6 +117,28 @@ func TestHLSEvidenceMasterRangesEncryptionAndReplay(t *testing.T) {
 	}
 	if slices.ContainsFunc(report.Findings, func(f Finding) bool { return f.Code == "hls_segment_format_unknown" }) {
 		t.Fatal("fMP4 segment with archived initialization data was not recognized")
+	}
+
+	if report.Metrics.FirstVideoMS != nil || report.Metrics.FirstAudioMS != nil {
+		t.Fatalf("metadata-only or encrypted fragments established media arrival: %+v", report.Metrics)
+	}
+	if got := len(report.Requests); got != 7 {
+		t.Fatalf("request timing count=%d, want 7: %+v", got, report.Requests)
+	}
+	for i, request := range report.Requests {
+		if request.Number != i+1 || request.TotalMS != request.EndMS-request.StartMS {
+			t.Fatalf("invalid request timing: %+v", request)
+		}
+	}
+	redirect, playlist := report.Requests[0], report.Requests[1]
+	if redirect.HTTPStatus != http.StatusFound || redirect.Kind != hlsPlaylist || redirect.BodyEndMS != nil ||
+		playlist.HTTPStatus != http.StatusOK || playlist.Kind != hlsPlaylist || playlist.BodyEndMS == nil ||
+		!slices.ContainsFunc(playlist.Stages, func(stage CaptureStage) bool { return stage.Name == "receive" }) {
+		t.Fatalf("missing redirect, response or receive timings: %+v, %+v", redirect, playlist)
+	}
+	failed := report.Requests[len(report.Requests)-1]
+	if failed.HTTPStatus != http.StatusNotFound || failed.Kind != hlsSegment || failed.FailureCode != "http_status" {
+		t.Fatalf("failed media request timing missing: %+v", failed)
 	}
 
 	archive, err := zip.OpenReader(filepath.Join(dir, hlsStreamName))
@@ -208,10 +234,10 @@ func TestHLSSampleFollowsLiveEdge(t *testing.T) {
 }
 
 func TestHLSSampleKeepsIndependentAudioRendition(t *testing.T) {
-	// Two packets identify an H.264 elementary stream in the main variant.
-	ts := bytes.Repeat([]byte{0xff}, 376)
-	copy(ts[:188], []byte{0x47, 0x40, 0, 0x10, 0, 0x00, 0xb0, 13, 0, 1, 0xc1, 0, 0, 0, 1, 0xe1, 0, 0, 0, 0, 0})
-	copy(ts[188:], []byte{0x47, 0x41, 0, 0x10, 0, 0x02, 0xb0, 18, 0, 1, 0xc1, 0, 0, 0xe1, 1, 0xf0, 0, 0x1b, 0xe1, 1, 0xf0, 0, 0, 0, 0, 0})
+	// Valid PAT/PMT and a video PES establish a first media segment.
+	ts := media.SyntheticMPEGTS(true)
+	copy(ts[:188], testPSIWithCRC(ts[:188]))
+	copy(ts[188:376], testPSIWithCRC(ts[188:376]))
 	aac := []byte{0xff, 0xf1, 0x50, 0x80, 0x01, 0x1f, 0xfc, 0x13}
 	var other atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -255,7 +281,59 @@ func TestHLSSampleKeepsIndependentAudioRendition(t *testing.T) {
 	if !slices.Equal(report.Metrics.VideoCodecs, []string{"h264"}) || !slices.Equal(report.Metrics.AudioCodecs, []string{"aac"}) {
 		t.Fatalf("unexpected observed media codecs: video=%v, audio=%v", report.Metrics.VideoCodecs, report.Metrics.AudioCodecs)
 	}
+	if report.Metrics.MediaTimingUnit != "segment" || report.Metrics.FirstVideoMS == nil || report.Metrics.FirstAudioMS == nil ||
+		report.Metrics.VideoFrames != 0 || report.Metrics.AudioFrames != 0 {
+		t.Fatalf("incorrect media completion milestones: %+v", report.Metrics)
+	}
 	if len(report.Findings) != 0 {
 		t.Fatalf("expected no analysis findings: %+v", report.Findings)
+	}
+}
+
+func TestHLSInitialPlaylistBodyFailureTiming(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Length", "8192")
+		_, _ = io.WriteString(w, "#EXTM3U\n")
+	}))
+	defer server.Close()
+	target, err := url.Parse(server.URL + "/index.m3u8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	report, err := sampleHLS(t.Context(), captureClient(), t.TempDir(), target, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	obs := report.Manifest.Observation
+	if obs.EndReason != "body_error" || obs.FailureStage != "receive" || obs.FailureCode != "body_error" ||
+		obs.FirstPayloadMS == nil || len(report.Requests) != 1 {
+		t.Fatalf("initial HLS receive failure was lost: observation=%+v requests=%+v", obs, report.Requests)
+	}
+	request := report.Requests[0]
+	if request.FailureStage != "receive" || request.FailureCode != "body_error" || request.BodyEndMS == nil ||
+		*request.BodyEndMS < request.EndMS || request.TotalMS != request.EndMS-request.StartMS {
+		t.Fatalf("request timing lost the partial-body evidence: %+v", request)
+	}
+}
+
+func TestHLSAcceptsLegacyTimingAndBoundsReportRows(t *testing.T) {
+	ttfb := int64(11)
+	row := hlsRecord{
+		Kind: hlsPlaylist, Rendition: hlsMain, Result: "ok", ArrivalMS: 15, DurationMS: 15, TTFBMS: &ttfb,
+		HTTPStatus: 200, Bytes: 5, Artifact: hlsArtifactName(hlsPlaylist, 1),
+	}
+	if !validHLSRecord(row, 1, 0, 15) ||
+		!validHLSInitialRequest(row, Observation{HTTPStatus: 200, TTFBMS: &ttfb}) {
+		t.Fatal("legacy HLS timing failed validation")
+	}
+	replay := hlsReplay{}
+	row.Requests = []HTTPRequestTiming{{Number: 1, HTTPStatus: 200}}
+	for range maxHLSReportRequests + 3 {
+		replay.recordRequests(row)
+	}
+	report := replay.report
+	if len(report.Requests) != maxHLSReportRequests || report.RequestsTruncated != 3 ||
+		report.Requests[maxHLSReportRequests-1].Kind != hlsPlaylist || report.Requests[maxHLSReportRequests-1].Number != maxHLSReportRequests {
+		t.Fatalf("unexpected request truncation: %+v", report)
 	}
 }

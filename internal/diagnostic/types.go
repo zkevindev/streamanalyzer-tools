@@ -70,23 +70,41 @@ type Artifact struct {
 }
 
 type Observation struct {
-	Origin           string         `json:"origin,omitempty"`
-	StartedAt        time.Time      `json:"started_at"`
-	RequestedSeconds int            `json:"requested_seconds"`
-	ElapsedMS        int64          `json:"elapsed_ms"`
-	HTTPStatus       int            `json:"http_status,omitempty"`
-	TTFBMS           *int64         `json:"ttfb_ms,omitempty"`
-	EndReason        string         `json:"end_reason"`
-	FirstPayloadMS   *int64         `json:"first_payload_ms,omitempty"`
-	Stages           []CaptureStage `json:"stages,omitempty"`
-	FailureStage     string         `json:"failure_stage,omitempty"`
-	FailureCode      string         `json:"failure_code,omitempty"`
+	Origin           string              `json:"origin,omitempty"`
+	StartedAt        time.Time           `json:"started_at"`
+	RequestedSeconds int                 `json:"requested_seconds"`
+	ElapsedMS        int64               `json:"elapsed_ms"`
+	HTTPStatus       int                 `json:"http_status,omitempty"`
+	TTFBMS           *int64              `json:"ttfb_ms,omitempty"`
+	EndReason        string              `json:"end_reason"`
+	FirstPayloadMS   *int64              `json:"first_payload_ms,omitempty"`
+	Stages           []CaptureStage      `json:"stages,omitempty"`
+	Requests         []HTTPRequestTiming `json:"requests,omitempty"`
+	FailureStage     string              `json:"failure_stage,omitempty"`
+	FailureCode      string              `json:"failure_code,omitempty"`
 }
 
 type CaptureStage struct {
 	Name    string `json:"name"`
 	StartMS int64  `json:"start_ms"`
 	EndMS   int64  `json:"end_ms"`
+}
+
+// HTTPRequestTiming describes one request through its response headers, with
+// optional body completion on the terminal hop. Stage offsets are relative
+// to the sampling start. TTFBMS is relative to this request's own start.
+type HTTPRequestTiming struct {
+	Number       int            `json:"number"`
+	Kind         string         `json:"kind,omitempty"`
+	StartMS      int64          `json:"start_ms"`
+	EndMS        int64          `json:"end_ms"`
+	TotalMS      int64          `json:"total_ms"`
+	BodyEndMS    *int64         `json:"body_end_ms,omitempty"`
+	HTTPStatus   int            `json:"http_status,omitempty"`
+	TTFBMS       *int64         `json:"ttfb_ms,omitempty"`
+	Stages       []CaptureStage `json:"stages,omitempty"`
+	FailureStage string         `json:"failure_stage,omitempty"`
+	FailureCode  string         `json:"failure_code,omitempty"`
 }
 
 type Manifest struct {
@@ -120,6 +138,7 @@ type Event struct {
 }
 
 type Metrics struct {
+	MediaTimingUnit string   `json:"media_timing_unit,omitempty"`
 	VideoCodecs     []string `json:"video_codecs,omitempty"`
 	AudioCodecs     []string `json:"audio_codecs,omitempty"`
 	VideoFrames     int      `json:"video_frames"`
@@ -145,12 +164,14 @@ type Finding struct {
 }
 
 type Report struct {
-	RuleVersion string         `json:"rule_version"`
-	Manifest    Manifest       `json:"manifest"`
-	Metrics     Metrics        `json:"metrics"`
-	HLS         *HLSMetrics    `json:"hls,omitempty"`
-	MPEGTS      *MPEGTSMetrics `json:"mpegts,omitempty"`
-	Findings    []Finding      `json:"findings"`
+	Requests          []HTTPRequestTiming `json:"requests,omitempty"`
+	RequestsTruncated int                 `json:"requests_truncated,omitempty"`
+	RuleVersion       string              `json:"rule_version"`
+	Manifest          Manifest            `json:"manifest"`
+	Metrics           Metrics             `json:"metrics"`
+	HLS               *HLSMetrics         `json:"hls,omitempty"`
+	MPEGTS            *MPEGTSMetrics      `json:"mpegts,omitempty"`
+	Findings          []Finding           `json:"findings"`
 }
 
 type Detail struct {

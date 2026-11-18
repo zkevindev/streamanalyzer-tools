@@ -80,6 +80,11 @@ func TestTSReplayContinuityAndOfflineEvidence(t *testing.T) {
 		metrics.SyncLossBytes != 3 || metrics.PCRPIDs != 1 || !slices.Equal(report.Metrics.VideoCodecs, []string{"h264"}) {
 		t.Fatalf("wrong TS metrics: %+v", metrics)
 	}
+	if report.Metrics.MediaTimingUnit != "pes" || report.Metrics.FirstVideoMS == nil || *report.Metrics.FirstVideoMS != 3 ||
+		report.Metrics.FirstAudioMS != nil || report.Metrics.VideoFrames != 0 {
+		t.Fatalf("incorrect video PES arrival: %+v", report.Metrics)
+	}
+
 	for _, finding := range report.Findings {
 		if finding.Code == "ts_transport_error" {
 			if len(finding.Evidence) != 1 || finding.Evidence[0].Offset != 8*188 || finding.Evidence[0].PID == nil ||

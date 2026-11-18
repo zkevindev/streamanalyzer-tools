@@ -128,18 +128,16 @@ func sample(ctx context.Context, client *http.Client, dir string, target *url.UR
 }
 
 func capture(ctx context.Context, client *http.Client, target *url.URL, start time.Time, observation *Observation, stream, timeline *artifactWriter) ([]Event, error) {
-	ctx, finishAttempt := recordHTTPAttempt(ctx, observation, start)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
 	if err != nil {
-		finishAttempt(err)
+		observation.FailureStage, observation.FailureCode = httpFailure("request_send", err)
 		observation.EndReason = "request_error"
 		return nil, nil
 	}
 	req.Header.Set("User-Agent", "StreamAnalyzer-Diagnostic/1.0")
 	req.Header.Set("Accept-Encoding", "identity")
 
-	resp, err := client.Do(req)
-	finishAttempt(err)
+	resp, err := doObservedRequest(client, req, observation, start)
 	if err != nil {
 		observation.EndReason = captureEnd(ctx, "request_error")
 		return nil, nil
@@ -161,6 +159,7 @@ func capture(ctx context.Context, client *http.Client, target *url.URL, start ti
 		} else if observation.EndReason == "duration_limit" && observation.FirstPayloadMS == nil {
 			observation.FailureStage, observation.FailureCode = "receive", "timeout"
 		}
+		recordHTTPBody(observation, observation.Stages[stage])
 	}()
 
 	body := io.LimitReader(resp.Body, maxStreamBytes)

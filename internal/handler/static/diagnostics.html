@@ -90,8 +90,15 @@
                         <a id="bundle" class="button secondary" download>证据包 ZIP</a>
                     </div>
                     <section id="sampling-timing" aria-labelledby="timing-title" hidden>
-                        <h3 id="timing-title" class="report-title">采样阶段</h3>
+                        <h3 id="timing-title" class="report-title">采样时序</h3>
+                        <p class="timing-note muted">到达时间以采样开始为基准。</p>
                         <dl id="timing-metrics" class="metrics"></dl>
+                        <section id="request-timing" aria-labelledby="request-timing-title" hidden>
+                            <h4 id="request-timing-title">HTTP 请求耗时</h4>
+                            <p id="request-timing-note" class="timing-note muted">单位为毫秒。采样偏移从采样开始计时，TTFB 从当次请求开始计时。— 表示未测得。</p>
+                            <div id="request-table"></div>
+                            <p id="request-timing-truncated" class="timing-note muted" hidden></p>
+                        </section>
                         <div id="timing-table"></div>
                     </section>
                     <section id="transport" aria-labelledby="transport-title" hidden>

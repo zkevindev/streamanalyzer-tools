@@ -67,30 +67,40 @@ type tsAnalyzer struct {
 }
 
 type tsPID struct {
-	generation    uint64
-	metrics       MPEGTSPIDMetrics
-	last          Event
-	prev          [tsPacketBytes]byte
-	havePrev      bool
-	prevPayload   bool
-	prevPCR       bool
-	duplicateUsed bool
-	cc            byte
-	psi           []byte
-	pcr           uint64
-	havePCR       bool
-	pcrEvent      Event
-	dts           uint64
-	haveDTS       bool
-	dtsEvent      Event
+	mediaKind       string
+	mediaGeneration uint64
+	generation      uint64
+	metrics         MPEGTSPIDMetrics
+	last            Event
+	prev            [tsPacketBytes]byte
+	havePrev        bool
+	prevPayload     bool
+	prevPCR         bool
+	duplicateUsed   bool
+	cc              byte
+	psi             []byte
+	pcr             uint64
+	havePCR         bool
+	pcrEvent        Event
+	dts             uint64
+	haveDTS         bool
+	dtsEvent        Event
+}
+
+func newTSAnalyzer(manifest Manifest) *tsAnalyzer {
+	return &tsAnalyzer{
+		report: Report{
+			RuleVersion: manifest.Protocol + "/2", Manifest: manifest,
+			MPEGTS: &MPEGTSMetrics{PIDs: []MPEGTSPIDMetrics{}}, Findings: []Finding{},
+			Metrics: Metrics{MediaTimingUnit: "pes"},
+		},
+		seen: make(map[string]int), pids: make(map[uint16]*tsPID), pmt: make(map[uint16]uint16),
+		pcrPIDs: make(map[uint16]bool), rtp: make(map[uint32]*tsRTPSource),
+	}
 }
 
 func replayTS(dir string, manifest Manifest) (Report, error) {
-	analyzer := &tsAnalyzer{
-		report: Report{RuleVersion: manifest.Protocol + "/1", Manifest: manifest, MPEGTS: &MPEGTSMetrics{PIDs: []MPEGTSPIDMetrics{}}, Findings: []Finding{}},
-		seen:   make(map[string]int), pids: make(map[uint16]*tsPID), pmt: make(map[uint16]uint16),
-		pcrPIDs: make(map[uint16]bool), rtp: make(map[uint32]*tsRTPSource),
-	}
+	analyzer := newTSAnalyzer(manifest)
 	framer := tsFramer{analyzer: analyzer}
 	err := walkTSChunks(dir, manifest, func(span tsSpan, data []byte) error {
 		switch manifest.Protocol {
@@ -305,6 +315,9 @@ func (a *tsAnalyzer) observePES(s *tsPID, payload []byte, event Event) {
 		return
 	}
 	s.metrics.PESStarts++
+	if s.mediaGeneration == a.generation {
+		markMediaArrival(&a.report.Metrics, s.mediaKind, event.ArrivalMS)
+	}
 	if len(payload) < 9 || payload[6]&0xc0 != 0x80 {
 		return
 	}

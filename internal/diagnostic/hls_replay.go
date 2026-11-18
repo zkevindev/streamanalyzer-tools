@@ -10,11 +10,14 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 
 	"streamanalyzer/internal/hlsdelivery/m3u8"
 	"streamanalyzer/internal/hlsdelivery/media"
 )
+
+const maxHLSReportRequests = 64
 
 type HLSMetrics struct {
 	PlaylistsCaptured     int   `json:"playlists_captured"`
@@ -73,11 +76,13 @@ func replayHLS(dir string, manifest Manifest) (Report, error) {
 	}
 	defer timeline.Close()
 	scanner := bufio.NewScanner(timeline)
-	scanner.Buffer(make([]byte, 1024), 8192)
+	// The maximum 8 HTTP hops can each contain 16 stages.
+	scanner.Buffer(make([]byte, 1024), 32<<10)
 
 	replay := hlsReplay{
 		report: Report{
-			RuleVersion: "hls/2", Manifest: manifest, HLS: &HLSMetrics{}, Findings: []Finding{},
+			RuleVersion: "hls/3", Manifest: manifest, HLS: &HLSMetrics{}, Findings: []Finding{},
+			Metrics: Metrics{MediaTimingUnit: "segment"},
 		},
 		seenFindings: make(map[string]bool), tracks: make(map[string]*hlsReplayTrack), inits: make(map[int]hlsReplayInit),
 	}
@@ -90,14 +95,11 @@ func replayHLS(dir string, manifest Manifest) (Report, error) {
 			!validHLSRecord(row, id, lastArrival, manifest.Observation.ElapsedMS) {
 			return Report{}, hlsInvalid("HLS 请求记录无效")
 		}
-		if id == 1 {
-			expected := manifest.Observation
-			if row.Kind != hlsPlaylist || row.Rendition != hlsMain || row.HTTPStatus != expected.HTTPStatus ||
-				(row.TTFBMS == nil) != (expected.TTFBMS == nil) ||
-				(row.TTFBMS != nil && expected.TTFBMS != nil && *row.TTFBMS != *expected.TTFBMS) {
-				return Report{}, hlsInvalid("HLS 入口请求与采样元数据不一致")
-			}
+		if id == 1 && !validHLSInitialRequest(row, manifest.Observation) {
+			return Report{}, hlsInvalid("HLS 入口请求与采样元数据不一致")
 		}
+		replay.recordRequests(row)
+
 		lastArrival = row.ArrivalMS
 		var entry *zip.File
 		var body []byte
@@ -172,6 +174,20 @@ func validHLSRecord(row hlsRecord, id int, lastArrival, elapsed int64) bool {
 		row.Playlist < 0 || row.Playlist >= id || row.Init < 0 || row.Init >= id {
 		return false
 	}
+	if len(row.Requests) > 0 {
+		startMS := row.ArrivalMS - row.DurationMS
+		if row.Kind == hlsGap || !validHTTPRequests(row.Requests, max(lastArrival, startMS), row.ArrivalMS) {
+			return false
+		}
+		last := row.Requests[len(row.Requests)-1]
+		if row.Result != "request_error" && row.HTTPStatus != last.HTTPStatus {
+			return false
+		}
+		if (last.TTFBMS == nil) != (row.TTFBMS == nil) ||
+			(last.TTFBMS != nil && *row.TTFBMS != last.StartMS+*last.TTFBMS-startMS) {
+			return false
+		}
+	}
 	if row.Artifact != "" && hlsArtifactName(row.Kind, id) != row.Artifact {
 		return false
 	}
@@ -207,6 +223,37 @@ func validHLSRecord(row hlsRecord, id int, lastArrival, elapsed int64) bool {
 		return row.Kind != hlsPlaylist
 	default:
 		return false
+	}
+}
+
+func validHLSInitialRequest(row hlsRecord, observation Observation) bool {
+	if row.Kind != hlsPlaylist || row.Rendition != hlsMain || row.HTTPStatus != observation.HTTPStatus {
+		return false
+	}
+	ttfb := row.TTFBMS
+	if len(row.Requests) > 0 {
+		if !reflect.DeepEqual(row.Requests, observation.Requests) {
+			return false
+		}
+		last := row.Requests[len(row.Requests)-1]
+		ttfb = nil
+		if last.TTFBMS != nil {
+			firstByte := last.StartMS + *last.TTFBMS
+			ttfb = &firstByte
+		}
+	}
+	return reflect.DeepEqual(ttfb, observation.TTFBMS)
+}
+
+func (r *hlsReplay) recordRequests(row hlsRecord) {
+	for _, request := range row.Requests {
+		if len(r.report.Requests) >= maxHLSReportRequests {
+			r.report.RequestsTruncated++
+			continue
+		}
+		request.Number = len(r.report.Requests) + 1
+		request.Kind = row.Kind
+		r.report.Requests = append(r.report.Requests, request)
 	}
 }
 
@@ -366,6 +413,23 @@ func (r *hlsReplay) observeSegment(track *hlsReplayTrack, row hlsRecord, event E
 	info := media.Inspect(body, initBody)
 	if info.Format == "" && len(audio) > 0 {
 		info.Format = "packed-audio"
+	}
+	if r.report.Metrics.FirstVideoMS == nil && len(video) > 0 || r.report.Metrics.FirstAudioMS == nil && len(audio) > 0 {
+		var hasVideo, hasAudio bool
+		switch info.Format {
+		case "ts":
+			hasVideo, hasAudio = hlsTSPESKinds(body)
+		case "mp4":
+			hasVideo, hasAudio = media.FragmentMediaKinds(body, initBody)
+		case "adts":
+			hasAudio = true
+		}
+		if hasVideo {
+			markMediaArrival(&r.report.Metrics, "video", event.ArrivalMS)
+		}
+		if hasAudio {
+			markMediaArrival(&r.report.Metrics, "audio", event.ArrivalMS)
+		}
 	}
 	r.inspectMedia(info, segment.Sequence, declared, event, track.playlist.IndependentSegments)
 	return nil

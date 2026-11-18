@@ -164,24 +164,31 @@ type modelFinding struct {
 func modelInput(report Report) ([]byte, error) {
 	obs := report.Manifest.Observation
 	input := struct {
-		Protocol       string         `json:"protocol"`
-		ElapsedMS      int64          `json:"elapsed_ms"`
-		HTTPStatus     int            `json:"http_status"`
-		TTFBMS         *int64         `json:"ttfb_ms,omitempty"`
-		EndReason      string         `json:"end_reason"`
-		Metrics        Metrics        `json:"metrics"`
-		HLS            *HLSMetrics    `json:"hls,omitempty"`
-		MPEGTS         *MPEGTSMetrics `json:"mpegts,omitempty"`
-		FirstPayloadMS *int64         `json:"first_payload_ms,omitempty"`
-		Stages         []CaptureStage `json:"stages,omitempty"`
-		FailureStage   string         `json:"failure_stage,omitempty"`
-		FailureCode    string         `json:"failure_code,omitempty"`
-		Findings       []modelFinding `json:"findings"`
+		Protocol          string              `json:"protocol"`
+		ElapsedMS         int64               `json:"elapsed_ms"`
+		HTTPStatus        int                 `json:"http_status"`
+		TTFBMS            *int64              `json:"ttfb_ms,omitempty"`
+		EndReason         string              `json:"end_reason"`
+		Metrics           Metrics             `json:"metrics"`
+		HLS               *HLSMetrics         `json:"hls,omitempty"`
+		MPEGTS            *MPEGTSMetrics      `json:"mpegts,omitempty"`
+		FirstPayloadMS    *int64              `json:"first_payload_ms,omitempty"`
+		Stages            []CaptureStage      `json:"stages,omitempty"`
+		Requests          []HTTPRequestTiming `json:"requests,omitempty"`
+		RequestsTruncated int                 `json:"requests_truncated,omitempty"`
+		FailureStage      string              `json:"failure_stage,omitempty"`
+		FailureCode       string              `json:"failure_code,omitempty"`
+		Findings          []modelFinding      `json:"findings"`
 	}{
 		Protocol: report.Manifest.Protocol, ElapsedMS: obs.ElapsedMS, HTTPStatus: obs.HTTPStatus, TTFBMS: obs.TTFBMS,
 		EndReason: obs.EndReason, Metrics: report.Metrics, HLS: report.HLS, MPEGTS: report.MPEGTS,
 		FirstPayloadMS: obs.FirstPayloadMS, Stages: obs.Stages, FailureStage: obs.FailureStage, FailureCode: obs.FailureCode,
 		Findings: []modelFinding{},
+	}
+	input.Requests = report.Requests
+	input.RequestsTruncated = report.RequestsTruncated
+	if len(input.Requests) == 0 {
+		input.Requests = obs.Requests
 	}
 	for _, finding := range report.Findings {
 		input.Findings = append(input.Findings, modelFinding{

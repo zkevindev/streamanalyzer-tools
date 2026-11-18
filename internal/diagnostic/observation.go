@@ -1,105 +1,238 @@
 package diagnostic
 
 import (
-	"context"
 	"crypto/tls"
 	"fmt"
 	"io"
+	"net/http"
 	"net/http/httptrace"
-	"slices"
 	"sync"
 	"time"
 )
 
-// recordHTTPAttempt stores timings, while keeping endpoint names and network
-// error text out of the report. Trace callbacks can run on transport goroutines.
-func recordHTTPAttempt(ctx context.Context, observation *Observation, start time.Time) (context.Context, func(error)) {
-	var mu sync.Mutex
-	var stages []CaptureStage
-	active := make(map[string]int)
-	var firstByte *int64
-	done := false
-	lastStage := "response_headers"
-	begin := func(name, key string) {
-		mu.Lock()
-		defer mu.Unlock()
-		if done || len(stages) >= 64 {
-			return
+const (
+	maxHTTPRequests      = 8
+	maxHTTPRequestStages = 16
+	maxHTTPSetupStages   = 10 // retain room for request and response phases
+)
+
+// Observe each RoundTrip, so a redirect response gets its own status and
+// timings. The shallow client copy keeps the original redirect, cookie, and
+// timeout behavior and continues to use the original transport.
+func doObservedRequest(client *http.Client, req *http.Request, observation *Observation, start time.Time) (*http.Response, error) {
+	base := client.Transport
+	if base == nil {
+		base = http.DefaultTransport
+	}
+	transport := &observedHTTPTransport{base: base, sampleStart: start}
+	observed := *client
+	observed.Transport = transport
+	resp, err := observed.Do(req)
+	observation.Requests = transport.requests
+	if len(transport.requests) == 0 {
+		if err != nil {
+			observation.FailureStage, observation.FailureCode = httpFailure("request_send", err)
 		}
-		active[key] = len(stages)
-		stages = append(stages, CaptureStage{Name: name, StartMS: time.Since(start).Milliseconds(), EndMS: -1})
-		lastStage = name
+		return resp, err
+	}
+	last := &transport.requests[len(transport.requests)-1]
+	if err != nil && last.FailureCode == "" {
+		// Client.Do can return an error after RoundTrip succeeded, for example
+		// when the client's redirect policy rejects the next request.
+		last.FailureStage, last.FailureCode = httpFailure("response_headers", err)
+		switch last.HTTPStatus {
+		case http.StatusMovedPermanently, http.StatusFound, http.StatusSeeOther,
+			http.StatusTemporaryRedirect, http.StatusPermanentRedirect:
+			last.FailureCode = "redirect_error"
+		}
+	}
+	observation.Stages = append(observation.Stages, last.Stages...)
+	if last.TTFBMS != nil {
+		ms := last.StartMS + *last.TTFBMS
+		observation.TTFBMS = &ms
+	}
+	observation.FailureStage, observation.FailureCode = last.FailureStage, last.FailureCode
+	return resp, err
+}
+
+type observedHTTPTransport struct {
+	base        http.RoundTripper
+	sampleStart time.Time
+	requests    []HTTPRequestTiming
+}
+
+func (t *observedHTTPTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	if len(t.requests) == maxHTTPRequests {
+		return t.base.RoundTrip(req)
+	}
+	attempt := httpAttempt{
+		sampleStart: t.sampleStart,
+		request: HTTPRequestTiming{
+			Number: len(t.requests) + 1, StartMS: time.Since(t.sampleStart).Milliseconds(),
+		},
+		active: make(map[string]int),
+	}
+	ctx := httptrace.WithClientTrace(req.Context(), attempt.trace())
+	resp, err := t.base.RoundTrip(req.WithContext(ctx))
+	t.requests = append(t.requests, attempt.finish(resp, err))
+	return resp, err
+}
+
+type httpAttempt struct {
+	mu          sync.Mutex
+	sampleStart time.Time
+	request     HTTPRequestTiming
+	active      map[string]int
+	lastStage   string
+	finished    bool
+}
+
+func (a *httpAttempt) trace() *httptrace.ClientTrace {
+	begin := func(name, key string) {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		if !a.finished && len(a.request.Stages) < maxHTTPSetupStages {
+			a.begin(name, key, a.now())
+		}
 	}
 	end := func(key string) {
-		mu.Lock()
-		defer mu.Unlock()
-		if done {
-			return
-		}
-		if index, ok := active[key]; ok {
-			stages[index].EndMS = time.Since(start).Milliseconds()
-			delete(active, key)
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		if !a.finished {
+			a.end(key, a.now())
 		}
 	}
-	trace := &httptrace.ClientTrace{
-		DNSStart:          func(httptrace.DNSStartInfo) { begin("dns", "dns") },
-		DNSDone:           func(httptrace.DNSDoneInfo) { end("dns") },
-		ConnectStart:      func(network, address string) { begin("connect", network+address) },
-		ConnectDone:       func(network, address string, _ error) { end(network + address) },
-		TLSHandshakeStart: func() { begin("tls", "tls") },
-		TLSHandshakeDone:  func(tls.ConnectionState, error) { end("tls") },
-		GotConn:           func(httptrace.GotConnInfo) { begin("response_headers", "response_headers") },
-		GotFirstResponseByte: func() {
-			end("response_headers")
-			mu.Lock()
-			defer mu.Unlock()
-			if !done {
-				ms := time.Since(start).Milliseconds()
-				firstByte = &ms
-			}
-		},
+	return &httptrace.ClientTrace{
+		DNSStart:             func(httptrace.DNSStartInfo) { begin("dns", "dns") },
+		DNSDone:              func(httptrace.DNSDoneInfo) { end("dns") },
+		ConnectStart:         func(network, address string) { begin("connect", network+"\x00"+address) },
+		ConnectDone:          func(network, address string, _ error) { end(network + "\x00" + address) },
+		TLSHandshakeStart:    func() { begin("tls", "tls") },
+		TLSHandshakeDone:     func(tls.ConnectionState, error) { end("tls") },
+		GotConn:              a.gotConnection,
+		WroteRequest:         a.wroteRequest,
+		GotFirstResponseByte: a.receivedFirstByte,
 	}
-	finish := func(err error) {
-		mu.Lock()
-		defer mu.Unlock()
-		if done {
-			return
-		}
-		done = true
-		now := time.Since(start).Milliseconds()
-		for index := range stages {
-			if stages[index].EndMS < 0 {
-				stages[index].EndMS = now
-			}
-		}
-		slices.SortStableFunc(stages, func(a, b CaptureStage) int {
-			if a.StartMS < b.StartMS {
-				return -1
-			}
-			if a.StartMS > b.StartMS {
-				return 1
-			}
-			return 0
-		})
-		observation.Stages = append(observation.Stages, stages...)
-		observation.TTFBMS = firstByte
-		if err != nil {
-			observation.FailureStage = lastStage
-			observation.FailureCode = modelNetworkError(err, 0).Code
-			if _, waitingForHeaders := active["response_headers"]; waitingForHeaders {
-				observation.FailureStage = "response_headers"
-			}
-			switch observation.FailureCode {
-			case "dns_error":
-				observation.FailureStage = "dns"
-			case "tls_error":
-				observation.FailureStage = "tls"
-			case "connection_refused":
-				observation.FailureStage = "connect"
-			}
+}
+
+func (a *httpAttempt) now() int64 {
+	return time.Since(a.sampleStart).Milliseconds()
+}
+
+// Stage helpers are called with a.mu held. Endpoint keys only pair TCP trace
+// callbacks, and are never persisted.
+func (a *httpAttempt) begin(name, key string, at int64) {
+	if len(a.request.Stages) == maxHTTPRequestStages {
+		return
+	}
+	a.end(key, at)
+	a.active[key] = len(a.request.Stages)
+	a.request.Stages = append(a.request.Stages, CaptureStage{Name: name, StartMS: at, EndMS: -1})
+	a.lastStage = name
+}
+
+func (a *httpAttempt) end(key string, at int64) bool {
+	index, ok := a.active[key]
+	if ok {
+		a.request.Stages[index].EndMS = at
+		delete(a.active, key)
+	}
+	return ok
+}
+
+func (a *httpAttempt) gotConnection(httptrace.GotConnInfo) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if !a.finished {
+		now := a.now()
+		a.end("response_first_byte", now)
+		a.begin("request_send", "request_send", now)
+	}
+}
+
+func (a *httpAttempt) wroteRequest(info httptrace.WroteRequestInfo) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if !a.finished {
+		now := a.now()
+		a.end("request_send", now)
+		if info.Err == nil && a.request.TTFBMS == nil {
+			a.begin("response_first_byte", "response_first_byte", now)
 		}
 	}
-	return httptrace.WithClientTrace(ctx, trace), finish
+}
+
+func (a *httpAttempt) receivedFirstByte() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.finished || a.request.TTFBMS != nil {
+		return
+	}
+	now := a.now()
+	ttfb := now - a.request.StartMS
+	a.request.TTFBMS = &ttfb
+	if !a.end("response_first_byte", now) {
+		// A server may respond before the write goroutine reports completion.
+		a.begin("response_first_byte", "response_first_byte", now)
+		a.end("response_first_byte", now)
+	}
+	a.begin("response_headers", "response_headers", now)
+}
+
+func (a *httpAttempt) finish(resp *http.Response, err error) HTTPRequestTiming {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.finished = true
+	now := a.now()
+	a.request.EndMS, a.request.TotalMS = now, now-a.request.StartMS
+	if resp != nil {
+		a.request.HTTPStatus = resp.StatusCode
+	}
+	if err != nil {
+		stage := a.lastStage
+		if _, ok := a.active["response_headers"]; ok {
+			stage = "response_headers"
+		} else if _, ok := a.active["response_first_byte"]; ok {
+			stage = "response_first_byte"
+		} else if _, ok := a.active["request_send"]; ok {
+			stage = "request_send"
+		}
+		a.request.FailureStage, a.request.FailureCode = httpFailure(stage, err)
+	}
+	for index := range a.request.Stages {
+		if a.request.Stages[index].EndMS < 0 {
+			a.request.Stages[index].EndMS = now
+		}
+	}
+	return a.request
+}
+
+func httpFailure(stage string, err error) (string, string) {
+	code := modelNetworkError(err, 0).Code
+	switch code {
+	case "dns_error":
+		stage = "dns"
+	case "tls_error":
+		stage = "tls"
+	case "connection_refused":
+		stage = "connect"
+	}
+	if stage == "" {
+		stage = "request_send"
+	}
+	return stage, code
+}
+
+func recordHTTPBody(observation *Observation, stage CaptureStage) {
+	if len(observation.Requests) == 0 {
+		return
+	}
+	last := &observation.Requests[len(observation.Requests)-1]
+	last.BodyEndMS = &stage.EndMS
+	last.Stages = append(last.Stages, stage)
+	if observation.FailureStage == "receive" {
+		last.FailureStage, last.FailureCode = observation.FailureStage, observation.FailureCode
+	}
 }
 
 func markFirstPayload(observation *Observation, start time.Time) {
@@ -124,7 +257,8 @@ func (w payloadWriter) Write(data []byte) (int, error) {
 
 func validCaptureStage(name string) bool {
 	switch name {
-	case "dns", "connect", "tls", "response_headers", "listen", "receive", "handshake", "play":
+	case "dns", "connect", "tls", "request_send", "response_first_byte", "response_headers",
+		"listen", "receive", "handshake", "app_connect", "create_stream", "play":
 		return true
 	default:
 		return false
@@ -134,7 +268,7 @@ func validCaptureStage(name string) bool {
 func validCaptureFailure(code string) bool {
 	switch code {
 	case "", "timeout", "canceled", "dns_error", "tls_error", "connection_refused", "network_error",
-		"http_status", "body_error", "udp_bind_error", "udp_read_error", "rtmp_error":
+		"http_status", "redirect_error", "body_error", "udp_bind_error", "udp_read_error", "rtmp_error":
 		return true
 	default:
 		return false
@@ -146,7 +280,8 @@ func validateObservationDetails(observation Observation) error {
 	if observation.FirstPayloadMS != nil && (*observation.FirstPayloadMS < 0 || *observation.FirstPayloadMS > observation.ElapsedMS) {
 		return invalid()
 	}
-	if len(observation.Stages) > 128 || !validCaptureFailure(observation.FailureCode) ||
+	if len(observation.Stages) > 128 || !validHTTPRequests(observation.Requests, 0, observation.ElapsedMS) ||
+		!validCaptureFailure(observation.FailureCode) ||
 		(observation.FailureStage != "" && !validCaptureStage(observation.FailureStage)) {
 		return invalid()
 	}
@@ -156,6 +291,56 @@ func validateObservationDetails(observation Observation) error {
 		}
 	}
 	return nil
+}
+
+func validHTTPRequests(requests []HTTPRequestTiming, startMS, endMS int64) bool {
+	if len(requests) > maxHTTPRequests {
+		return false
+	}
+	for i, request := range requests {
+		validFailureStage := request.FailureStage == "" || validHTTPRequestStage(request.FailureStage) ||
+			(request.FailureStage == "receive" && request.BodyEndMS != nil)
+		if request.Number != i+1 || request.Kind != "" || request.StartMS < startMS ||
+			request.EndMS < request.StartMS || request.EndMS > endMS || request.TotalMS != request.EndMS-request.StartMS ||
+			(request.HTTPStatus != 0 && (request.HTTPStatus < 100 || request.HTTPStatus > 599)) ||
+			(request.TTFBMS != nil && (*request.TTFBMS < 0 || *request.TTFBMS > request.TotalMS)) ||
+			!validCaptureFailure(request.FailureCode) || !validFailureStage {
+			return false
+		}
+		stages := request.Stages
+		if request.BodyEndMS != nil {
+			bodyEnd := *request.BodyEndMS
+			if i != len(requests)-1 || len(stages) == 0 || bodyEnd < request.EndMS || bodyEnd > endMS {
+				return false
+			}
+			receive := stages[len(stages)-1]
+			if receive.Name != "receive" || receive.StartMS < request.EndMS || receive.EndMS < receive.StartMS || receive.EndMS != bodyEnd {
+				return false
+			}
+			stages = stages[:len(stages)-1]
+		}
+		if len(stages) > maxHTTPRequestStages {
+			return false
+		}
+		lastStageStart := request.StartMS
+		for _, stage := range stages {
+			if !validHTTPRequestStage(stage.Name) || stage.StartMS < lastStageStart || stage.EndMS < stage.StartMS || stage.EndMS > request.EndMS {
+				return false
+			}
+			lastStageStart = stage.StartMS
+		}
+		startMS = request.EndMS
+	}
+	return true
+}
+
+func validHTTPRequestStage(name string) bool {
+	switch name {
+	case "dns", "connect", "tls", "request_send", "response_first_byte", "response_headers":
+		return true
+	default:
+		return false
+	}
 }
 
 func captureFailureText(observation Observation) string {
@@ -179,6 +364,8 @@ func captureFailureText(observation Observation) string {
 		return "连接阶段请求超时，请检查阶段耗时、服务可用性和网络链路"
 	case "connection_refused":
 		return "连接被拒绝，请检查播放服务端口和监听状态"
+	case "redirect_error":
+		return "重定向处理失败或超过跳转上限，请检查跳转目标和鉴权"
 	case "network_error":
 		return "无法建立播放连接，请检查目标服务状态和网络链路"
 	case "canceled":

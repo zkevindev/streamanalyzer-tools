@@ -170,12 +170,18 @@ func (a *tsAnalyzer) observePMT(state *tsPID, section []byte, event Event) {
 		video, audio := media.TSStreamCodecs(stream.kind, stream.descriptors)
 		a.report.Metrics.VideoCodecs = addCodec(a.report.Metrics.VideoCodecs, video)
 		a.report.Metrics.AudioCodecs = addCodec(a.report.Metrics.AudioCodecs, audio)
-		metrics := &a.pid(stream.pid).metrics
+		pid := a.pid(stream.pid)
+		pid.mediaKind = ""
+		pid.mediaGeneration = a.generation
+		metrics := &pid.metrics
 		kind := stream.kind
 		metrics.StreamType = &kind
 		metrics.Codec = video
-		if audio != "" {
+		if video != "" {
+			pid.mediaKind = "video"
+		} else if audio != "" {
 			metrics.Codec = audio
+			pid.mediaKind = "audio"
 		}
 	}
 }
