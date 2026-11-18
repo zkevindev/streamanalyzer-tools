@@ -37,11 +37,15 @@
                             <option value="http-flv">HTTP-FLV</option>
                             <option value="rtmp">RTMP / RTMPS</option>
                             <option value="hls">HLS</option>
+                            <option value="http-ts">HTTP MPEG-TS</option>
+                            <option value="udp-ts">UDP MPEG-TS</option>
+                            <option value="rtp-ts">RTP MPEG-TS</option>
                         </select>
                     </div>
                     <div>
-                        <label for="url">播放地址</label>
-                        <input id="url" type="url" placeholder="https://live.example.com/app/stream.flv" required>
+                        <label for="url" id="url-label">播放地址</label>
+                        <input id="url" type="url" placeholder="https://live.example.com/app/stream.flv" aria-describedby="url-hint" required>
+                        <p id="url-hint" class="field-hint muted" hidden></p>
                     </div>
                 </div>
                 <div class="sample-options">
@@ -85,6 +89,19 @@
                         <a id="dump" class="button secondary" download>原始流</a>
                         <a id="bundle" class="button secondary" download>证据包 ZIP</a>
                     </div>
+                    <section id="sampling-timing" aria-labelledby="timing-title" hidden>
+                        <h3 id="timing-title" class="report-title">采样阶段</h3>
+                        <dl id="timing-metrics" class="metrics"></dl>
+                        <div id="timing-table"></div>
+                    </section>
+                    <section id="transport" aria-labelledby="transport-title" hidden>
+                        <h3 id="transport-title" class="report-title">MPEG-TS 传输指标</h3>
+                        <dl id="transport-metrics" class="metrics"></dl>
+                        <details id="ts-pids" class="report-details" open hidden>
+                            <summary id="pid-summary">PID 明细</summary>
+                            <div id="pid-table"></div>
+                        </details>
+                    </section>
                     <h3 class="report-title">规则诊断</h3>
                     <div id="trace" class="trace" role="group" aria-label="异常时间线" hidden></div>
                     <div id="findings"></div>

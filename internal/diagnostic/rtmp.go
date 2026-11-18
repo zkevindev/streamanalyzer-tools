@@ -71,13 +71,14 @@ func sampleRTMP(ctx context.Context, dir string, target *url.URL, seconds int) (
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(seconds)*time.Second)
 	defer cancel()
 	tap := rtmpTap{stream: stream, start: start, cancel: cancel}
-	reason := captureRTMP(ctx, target, &tap)
 	obs := Observation{
 		Origin: origin(target), StartedAt: start.UTC(), RequestedSeconds: seconds,
-		ElapsedMS: time.Since(start).Milliseconds(), EndReason: reason,
 	}
+	obs.EndReason = captureRTMP(ctx, target, &tap, &obs)
+	obs.ElapsedMS = time.Since(start).Milliseconds()
 	if len(tap.stamps) > 0 {
 		obs.TTFBMS = &tap.stamps[0].ArrivalMS
+		obs.FirstPayloadMS = &tap.stamps[0].ArrivalMS
 	}
 	var timelineErr error
 	encoder := json.NewEncoder(timeline)
@@ -96,15 +97,27 @@ func sampleRTMP(ctx context.Context, dir string, target *url.URL, seconds int) (
 	return replayRTMP(dir, manifest)
 }
 
-func captureRTMP(ctx context.Context, target *url.URL, tap *rtmpTap) string {
+func captureRTMP(ctx context.Context, target *url.URL, tap *rtmpTap, obs *Observation) string {
 	client, _, _, err := rtmp.DialAndPlay(ctx, target.String(), &rtmp.DefaultHandler{}, &rtmp.PlayOptions{Start: -2, RecvTap: tap})
+	playEnd := time.Since(tap.start).Milliseconds()
+	obs.Stages = append(obs.Stages, CaptureStage{Name: "play", EndMS: playEnd})
+	if err != nil {
+		obs.FailureStage = "play"
+		obs.FailureCode = modelNetworkError(err, 0).Code
+		if obs.FailureCode == "network_error" {
+			obs.FailureCode = "rtmp_error"
+		}
+	}
 	reason := "rtmp_error"
 	if err == nil {
 		// DialAndPlay closes the socket on cancellation. The receive loop
 		// must finish before the tap and raw artifact can be closed.
 		<-client.Done()
+		obs.Stages = append(obs.Stages, CaptureStage{Name: "receive", StartMS: playEnd, EndMS: time.Since(tap.start).Milliseconds()})
 		if errors.Is(client.LastError(), rtmp.ErrServerDisconnected) {
 			reason = "eof"
+		} else if ctx.Err() == nil {
+			obs.FailureStage, obs.FailureCode = "receive", "rtmp_error"
 		}
 		_ = client.Close()
 	}
@@ -136,7 +149,7 @@ func replayRTMP(dir string, manifest Manifest) (Report, error) {
 		manifest.Observation.EndReason = "rtmp_error"
 	}
 	report := analyze(manifest, events)
-	report.RuleVersion = "rtmp/1"
+	report.RuleVersion = "rtmp/2"
 	return report, nil
 }
 

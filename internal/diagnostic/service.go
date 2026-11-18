@@ -223,6 +223,8 @@ func (s *Service) sampleProtocol(ctx context.Context, dir string, target *url.UR
 		return sampleRTMP(ctx, dir, target, seconds)
 	case ProtocolHLS:
 		return sampleHLS(ctx, s.client, dir, target, seconds)
+	case ProtocolHTTPTS, ProtocolUDPTS, ProtocolRTPTS:
+		return sampleTS(ctx, s.client, dir, target, seconds, protocol)
 	default:
 		return Report{}, fmt.Errorf("%w: 不支持的采样协议", ErrInvalid)
 	}
@@ -498,6 +500,9 @@ func reportStatus(report Report) string {
 	samples := report.Metrics.VideoFrames + report.Metrics.AudioFrames
 	if report.HLS != nil {
 		samples = report.HLS.SegmentsCaptured
+	}
+	if report.MPEGTS != nil {
+		samples = report.MPEGTS.Packets
 	}
 	if samples == 0 {
 		return "failed"

@@ -9,9 +9,8 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"net/http/httptrace"
+	"net/netip"
 	"net/url"
-	"sync/atomic"
 	"time"
 
 	"github.com/yutopp/go-rtmp"
@@ -43,13 +42,29 @@ func parseProtocolURL(rawURL, protocol string) (*url.URL, error) {
 		return nil, fmt.Errorf("%w: 播放地址格式无效", ErrInvalid)
 	}
 	switch protocol {
-	case ProtocolHTTPFLV, ProtocolHLS:
+	case ProtocolHTTPFLV, ProtocolHLS, ProtocolHTTPTS:
 		if target.Scheme != "http" && target.Scheme != "https" {
 			return nil, fmt.Errorf("%w: 请输入 HTTP 或 HTTPS 播放地址", ErrInvalid)
 		}
 	case ProtocolRTMP:
 		if target.Scheme != "rtmp" && target.Scheme != "rtmps" {
 			return nil, fmt.Errorf("%w: 请输入 RTMP 或 RTMPS 播放地址", ErrInvalid)
+		}
+	case ProtocolUDPTS, ProtocolRTPTS:
+		scheme := "udp"
+		if protocol == ProtocolRTPTS {
+			scheme = "rtp"
+		}
+		address, err := netip.ParseAddrPort(target.Host)
+		query, queryErr := url.ParseQuery(target.RawQuery)
+		if target.Scheme != scheme || err != nil || !address.Addr().Is4() || address.Port() == 0 ||
+			target.Path != "" || target.Fragment != "" || queryErr != nil || len(query) > 1 {
+			return nil, fmt.Errorf("%w: 请输入 IPv4 接收地址和端口，例如 %s://0.0.0.0:5000", ErrInvalid, scheme)
+		}
+		for key, values := range query {
+			if key != "interface" || len(values) != 1 || values[0] == "" || !address.Addr().IsMulticast() {
+				return nil, fmt.Errorf("%w: interface 参数仅用于指定组播接收网卡", ErrInvalid)
+			}
 		}
 	default:
 		return nil, fmt.Errorf("%w: 不支持的采样协议", ErrInvalid)
@@ -113,13 +128,10 @@ func sample(ctx context.Context, client *http.Client, dir string, target *url.UR
 }
 
 func capture(ctx context.Context, client *http.Client, target *url.URL, start time.Time, observation *Observation, stream, timeline *artifactWriter) ([]Event, error) {
-	var firstByte atomic.Int64
-	firstByte.Store(-1)
-	trace := &httptrace.ClientTrace{
-		GotFirstResponseByte: func() { firstByte.Store(time.Since(start).Milliseconds()) },
-	}
-	req, err := http.NewRequestWithContext(httptrace.WithClientTrace(ctx, trace), http.MethodGet, target.String(), nil)
+	ctx, finishAttempt := recordHTTPAttempt(ctx, observation, start)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
 	if err != nil {
+		finishAttempt(err)
 		observation.EndReason = "request_error"
 		return nil, nil
 	}
@@ -127,9 +139,7 @@ func capture(ctx context.Context, client *http.Client, target *url.URL, start ti
 	req.Header.Set("Accept-Encoding", "identity")
 
 	resp, err := client.Do(req)
-	if ms := firstByte.Load(); ms >= 0 {
-		observation.TTFBMS = &ms
-	}
+	finishAttempt(err)
 	if err != nil {
 		observation.EndReason = captureEnd(ctx, "request_error")
 		return nil, nil
@@ -139,11 +149,22 @@ func capture(ctx context.Context, client *http.Client, target *url.URL, start ti
 	observation.HTTPStatus = resp.StatusCode
 	if resp.StatusCode != http.StatusOK {
 		observation.EndReason = "http_status"
+		observation.FailureStage, observation.FailureCode = "response_headers", "http_status"
 		return nil, nil
 	}
+	stage := len(observation.Stages)
+	observation.Stages = append(observation.Stages, CaptureStage{Name: "receive", StartMS: time.Since(start).Milliseconds()})
+	defer func() {
+		observation.Stages[stage].EndMS = time.Since(start).Milliseconds()
+		if observation.EndReason == "body_error" {
+			observation.FailureStage, observation.FailureCode = "receive", "body_error"
+		} else if observation.EndReason == "duration_limit" && observation.FirstPayloadMS == nil {
+			observation.FailureStage, observation.FailureCode = "receive", "timeout"
+		}
+	}()
 
 	body := io.LimitReader(resp.Body, maxStreamBytes)
-	tapped := io.TeeReader(bufio.NewReaderSize(body, 64<<10), stream)
+	tapped := io.TeeReader(bufio.NewReaderSize(body, 64<<10), payloadWriter{stream, observation, start})
 	parser, err := openFLV(tapped)
 	if err != nil {
 		observation.EndReason = bodyEnd(ctx, stream.bytes, err)

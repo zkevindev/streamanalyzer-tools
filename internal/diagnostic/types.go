@@ -20,12 +20,18 @@ const (
 	ProtocolHTTPFLV = "http-flv"
 	ProtocolRTMP    = "rtmp"
 	ProtocolHLS     = "hls"
+	ProtocolHTTPTS  = "http-ts"
+	ProtocolUDPTS   = "udp-ts"
+	ProtocolRTPTS   = "rtp-ts"
 )
 
 const (
 	streamName     = "stream.flv"
 	rtmpStreamName = "stream.rtmp"
 	hlsStreamName  = "stream.hls.zip"
+	tsStreamName   = "stream.ts"
+	udpStreamName  = "stream.udp"
+	rtpStreamName  = "stream.rtp"
 	timelineName   = "timeline.ndjson"
 	manifestName   = "manifest.json"
 	reportName     = "report.json"
@@ -64,13 +70,23 @@ type Artifact struct {
 }
 
 type Observation struct {
-	Origin           string    `json:"origin,omitempty"`
-	StartedAt        time.Time `json:"started_at"`
-	RequestedSeconds int       `json:"requested_seconds"`
-	ElapsedMS        int64     `json:"elapsed_ms"`
-	HTTPStatus       int       `json:"http_status,omitempty"`
-	TTFBMS           *int64    `json:"ttfb_ms,omitempty"`
-	EndReason        string    `json:"end_reason"`
+	Origin           string         `json:"origin,omitempty"`
+	StartedAt        time.Time      `json:"started_at"`
+	RequestedSeconds int            `json:"requested_seconds"`
+	ElapsedMS        int64          `json:"elapsed_ms"`
+	HTTPStatus       int            `json:"http_status,omitempty"`
+	TTFBMS           *int64         `json:"ttfb_ms,omitempty"`
+	EndReason        string         `json:"end_reason"`
+	FirstPayloadMS   *int64         `json:"first_payload_ms,omitempty"`
+	Stages           []CaptureStage `json:"stages,omitempty"`
+	FailureStage     string         `json:"failure_stage,omitempty"`
+	FailureCode      string         `json:"failure_code,omitempty"`
+}
+
+type CaptureStage struct {
+	Name    string `json:"name"`
+	StartMS int64  `json:"start_ms"`
+	EndMS   int64  `json:"end_ms"`
 }
 
 type Manifest struct {
@@ -85,49 +101,56 @@ type Manifest struct {
 // offsets; HLS events identify a snapshot, init segment or media object.
 // ArrivalMS is relative to the start of sampling.
 type Event struct {
-	Offset     int64  `json:"offset"`
-	Size       int    `json:"size"`
-	ArrivalMS  int64  `json:"arrival_ms"`
-	Kind       string `json:"kind"`
-	DTS        int64  `json:"dts_ms"`
-	PTS        int64  `json:"pts_ms"`
-	Codec      string `json:"codec,omitempty"`
-	Track      uint8  `json:"track,omitempty"`
-	Keyframe   bool   `json:"keyframe,omitempty"`
-	Artifact   string `json:"artifact,omitempty"`
-	Rendition  string `json:"rendition,omitempty"`
-	Sequence   *int   `json:"sequence,omitempty"`
-	HTTPStatus int    `json:"http_status,omitempty"`
-	DurationMS int64  `json:"duration_ms,omitempty"`
+	Offset      int64   `json:"offset"`
+	Size        int     `json:"size"`
+	ArrivalMS   int64   `json:"arrival_ms"`
+	Kind        string  `json:"kind"`
+	DTS         int64   `json:"dts_ms"`
+	PTS         int64   `json:"pts_ms"`
+	Codec       string  `json:"codec,omitempty"`
+	Track       uint8   `json:"track,omitempty"`
+	Keyframe    bool    `json:"keyframe,omitempty"`
+	Artifact    string  `json:"artifact,omitempty"`
+	Rendition   string  `json:"rendition,omitempty"`
+	Sequence    *int    `json:"sequence,omitempty"`
+	HTTPStatus  int     `json:"http_status,omitempty"`
+	DurationMS  int64   `json:"duration_ms,omitempty"`
+	PID         *uint16 `json:"pid,omitempty"`
+	RTPSequence *uint16 `json:"rtp_sequence,omitempty"`
 }
 
 type Metrics struct {
-	VideoCodecs   []string `json:"video_codecs,omitempty"`
-	AudioCodecs   []string `json:"audio_codecs,omitempty"`
-	VideoFrames   int      `json:"video_frames"`
-	AudioFrames   int      `json:"audio_frames"`
-	FirstVideoMS  *int64   `json:"first_video_ms,omitempty"`
-	FirstAudioMS  *int64   `json:"first_audio_ms,omitempty"`
-	MaxVideoGapMS int64    `json:"max_video_gap_ms"`
-	MaxGOPMS      int64    `json:"max_gop_ms"`
+	VideoCodecs     []string `json:"video_codecs,omitempty"`
+	AudioCodecs     []string `json:"audio_codecs,omitempty"`
+	VideoFrames     int      `json:"video_frames"`
+	AudioFrames     int      `json:"audio_frames"`
+	FirstVideoMS    *int64   `json:"first_video_ms,omitempty"`
+	FirstAudioMS    *int64   `json:"first_audio_ms,omitempty"`
+	MaxVideoGapMS   int64    `json:"max_video_gap_ms"`
+	MaxGOPMS        int64    `json:"max_gop_ms"`
+	FirstKeyframeMS *int64   `json:"first_keyframe_ms,omitempty"`
+	MaxAudioGapMS   int64    `json:"max_audio_gap_ms"`
 }
 
 type Finding struct {
-	ID       string  `json:"id"`
-	Code     string  `json:"code"`
-	Severity string  `json:"severity"`
-	Message  string  `json:"message"`
-	StartMS  int64   `json:"start_ms"`
-	EndMS    int64   `json:"end_ms"`
-	Evidence []Event `json:"evidence,omitempty"`
+	ID          string  `json:"id"`
+	Code        string  `json:"code"`
+	Severity    string  `json:"severity"`
+	Message     string  `json:"message"`
+	StartMS     int64   `json:"start_ms"`
+	EndMS       int64   `json:"end_ms"`
+	Evidence    []Event `json:"evidence,omitempty"`
+	Occurrences int     `json:"occurrences,omitempty"`
+	NextCheck   string  `json:"next_check,omitempty"`
 }
 
 type Report struct {
-	RuleVersion string      `json:"rule_version"`
-	Manifest    Manifest    `json:"manifest"`
-	Metrics     Metrics     `json:"metrics"`
-	HLS         *HLSMetrics `json:"hls,omitempty"`
-	Findings    []Finding   `json:"findings"`
+	RuleVersion string         `json:"rule_version"`
+	Manifest    Manifest       `json:"manifest"`
+	Metrics     Metrics        `json:"metrics"`
+	HLS         *HLSMetrics    `json:"hls,omitempty"`
+	MPEGTS      *MPEGTSMetrics `json:"mpegts,omitempty"`
+	Findings    []Finding      `json:"findings"`
 }
 
 type Detail struct {

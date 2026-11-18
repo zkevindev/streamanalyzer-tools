@@ -77,7 +77,7 @@ func replayHLS(dir string, manifest Manifest) (Report, error) {
 
 	replay := hlsReplay{
 		report: Report{
-			RuleVersion: "hls/1", Manifest: manifest, HLS: &HLSMetrics{}, Findings: []Finding{},
+			RuleVersion: "hls/2", Manifest: manifest, HLS: &HLSMetrics{}, Findings: []Finding{},
 		},
 		seenFindings: make(map[string]bool), tracks: make(map[string]*hlsReplayTrack), inits: make(map[int]hlsReplayInit),
 	}
@@ -450,9 +450,11 @@ func (r *hlsReplay) finish() Report {
 	case "size_limit", "tag_limit", "canceled":
 		r.add(observation.EndReason, "info", endReasonText(observation.EndReason), observation.ElapsedMS, observation.ElapsedMS)
 	}
+	addObservationFindings(&r.report)
 	slices.SortStableFunc(r.report.Findings, func(left, right Finding) int { return cmp.Compare(left.StartMS, right.StartMS) })
 	for i := range r.report.Findings {
 		r.report.Findings[i].ID = fmt.Sprintf("F%03d", i+1)
 	}
+	enrichFindings(&r.report)
 	return r.report
 }

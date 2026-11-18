@@ -86,7 +86,7 @@ func (s Shell) download(w http.ResponseWriter, r *http.Request) {
 
 func isDiagnosticDumpName(filename string) bool {
 	switch filename {
-	case "stream.flv", "stream.rtmp", "stream.hls.zip":
+	case "stream.flv", "stream.rtmp", "stream.hls.zip", "stream.ts", "stream.udp", "stream.rtp":
 		return true
 	default:
 		return false

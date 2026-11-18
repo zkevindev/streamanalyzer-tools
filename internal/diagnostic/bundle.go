@@ -112,7 +112,7 @@ func readBundle(dir string, source io.Reader) (Report, error) {
 	if entries[name] == nil {
 		return Report{}, fmt.Errorf("%w: 缺少协议对应的原始流", ErrInvalid)
 	}
-	for _, other := range []string{streamName, rtmpStreamName, hlsStreamName} {
+	for _, other := range []string{streamName, rtmpStreamName, hlsStreamName, tsStreamName, udpStreamName, rtpStreamName} {
 		if other != name && entries[other] != nil {
 			return Report{}, fmt.Errorf("%w: 证据包包含其他协议的原始流", ErrInvalid)
 		}
@@ -134,6 +134,8 @@ func readBundle(dir string, source io.Reader) (Report, error) {
 		return replayRTMP(dir, manifest)
 	case ProtocolHLS:
 		return replayHLS(dir, manifest)
+	case ProtocolHTTPTS, ProtocolUDPTS, ProtocolRTPTS:
+		return replayTS(dir, manifest)
 	default:
 		return Report{}, fmt.Errorf("%w: 不支持的采样协议", ErrInvalid)
 	}
@@ -185,6 +187,12 @@ func dumpName(protocol string) string {
 		return rtmpStreamName
 	case ProtocolHLS:
 		return hlsStreamName
+	case ProtocolHTTPTS:
+		return tsStreamName
+	case ProtocolUDPTS:
+		return udpStreamName
+	case ProtocolRTPTS:
+		return rtpStreamName
 	default:
 		return ""
 	}
@@ -194,6 +202,7 @@ func bundleEntries(files []*zip.File) (map[string]*zip.File, error) {
 	limits := map[string]uint64{
 		manifestName: 16 << 10, timelineName: maxTimeline,
 		streamName: maxStreamBytes, rtmpStreamName: maxStreamBytes, hlsStreamName: maxStreamBytes,
+		tsStreamName: maxStreamBytes, udpStreamName: maxStreamBytes, rtpStreamName: maxStreamBytes,
 		reportName: 1 << 20, htmlName: 1 << 20,
 	}
 	entries := make(map[string]*zip.File, len(limits))
@@ -230,6 +239,9 @@ func readManifest(entry *zip.File) (Manifest, error) {
 		obs.ElapsedMS < 0 || obs.ElapsedMS > 3_600_000 || endReasonText(obs.EndReason) == "" ||
 		obs.HTTPStatus < 0 || obs.HTTPStatus > 599 || (obs.TTFBMS != nil && (*obs.TTFBMS < 0 || *obs.TTFBMS > obs.ElapsedMS)) {
 		return manifest, fmt.Errorf("%w: 采样元数据无效", ErrInvalid)
+	}
+	if err := validateObservationDetails(obs); err != nil {
+		return manifest, err
 	}
 	target, err := parseProtocolURL(obs.Origin, manifest.Protocol)
 	if err != nil || origin(target) != obs.Origin {
