@@ -51,6 +51,7 @@ type MPEGTSPIDMetrics struct {
 }
 
 type tsAnalyzer struct {
+	onMedia    func(Event)
 	report     Report
 	seen       map[string]int
 	pids       map[uint16]*tsPID
@@ -317,6 +318,10 @@ func (a *tsAnalyzer) observePES(s *tsPID, payload []byte, event Event) {
 	s.metrics.PESStarts++
 	if s.mediaGeneration == a.generation {
 		markMediaArrival(&a.report.Metrics, s.mediaKind, event.ArrivalMS)
+		if a.onMedia != nil && (s.mediaKind == "audio" || s.mediaKind == "video") {
+			event.Kind, event.Codec = s.mediaKind, s.metrics.Codec
+			defer func() { a.onMedia(event) }()
+		}
 	}
 	if len(payload) < 9 || payload[6]&0xc0 != 0x80 {
 		return
@@ -325,8 +330,9 @@ func (a *tsAnalyzer) observePES(s *tsPID, payload []byte, event Event) {
 	if flags != 2 && flags != 3 || payload[8] < 5 || len(payload) < 14 {
 		return
 	}
-	if _, ok := decodeTSPESClock(payload[9:14], flags); ok {
+	if pts, ok := decodeTSPESClock(payload[9:14], flags); ok {
 		s.metrics.PTSCount++
+		event.PTS, event.DTS = int64(pts/90), int64(pts/90)
 	}
 	if flags != 3 || payload[8] < 10 || len(payload) < 19 {
 		return

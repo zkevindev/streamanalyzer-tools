@@ -196,7 +196,9 @@ func attachPlayerArtifact(dir string, report *Report) error {
 	if err != nil {
 		return err
 	}
-	report.Manifest.Version = playerSchemaVersion
+	if report.Manifest.Version < playerSchemaVersion {
+		report.Manifest.Version = playerSchemaVersion
+	}
 	report.Manifest.Player = &artifact
 	report.Player = analyzePlayer(record, report.Manifest.Observation)
 	addPlayerFindings(report)

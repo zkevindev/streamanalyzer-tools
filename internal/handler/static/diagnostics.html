@@ -124,6 +124,14 @@
                         <p id="player-method" class="timing-note muted"></p>
                         <div id="player-buffer"></div>
                         <div id="player-stalls"></div>
+                        <section id="stall-investigations" aria-labelledby="stall-investigations-title" hidden>
+                            <div class="stall-investigation-heading">
+                                <h4 id="stall-investigations-title">卡顿证据补查</h4>
+                                <button id="investigate-stall" type="button" class="secondary">补查证据</button>
+                            </div>
+                            <p id="stall-investigation-status" class="timing-note muted" role="status"></p>
+                            <div id="stall-investigation-results"></div>
+                        </section>
                     </section>
                     <section id="transport" aria-labelledby="transport-title" hidden>
                         <h3 id="transport-title" class="report-title">MPEG-TS 传输指标</h3>

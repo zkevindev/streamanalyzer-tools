@@ -37,6 +37,14 @@ HTTP-FLV、HTTP MPEG-TS 和 HLS 的每次请求可以展开查看请求头、响
 
 播放器原始事件和缓冲样本写入证据包的 `player.json` 并校验 SHA-256，导入后离线重算播放器指标和卡顿区间，无需重新播放源流。HTML/JSON 报告包含相同结果；模型解读按需接收播放器指标、卡顿区间及对应证据。页面退出或网络中断前已保存的部分记录会保留，并标明采集状态。
 
+采样和播放器记录保存完成后，可以在卡顿区间中选择一次卡顿，点击「补查证据」。后台任务关联卡顿前后 3 秒的音视频接收间隔、缓冲样本、最近的可确认关键帧、相关 HTTP 请求及已有异常，并给每条关联证据分配独立 ID。HLS 的独立连接仅作同时段参考；TS 等未确认到关键帧时会明确说明。每份报告最多补查 8 次卡顿，支持查看状态、停止任务、重试尚无媒体产物的任务和重新请求模型建议。
+
+媒体提取需要本机 FFmpeg 和 ffprobe，可放在程序旁边或加入 PATH；macOS 还会检查常见的 Homebrew/MacPorts 安装目录。工具只读取采样文件，在本地生成最多 15 秒的 H.264/AAC MP4 和异常前、附近、后的三张 JPEG。片段和截图来自源流，位置按播放器媒体时钟估算；HLS 使用采样分片的接收窗口定位。它们用于复核媒体内容，原网络等待保留在时序证据中。缺少工具、无可用时钟、纯音频、加密分片或解码失败时会显示具体原因，时序证据仍保留。原始 dump 不会被改写。
+
+已配置大模型时，补查会自动请求带证据引用的排查建议。当前模型接收关联时序、媒体产物状态和证据 ID，不接收截图像素或视频文件，页面标注为「模型建议（时序证据）」。未配置、连接失败或切换模型时，可以保留结果并稍后重新解读。
+
+补查记录保存为 `stall-evidence.json`，派生文件位于证据包的 `stalls/S001/` 等目录，均记录 SHA-256。HTML 报告内嵌截图，片段可单独下载或从证据包打开。导入会校验派生文件并从原始流重新计算关联证据，不需 FFmpeg、源站或模型在线。导入未完成的任务会标为已停止，可以重新补查。旧版证据包仍可导入。
+
 HLS 主清单选取带宽最高的常规变体及其默认独立音频 rendition。直播从清单末尾最多三个完整分片开始采样，随后跟踪新分片，点播按清单顺序下载。加密分片保存原始密文，媒体识别限于能够检查的明文分片。原始产物可能包含签名 URL 或业务元数据。停止、读流失败或达到 128 MiB 的原始产物上限时，工作台保留已收集的数据和可用报告。
 
 编码名称取自采样数据，例如 H.264、H.265、AV1、VP9 以及 AAC、Opus、MP3、AC-3、E-AC-3。识别范围取决于协议与封装，工具保留原始数据用于复盘。
@@ -50,6 +58,10 @@ JSON 报告及 SQLite 任务索引位于数据目录下的 `diagnostics/`。基�
 | `GET /api/diagnostics/runs/:id` | 查询状态、规则报告和已生成的模型解读 |
 | `POST /api/diagnostics/runs/:id/stop` | 停止采样并保存已获取的数据 |
 | `POST /api/diagnostics/runs/:id/player` | 用会话授权头 `X-StreamAnalyzer-Player` 保存追加的播放器事件和缓冲样本；`complete` 后记录不可更改 |
+| `POST /api/diagnostics/runs/:id/stalls` | 用 `{"stall_index":1}` 补查第 1 次卡顿；无媒体产物的终态任务可加 `"retry":true` 重试 |
+| `POST /api/diagnostics/runs/:id/stalls/:caseID/explain` | 使用当前模型重新生成该次卡顿的时序证据建议 |
+| `POST /api/diagnostics/runs/:id/stalls/:caseID/stop` | 停止正在进行的补查 |
+| `GET /api/diagnostics/runs/:id/stall-assets/:caseID/:filename` | 访问报告中声明的 MP4 或 JPEG 产物，支持片段 Range 播放 |
 | `GET /api/diagnostics/runs/:id/{dump,report.html,report.json,evidence.zip}` | 查看或下载产物。原 HTTP-FLV `stream.flv` 路径仍可用 |
 | `POST /api/diagnostics/import` | 请求体传 ZIP 原始字节，类型为 `application/zip` |
 | `POST /api/diagnostics/runs/:id/explain` | 请求模型解读报告 |

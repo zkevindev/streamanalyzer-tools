@@ -53,6 +53,18 @@ func writeBundle(w io.Writer, dir string, report Report) error {
 }
 
 func writeBundleWithPlayer(w io.Writer, dir string, report Report, player io.Reader) error {
+	var ledger []byte
+	if report.Manifest.StallEvidence != nil {
+		var err error
+		ledger, err = readStallLedger(dir, *report.Manifest.StallEvidence)
+		if err != nil {
+			return err
+		}
+	}
+	return writeBundleSnapshot(w, dir, report, player, ledger)
+}
+
+func writeBundleSnapshot(w io.Writer, dir string, report Report, player io.Reader, ledger []byte) error {
 	name := dumpName(report.Manifest.Protocol)
 	if name == "" {
 		return fmt.Errorf("%w: 不支持的采样协议", ErrInvalid)
@@ -62,12 +74,27 @@ func writeBundleWithPlayer(w io.Writer, dir string, report Report, player io.Rea
 	if report.Manifest.Player != nil {
 		names = append(names, playerName)
 	}
+	if report.Manifest.StallEvidence != nil {
+		names = append(names, investigationName)
+		for _, item := range report.StallInvestigations {
+			for _, asset := range item.Media.Assets {
+				names = append(names, asset.Name)
+			}
+		}
+	}
 	for _, filename := range names {
 		entry, err := archive.CreateHeader(&zip.FileHeader{Name: filename, Method: zip.Store})
 		if err != nil {
 			return err
 		}
 		switch filename {
+		case investigationName:
+			if len(ledger) == 0 {
+				return fmt.Errorf("%w: 卡顿补查记录缺失", ErrInvalid)
+			}
+			if _, err := entry.Write(ledger); err != nil {
+				return err
+			}
 		case manifestName:
 			if err := json.NewEncoder(entry).Encode(report.Manifest); err != nil {
 				return err
@@ -99,7 +126,7 @@ func writeBundleWithPlayer(w io.Writer, dir string, report Report, player io.Rea
 	if err != nil {
 		return err
 	}
-	if err := RenderHTML(entry, report, nil, ""); err != nil {
+	if err := RenderHTMLWithAssets(entry, report, nil, "", loadStallImages(dir, report)); err != nil {
 		return err
 	}
 	return archive.Close()
@@ -192,6 +219,9 @@ func readBundle(dir string, source io.Reader) (Report, error) {
 			return Report{}, err
 		}
 	}
+	if err := importedStallEvidence(dir, &report, entries); err != nil {
+		return Report{}, err
+	}
 	return report, nil
 }
 
@@ -257,12 +287,15 @@ func bundleEntries(files []*zip.File) (map[string]*zip.File, error) {
 		manifestName: maxManifestBytes, timelineName: maxTimeline,
 		streamName: maxStreamBytes, rtmpStreamName: maxStreamBytes, hlsStreamName: maxStreamBytes,
 		tsStreamName: maxStreamBytes, udpStreamName: maxStreamBytes, rtpStreamName: maxStreamBytes,
-		reportName: 4 << 20, htmlName: 4 << 20,
+		reportName: 8 << 20, htmlName: 20 << 20, investigationName: maxInvestigationBytes,
 		playerName: maxPlayerBytes,
 	}
 	entries := make(map[string]*zip.File, len(limits))
 	for _, file := range files {
 		limit, allowed := limits[file.Name]
+		if assetLimit := stallAssetLimit(file.Name); assetLimit > 0 {
+			limit, allowed = assetLimit, true
+		}
 		if !allowed || !file.Mode().IsRegular() || entries[file.Name] != nil || file.UncompressedSize64 > limit {
 			return nil, fmt.Errorf("%w: ZIP 包含未知、重复或超限的条目", ErrInvalid)
 		}
@@ -286,8 +319,10 @@ func readManifest(entry *zip.File) (Manifest, error) {
 		return manifest, fmt.Errorf("%w: 清单无效", ErrInvalid)
 	}
 	legacyFLV := manifest.Protocol == ProtocolHTTPFLV && manifest.Version == legacyFLVSchemaVersion
-	if dumpName(manifest.Protocol) == "" || (manifest.Version != multiProtocolSchemaVersion && manifest.Version != playerSchemaVersion && !legacyFLV) ||
-		(manifest.Player != nil && manifest.Version != playerSchemaVersion) {
+	if dumpName(manifest.Protocol) == "" || (manifest.Version != multiProtocolSchemaVersion && manifest.Version != playerSchemaVersion && manifest.Version != investigationSchemaVersion && !legacyFLV) ||
+		(manifest.Player != nil && manifest.Version != playerSchemaVersion && manifest.Version != investigationSchemaVersion) ||
+		(manifest.StallEvidence != nil && (manifest.Version != investigationSchemaVersion || manifest.Player == nil)) ||
+		(manifest.Version == investigationSchemaVersion && manifest.StallEvidence == nil) {
 		return manifest, fmt.Errorf("%w: 证据包版本或协议不受支持", ErrInvalid)
 	}
 	obs := manifest.Observation

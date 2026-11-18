@@ -32,15 +32,18 @@ type Service struct {
 	modelMu sync.Mutex
 	model   *modelSelection
 
-	mu          sync.Mutex
-	active      map[string]context.CancelFunc
-	closed      bool
-	workers     sync.WaitGroup
-	close       sync.Once
-	closeErr    error
-	imports     chan struct{}
-	persistence sync.RWMutex
-	players     map[string]*playerSessionState
+	mu                 sync.Mutex
+	active             map[string]context.CancelFunc
+	closed             bool
+	workers            sync.WaitGroup
+	close              sync.Once
+	closeErr           error
+	imports            chan struct{}
+	persistence        sync.RWMutex
+	players            map[string]*playerSessionState
+	investigationJobs  map[string]context.CancelFunc
+	investigationSlots chan struct{}
+	investigationModel sync.Mutex
 }
 
 type modelSelection struct {
@@ -67,10 +70,15 @@ func Open(baseDir string, model Explainer) (*Service, error) {
 	s := &Service{
 		root: root, db: db, client: captureClient(),
 		active: make(map[string]context.CancelFunc), imports: make(chan struct{}, 2),
-		players: make(map[string]*playerSessionState),
+		players:           make(map[string]*playerSessionState),
+		investigationJobs: make(map[string]context.CancelFunc), investigationSlots: make(chan struct{}, 2),
 	}
 	s.SetModel(model)
 	if err := s.recoverRuns(); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err := s.recoverInvestigations(); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -121,6 +129,9 @@ func (s *Service) Close() error {
 		}
 		for _, state := range s.players {
 			state.session.Close()
+		}
+		for _, cancel := range s.investigationJobs {
+			cancel()
 		}
 		s.mu.Unlock()
 		s.workers.Wait()
@@ -415,7 +426,7 @@ func (s *Service) explain(ctx context.Context, id string, refresh bool) (Explana
 	if err != nil {
 		return Explanation{}, err
 	}
-	if playerRevision(current.Player) != playerRevision(detail.Report.Player) {
+	if playerRevision(current.Player) != playerRevision(detail.Report.Player) || investigationRevision(current) != investigationRevision(*detail.Report) {
 		return Explanation{}, ErrReportChanged
 	}
 	if err := writeJSONFile(dir, explanationName, explanation); err != nil {
@@ -440,6 +451,10 @@ func (s *Service) WriteBundle(id string, w io.Writer) error {
 	if detail.Report.Player != nil {
 		player, err = os.ReadFile(filepath.Join(dir, playerVersionName(detail.Report.Player.Revision)))
 	}
+	var ledger []byte
+	if err == nil && detail.Report.Manifest.StallEvidence != nil {
+		ledger, err = readStallLedger(dir, *detail.Report.Manifest.StallEvidence)
+	}
 	// Snapshot the bounded recording before its revision can be cleaned up.
 	// A slow download must not hold up other recordings or capture reports.
 	s.persistence.RUnlock()
@@ -447,9 +462,9 @@ func (s *Service) WriteBundle(id string, w io.Writer) error {
 		return err
 	}
 	if player != nil {
-		return writeBundleWithPlayer(w, dir, *detail.Report, bytes.NewReader(player))
+		return writeBundleSnapshot(w, dir, *detail.Report, bytes.NewReader(player), ledger)
 	}
-	return writeBundle(w, dir, *detail.Report)
+	return writeBundleSnapshot(w, dir, *detail.Report, nil, ledger)
 }
 
 func (s *Service) OpenDump(id string) (*os.File, error) {

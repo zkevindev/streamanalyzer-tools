@@ -68,6 +68,15 @@ let modelConfigRequest = 0;
 let detailRequest = 0;
 let activePlayer;
 const finalizingPlayers = new Set();
+const selectedStalls = new Map();
+const pendingStallRequests = new Set();
+const pendingStallExplanations = new Set();
+const pendingStallStops = new Set();
+let currentReport;
+const investigationStates = { queued: '等待补查', running: '补查中', complete: '补查完成', partial: '保留部分结果', failed: '补查失败', canceled: '补查已停止' };
+const investigationMediaStates = { ready: '片段与截图已提取', partial: '媒体产物部分可用', unavailable: '媒体产物不可用', failed: '媒体提取失败' };
+const investigationModelStates = { pending: '正在结合时序证据生成建议…', complete: '已生成建议', unconfigured: '尚未配置大模型，可在模型设置中配置后生成建议。', failed: '模型建议生成失败，可重试。', changed: '模型配置已变化，可使用当前模型重新生成建议。' };
+const investigationAlignments = { media_clock: '播放器媒体时间对齐', player_clock: '播放器媒体时间对齐', player_clock_estimate: '根据播放器媒体时间估算', arrival_estimate: '按接收时序估算', independent_capture: '独立采样连接参考', independent_capture_reference: '独立连接采样参考' };
 
 function playerSnapshotBody(recording) {
     // Keep the first 10 seconds at native resolution and use about one sample per second after that.
@@ -327,7 +336,10 @@ function showFinding(id) {
     const finding = node(id);
     if (!finding) return;
     finding.open = true;
-    finding.querySelector('summary').focus({ preventScroll: true });
+    for (let parent = finding.parentElement; parent; parent = parent.parentElement) {
+        if (parent.tagName === 'DETAILS') parent.open = true;
+    }
+    finding.querySelector('summary')?.focus({ preventScroll: true });
     finding.scrollIntoView({ block: 'nearest' });
 }
 
@@ -507,7 +519,7 @@ function renderTransport(protocol, ts) {
     node('pid-table').replaceChildren(table);
 }
 
-function renderBufferChart(samples, stalls, elapsed) {
+function renderBufferChart(samples, stalls, elapsed, startMS = 0) {
     const figure = element('figure', '', 'player-buffer-chart');
     figure.append(element('figcaption', stalls.length ? '可播放缓冲 · 阴影为卡顿区间' : '可播放缓冲'));
     const svgElement = (tag, attributes, text) => {
@@ -516,9 +528,9 @@ function renderBufferChart(samples, stalls, elapsed) {
         if (text != null) part.textContent = text;
         return part;
     };
-    const duration = Math.max(1, elapsed, ...samples.map((sample) => sample.offset_ms), ...stalls.map((stall) => stall.end_ms));
+    const duration = Math.max(1, Math.max(elapsed, ...samples.map((sample) => sample.offset_ms), ...stalls.map((stall) => stall.end_ms)) - startMS);
     const maximum = Math.max(1000, Math.ceil(Math.max(...samples.map((sample) => sample.buffer_ms)) / 1000) * 1000);
-    const x = (ms) => 45 + 540 * Math.max(ms, 0) / duration;
+    const x = (ms) => 45 + 540 * Math.max(ms - startMS, 0) / duration;
     const y = (ms) => 112 - 94 * ms / maximum;
     const svg = svgElement('svg', { viewBox: '0 0 615 152', role: 'img', 'aria-label': '可播放缓冲，横轴是距采样开始的秒数' });
     for (const value of [0, maximum / 2, maximum]) {
@@ -532,7 +544,7 @@ function renderBufferChart(samples, stalls, elapsed) {
     if (samples.length === 1) {
         svg.append(svgElement('circle', { cx: x(samples[0].offset_ms), cy: y(samples[0].buffer_ms), r: 3, class: 'point' }));
     }
-    for (const value of [0, duration / 2, duration]) {
+    for (const value of [startMS, startMS + duration / 2, startMS + duration]) {
         svg.append(svgElement('text', { x: x(value), y: 131, 'text-anchor': 'middle' }, `${(value / 1000).toFixed(value ? 1 : 0)}s`));
     }
     svg.append(svgElement('text', { x: 315, y: 149, 'text-anchor': 'middle' }, '距采样开始'));
@@ -565,11 +577,209 @@ function renderPlayerReport(player, elapsed) {
     const stalls = player.stalls || [];
     const samples = player.buffer_samples || [];
     node('player-buffer').replaceChildren(...(samples.length ? [renderBufferChart(samples, stalls, elapsed)] : []));
-    const stallRows = stalls.map((stall) => [time(stall.start_ms), time(stall.end_ms), time(stall.duration_ms)]);
-    node('player-stalls').replaceChildren(...(stallRows.length ? [element('h4', '卡顿区间'), renderTable(['开始偏移', '结束偏移', '耗时'], stallRows)] : []));
+    renderStallSelection(stalls);
+}
+
+function renderStallSelection(stalls) {
+    if (!stalls.length) {
+        node('player-stalls').replaceChildren();
+        delete node('player-stalls').dataset.stalls;
+        return;
+    }
+    const signature = JSON.stringify({ id: currentID, stalls });
+    if (node('player-stalls').dataset.stalls === signature) return;
+    node('player-stalls').dataset.stalls = signature;
+    if (!selectedStalls.has(currentID) || selectedStalls.get(currentID) > stalls.length) selectedStalls.set(currentID, 1);
+    const table = renderTable(['选择', '卡顿', '开始偏移', '结束偏移', '耗时'], stalls.map((stall, index) => ['', `#${index + 1}`, time(stall.start_ms), time(stall.end_ms), time(stall.duration_ms)]));
+    Array.from(table.querySelector('tbody').rows).forEach((row, index) => {
+        const choice = element('input', '');
+        choice.type = 'radio';
+        choice.name = 'stall-selection';
+        choice.className = 'stall-select';
+        choice.value = String(index + 1);
+        choice.checked = selectedStalls.get(currentID) === index + 1;
+        choice.setAttribute('aria-label', `选择第 ${index + 1} 次卡顿，${time(stalls[index].start_ms)} 至 ${time(stalls[index].end_ms)}`);
+        row.setAttribute('aria-selected', String(choice.checked));
+        choice.addEventListener('change', () => {
+            selectedStalls.set(currentID, index + 1);
+            for (const other of table.querySelector('tbody').rows) other.setAttribute('aria-selected', String(other === row));
+            renderStallInvestigations(currentReport);
+        });
+        row.cells[0].append(choice);
+    });
+    node('player-stalls').replaceChildren(element('h4', '卡顿区间'), table);
+}
+
+function investigationAssetURL(item, asset) {
+    const match = /^stalls\/(S\d{3})\/(clip\.mp4|before\.jpg|during\.jpg|after\.jpg)$/.exec(asset.name || '');
+    if (!match || match[1] !== item.id || (asset.kind === 'clip') !== (match[2] === 'clip.mp4')) return null;
+    return apiRoot + runPath(currentID) + '/stall-assets/' + encodeURIComponent(item.id) + '/' + match[2];
+}
+
+function renderInvestigationMedia(item) {
+    const block = element('section', '', 'stall-media');
+    const media = item.media || {};
+    block.append(element('h5', '异常附近的源流片段与截图'), element('p', investigationMediaStates[media.status] || '等待提取源流媒体。', 'timing-note muted'));
+    if (media.reason) block.append(element('p', media.reason, 'timing-note muted'));
+    if (media.alignment) block.append(element('p', `媒体定位方式 ${investigationAlignments[media.alignment] || media.alignment}${media.start_ms != null ? ` · 源流媒体时间 ${time(media.start_ms)}–${time(media.end_ms)}` : ''}`, 'timing-note muted'));
+    block.append(element('p', '片段与截图来自采样源流，用于复核媒体内容；原拉流等待和播放器停顿保留在时序证据中。', 'timing-note muted'));
+    const images = element('div', '', 'stall-screenshots');
+    for (const asset of media.assets || []) {
+        const url = investigationAssetURL(item, asset);
+        if (!url) continue;
+        const label = asset.name.endsWith('/before.jpg') ? '异常前源流截图' : asset.name.endsWith('/after.jpg') ? '异常后源流截图' : '异常附近源流截图';
+        const link = element('a', asset.kind === 'clip' ? `下载源流片段 · ${bytes(asset.bytes)}` : '下载截图');
+        link.href = url;
+        link.download = asset.name.split('/').at(-1);
+        if (asset.kind === 'clip') {
+            const video = element('video', '');
+            video.controls = true;
+            video.playsInline = true;
+            video.preload = 'none';
+            video.src = url;
+            video.setAttribute('aria-label', '异常附近的源流媒体片段');
+            block.append(video, link);
+        } else {
+            const figure = element('figure', '');
+            const image = element('img', '');
+            image.src = url;
+            image.alt = label;
+            image.loading = 'lazy';
+            const caption = element('figcaption', `${label}${asset.media_time_ms != null ? ` · 源流媒体时间 ${time(asset.media_time_ms)}` : ''}`);
+            caption.append(document.createTextNode(' · '), link);
+            figure.append(image, caption);
+            images.append(figure);
+        }
+    }
+    if (images.childElementCount) block.append(images);
+    return block;
+}
+
+function renderInvestigationModel(item) {
+    const block = element('section', '', 'stall-model');
+    block.append(element('h5', '模型建议（时序证据）'), element('p', '模型依据关联的接收间隔、缓冲与关键帧记录提出待验证建议，源流片段和截图供复核。', 'timing-note muted'));
+    if (item.explanation) {
+        block.append(element('p', `解读来源 ${modelLabel(item.explanation)}`, 'model-source muted'), element('p', item.explanation.summary));
+        const list = element('ul', '');
+        for (const hypothesis of item.explanation.hypotheses || []) {
+            const row = element('li', '');
+            row.append(element('strong', `待验证 · ${hypothesis.claim} `));
+            for (const id of hypothesis.evidence_ids || []) {
+                const link = element('a', `${id} `);
+                link.href = '#case-' + encodeURIComponent(id);
+                link.addEventListener('click', (event) => { event.preventDefault(); showFinding('case-' + id); });
+                row.append(link);
+            }
+            row.append(element('p', hypothesis.next_check));
+            list.append(row);
+        }
+        if (list.childElementCount) block.append(list);
+    } else block.append(element('p', investigationModelStates[item.model_state] || '等待模型建议。', 'timing-note muted'));
+    if (item.model_error) block.append(element('p', item.model_error, 'timing-note muted'));
+    if (item.status !== 'queued' && item.status !== 'running') {
+        const button = element('button', item.explanation ? '用当前模型重新生成建议' : '生成模型建议', 'secondary');
+        button.type = 'button';
+        button.dataset.stallExplain = item.id;
+        button.disabled = pendingStallExplanations.has(`${currentID}/${item.id}`);
+        const runID = currentID;
+        button.addEventListener('click', async () => {
+            const key = `${runID}/${item.id}`;
+            pendingStallExplanations.add(key);
+            button.disabled = true;
+            try {
+                await api(runPath(runID) + '/stalls/' + encodeURIComponent(item.id) + '/explain', { method: 'POST' });
+                if (currentID === runID) await refreshDetail(runID);
+            } catch (err) { if (currentID === runID) message(err.message, true); }
+            finally { pendingStallExplanations.delete(key); if (currentID === runID) void refreshDetail(runID); }
+        });
+        block.append(button);
+    }
+    return block;
+}
+
+function renderInvestigation(item) {
+    const card = element('details', '', 'stall-investigation');
+    card.id = 'investigation-' + item.id;
+    card.dataset.investigation = item.id;
+    card.dataset.signature = JSON.stringify(item);
+    const summary = element('summary', `${item.id} · 第 ${item.stall_index} 次卡顿`);
+    summary.append(element('span', investigationStates[item.status] || item.status, 'status'));
+    card.append(summary);
+    if (['queued', 'running'].includes(item.status)) {
+        const stop = element('button', '停止补查', 'secondary');
+        stop.type = 'button';
+        stop.dataset.stallStop = item.id;
+        const runID = currentID;
+        stop.disabled = pendingStallStops.has(`${runID}/${item.id}`);
+        stop.addEventListener('click', async () => {
+            const key = `${runID}/${item.id}`;
+            pendingStallStops.add(key);
+            stop.disabled = true;
+            try {
+                await api(runPath(runID) + '/stalls/' + encodeURIComponent(item.id) + '/stop', { method: 'POST' });
+                if (currentID === runID) { message('已请求停止补查，正在保留已有证据。'); await refreshDetail(runID); }
+            } catch (err) { if (currentID === runID) message(err.message, true); }
+            finally { pendingStallStops.delete(key); if (currentID === runID) void refreshDetail(runID); }
+        });
+        card.append(stop);
+    }
+    const c = item.correlation || {};
+    card.append(element('p', `卡顿 ${time(item.stall.start_ms)}–${time(item.stall.end_ms)} · ${time(item.stall.duration_ms)}；补查窗口 ${time(c.window_start_ms)}–${time(c.window_end_ms)}`, 'timing-note muted'));
+    card.append(element('p', `来源 ${playerSources[c.source] || c.source || '未记录'}${c.source === 'independent_pull' ? '，采样连接与播放器连接独立，关联结果供对照。' : ''}`, 'timing-note muted'));
+    for (const note of c.notes || []) card.append(element('p', note, 'timing-note muted'));
+    if (c.buffer_samples?.length) card.append(renderBufferChart(c.buffer_samples, [item.stall], c.window_end_ms, c.window_start_ms));
+    card.append(element('h5', '关联收流间隔'));
+    if (c.gaps?.length) card.append(renderTable(['媒体', '开始偏移', '结束偏移', '间隔'], c.gaps.map((gap) => [tagLabels[gap.kind] || gap.kind, time(gap.start_ms), time(gap.end_ms), time(gap.duration_ms)])));
+    else card.append(element('p', '窗口内没有可关联的音视频接收间隔记录。', 'timing-note muted'));
+    card.append(element('h5', '关键帧记录'));
+    if (c.keyframes?.length) card.append(renderEvidence(currentReport.manifest.protocol, c.keyframes));
+    else card.append(element('p', '当前证据未识别到可关联的关键帧，不能据此判断关键帧是否缺失。', 'timing-note muted'));
+    if (c.requests?.length) card.append(element('h5', '关联 HTTP 请求'), renderTable(['请求', '对象', 'HTTP', '开始偏移', '响应头偏移', 'TTFB'], c.requests.map((request) => [`#${request.number}`, requestKinds[request.kind] || request.kind || '媒体请求', request.http_status || '—', time(request.start_ms), time(request.end_ms), time(request.ttfb_ms)])));
+    card.append(element('h5', '关联证据'));
+    for (const finding of c.findings || []) {
+        const evidence = element('details', '', 'finding');
+        evidence.id = 'case-' + finding.id;
+        evidence.append(element('summary', `${finding.id} · ${finding.message}`));
+        evidence.append(element('p', `${time(finding.start_ms)}–${time(finding.end_ms)}`, 'timing-note muted'));
+        if (finding.next_check) evidence.append(element('p', finding.next_check));
+        if (finding.evidence?.length) evidence.append(renderEvidence(currentReport.manifest.protocol, finding.evidence));
+        card.append(evidence);
+    }
+    card.append(renderInvestigationMedia(item), renderInvestigationModel(item));
+    return card;
+}
+
+function renderStallInvestigations(report) {
+    const stalls = report?.player?.stalls || [];
+    const items = report?.stall_investigations || [];
+    node('stall-investigations').hidden = !stalls.length && !items.length;
+    if (!stalls.length && !items.length) { node('stall-investigation-results').replaceChildren(); return; }
+    const selected = selectedStalls.get(currentID) || 1;
+    const existing = items.find((item) => item.stall_index === selected);
+    const playerPending = activePlayer?.id === currentID || Array.from(finalizingPlayers).some((player) => player.id === currentID) || ['recording', 'awaiting'].includes(report?.player?.state);
+    const busy = pendingStallRequests.has(currentID);
+    const retry = existing && !['queued', 'running'].includes(existing.status) && !existing.media?.assets?.length;
+    const button = node('investigate-stall');
+    button.disabled = !stalls.length || currentStatus === 'running' || playerPending || busy || Boolean(existing && !retry);
+    button.textContent = busy ? '正在提交…' : retry ? `重新补查第 ${selected} 次卡顿` : existing ? (investigationStates[existing.status] || '已补查') : `补查第 ${selected} 次卡顿`;
+    node('stall-investigation-status').textContent = playerPending || currentStatus === 'running' ? '采样和播放器记录保存完成后，可以选择一次卡顿补查证据。' : existing ? `第 ${selected} 次卡顿 ${investigationStates[existing.status] || existing.status}。` : `已选择第 ${selected} 次卡顿。补查会关联时序并提取异常附近的源流媒体。`;
+    const container = node('stall-investigation-results');
+    const old = new Map(Array.from(container.children).map((card) => [card.dataset.investigation, card]));
+    container.replaceChildren(...items.map((item) => {
+        const previous = old.get(item.id);
+        const card = previous?.dataset.signature === JSON.stringify(item) ? previous : renderInvestigation(item);
+        if (!previous || previous.dataset.signature !== card.dataset.signature) card.open = previous?.open ?? (item.stall_index === selected);
+        card.classList.toggle('selected', item.stall_index === selected);
+        const explain = card.querySelector('[data-stall-explain]');
+        if (explain) explain.disabled = pendingStallExplanations.has(`${currentID}/${item.id}`);
+        const stop = card.querySelector('[data-stall-stop]');
+        if (stop) stop.disabled = pendingStallStops.has(`${currentID}/${item.id}`);
+        return card;
+    }));
 }
 
 function renderReport(report) {
+    currentReport = report;
     const observed = report.manifest.observation;
     const protocol = report.manifest.protocol;
     const requests = report.requests?.length ? report.requests : (observed.requests || []);
@@ -605,6 +815,7 @@ function renderReport(report) {
     renderMetrics('metrics', values);
     renderSamplingTiming(report, requests);
     renderPlayerReport(report.player, observed.elapsed_ms);
+    renderStallInvestigations(report);
     renderTransport(protocol, report.mpegts);
     renderTrace(report.findings, observed.elapsed_ms);
     const findings = report.findings.map((finding) => {
@@ -723,11 +934,12 @@ async function refreshDetail(id) {
         } else {
             if (activePlayer?.id === id) completePlayback(activePlayer, detail.report?.manifest.observation.end_reason);
             if (previousStatus === 'running') await refreshHistory();
+            if (detail.report?.stall_investigations?.some((item) => ['queued', 'running'].includes(item.status))) activePoll = setTimeout(() => refreshDetail(id), 850);
         }
     } catch (err) {
         if (id !== currentID || request !== detailRequest) return;
         message(err.message, true);
-        if (activePlayer?.id === id) activePoll = setTimeout(() => refreshDetail(id), 1000);
+        if (activePlayer?.id === id || currentReport?.stall_investigations?.some((item) => ['queued', 'running'].includes(item.status))) activePoll = setTimeout(() => refreshDetail(id), 1000);
     }
 }
 
@@ -736,6 +948,8 @@ function selectRun(id) {
     if (node('player-preview').dataset.runId !== id) node('player-preview').hidden = true;
     currentID = id;
     currentStatus = '';
+    currentReport = null;
+    node('stall-investigation-results').replaceChildren();
     history.replaceState(null, '', '#' + id);
     node('report').hidden = true;
     node('stop').hidden = true;
@@ -804,6 +1018,25 @@ node('stop').addEventListener('click', async () => {
     }
 });
 node('play-player').addEventListener('click', () => { void activePlayer?.collector.play(); });
+node('investigate-stall').addEventListener('click', async () => {
+    const id = currentID;
+    const stallIndex = selectedStalls.get(id) || 1;
+    const previous = currentReport?.stall_investigations?.find((item) => item.stall_index === stallIndex);
+    const retry = Boolean(previous && !['queued', 'running'].includes(previous.status) && !previous.media?.assets?.length);
+    if (!id || pendingStallRequests.has(id)) return;
+    pendingStallRequests.add(id);
+    renderStallInvestigations(currentReport);
+    try {
+        await api(runPath(id) + '/stalls', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stall_index: stallIndex, retry }),
+        });
+        if (id === currentID) { message('已开始补查卡顿证据。'); await refreshDetail(id); }
+    } catch (err) { if (id === currentID) message(err.message, true); }
+    finally {
+        pendingStallRequests.delete(id);
+        if (id === currentID) renderStallInvestigations(currentReport);
+    }
+});
 window.addEventListener('pagehide', () => {
     stopPlayback(activePlayer, true);
     for (const player of finalizingPlayers) {
