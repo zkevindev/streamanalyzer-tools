@@ -14,7 +14,7 @@ const (
 	maxStreamBytes             = 128 << 20
 	maxTimeline                = 32 << 20
 	maxTags                    = 100_000
-	MaxBundleBytes             = maxStreamBytes + maxTimeline + 3<<20
+	MaxBundleBytes             = maxStreamBytes + maxTimeline + 10<<20
 )
 
 const (
@@ -98,17 +98,31 @@ type CaptureStage struct {
 // optional body completion on the terminal hop. Stage offsets are relative
 // to the sampling start. TTFBMS is relative to this request's own start.
 type HTTPRequestTiming struct {
-	Number       int            `json:"number"`
-	Kind         string         `json:"kind,omitempty"`
-	StartMS      int64          `json:"start_ms"`
-	EndMS        int64          `json:"end_ms"`
-	TotalMS      int64          `json:"total_ms"`
-	BodyEndMS    *int64         `json:"body_end_ms,omitempty"`
-	HTTPStatus   int            `json:"http_status,omitempty"`
-	TTFBMS       *int64         `json:"ttfb_ms,omitempty"`
-	Stages       []CaptureStage `json:"stages,omitempty"`
-	FailureStage string         `json:"failure_stage,omitempty"`
-	FailureCode  string         `json:"failure_code,omitempty"`
+	Number                   int            `json:"number"`
+	Kind                     string         `json:"kind,omitempty"`
+	StartMS                  int64          `json:"start_ms"`
+	EndMS                    int64          `json:"end_ms"`
+	TotalMS                  int64          `json:"total_ms"`
+	BodyEndMS                *int64         `json:"body_end_ms,omitempty"`
+	HTTPStatus               int            `json:"http_status,omitempty"`
+	TTFBMS                   *int64         `json:"ttfb_ms,omitempty"`
+	Stages                   []CaptureStage `json:"stages,omitempty"`
+	FailureStage             string         `json:"failure_stage,omitempty"`
+	FailureCode              string         `json:"failure_code,omitempty"`
+	Method                   string         `json:"method,omitempty"`
+	HTTPProtocol             string         `json:"http_protocol,omitempty"`
+	HeadersRecorded          bool           `json:"headers_recorded,omitempty"`
+	RequestHeaders           []HTTPHeader   `json:"request_headers,omitempty"`
+	ResponseHeaders          []HTTPHeader   `json:"response_headers,omitempty"`
+	RequestHeadersTruncated  bool           `json:"request_headers_truncated,omitempty"`
+	ResponseHeadersTruncated bool           `json:"response_headers_truncated,omitempty"`
+}
+
+// HTTPHeader is a normalized field, with credentials and URL query data
+// removed before it is persisted. Repeated fields retain separate entries.
+type HTTPHeader struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
 }
 
 type Manifest struct {

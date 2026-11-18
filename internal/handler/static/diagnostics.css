@@ -91,6 +91,19 @@ button:disabled { opacity: .55; cursor: wait; }
 #request-table .scroll { max-height: 24rem; border: 1px solid var(--border); border-radius: .375rem; }
 #request-table thead th { position: sticky; top: 0; background: var(--surface-inset); }
 #request-table tbody tr:nth-child(even) { background: var(--surface-inset); }
+#http-headers { margin-top: 1rem; }
+.http-header-block { border: 1px solid var(--border); border-radius: .375rem; padding: 0 .7rem; margin: .5rem 0; }
+.http-header-block summary { cursor: pointer; min-height: 2.75rem; padding-block: .55rem; font-size: .825rem; font-weight: 650; overflow-wrap: anywhere; }
+.http-header-block:focus-within { border-color: #83acd7; }
+.http-header-offset { margin-left: .75rem; color: var(--muted); font: 400 .75rem var(--font-data); white-space: nowrap; }
+.http-header-values { margin-bottom: .8rem; }
+.http-header-values h5 { font-size: .8rem; margin: .4rem 0; color: var(--muted); }
+.http-header-table { border: 1px solid var(--border); border-radius: .25rem; }
+.http-header-table table { table-layout: fixed; }
+.http-header-table th:first-child { width: 31%; }
+.http-header-table th,.http-header-table td { white-space: pre-wrap; overflow-wrap: anywhere; vertical-align: top; }
+.http-header-table td { font: .75rem/1.6 var(--font-data); }
+.http-header-table tbody tr:last-child td { border-bottom: 0; }
 .trace { background: var(--surface-inset); border: 1px solid var(--border); border-radius: .375rem; padding: .6rem .75rem; margin-bottom: .75rem; }
 .trace-scale { margin: 0 .4rem 0 3.5rem; display: flex; justify-content: space-between; color: var(--muted); font: .72rem var(--font-data); }
 .trace-row { display: grid; grid-template-columns: 3rem minmax(0, 1fr); gap: .5rem; padding: .35rem .4rem; width: 100%; border: 0; background: transparent; color: var(--text); text-align: left; font: 650 .78rem var(--font-data); }

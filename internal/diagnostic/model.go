@@ -181,33 +181,60 @@ type modelPlayer struct {
 	Stalls            []PlayerStall `json:"stalls"`
 }
 
+// Keep connection metadata and header text local even as the report grows.
+type modelHTTPRequest struct {
+	Number       int            `json:"number"`
+	Kind         string         `json:"kind,omitempty"`
+	StartMS      int64          `json:"start_ms"`
+	EndMS        int64          `json:"end_ms"`
+	TotalMS      int64          `json:"total_ms"`
+	BodyEndMS    *int64         `json:"body_end_ms,omitempty"`
+	HTTPStatus   int            `json:"http_status,omitempty"`
+	TTFBMS       *int64         `json:"ttfb_ms,omitempty"`
+	Stages       []CaptureStage `json:"stages,omitempty"`
+	FailureStage string         `json:"failure_stage,omitempty"`
+	FailureCode  string         `json:"failure_code,omitempty"`
+}
+
+func modelRequestTimings(requests []HTTPRequestTiming) []modelHTTPRequest {
+	var result []modelHTTPRequest
+	for _, request := range requests {
+		result = append(result, modelHTTPRequest{
+			Number: request.Number, Kind: request.Kind, StartMS: request.StartMS, EndMS: request.EndMS, TotalMS: request.TotalMS,
+			BodyEndMS: request.BodyEndMS, HTTPStatus: request.HTTPStatus, TTFBMS: request.TTFBMS, Stages: request.Stages,
+			FailureStage: request.FailureStage, FailureCode: request.FailureCode,
+		})
+	}
+	return result
+}
+
 // Only tool-generated findings and numeric measurements leave the process.
 func modelInput(report Report) ([]byte, error) {
 	obs := report.Manifest.Observation
 	input := struct {
-		Protocol          string              `json:"protocol"`
-		ElapsedMS         int64               `json:"elapsed_ms"`
-		HTTPStatus        int                 `json:"http_status"`
-		TTFBMS            *int64              `json:"ttfb_ms,omitempty"`
-		EndReason         string              `json:"end_reason"`
-		Metrics           Metrics             `json:"metrics"`
-		HLS               *HLSMetrics         `json:"hls,omitempty"`
-		MPEGTS            *MPEGTSMetrics      `json:"mpegts,omitempty"`
-		FirstPayloadMS    *int64              `json:"first_payload_ms,omitempty"`
-		Stages            []CaptureStage      `json:"stages,omitempty"`
-		Requests          []HTTPRequestTiming `json:"requests,omitempty"`
-		RequestsTruncated int                 `json:"requests_truncated,omitempty"`
-		FailureStage      string              `json:"failure_stage,omitempty"`
-		FailureCode       string              `json:"failure_code,omitempty"`
-		Findings          []modelFinding      `json:"findings"`
-		Player            *modelPlayer        `json:"player,omitempty"`
+		Protocol          string             `json:"protocol"`
+		ElapsedMS         int64              `json:"elapsed_ms"`
+		HTTPStatus        int                `json:"http_status"`
+		TTFBMS            *int64             `json:"ttfb_ms,omitempty"`
+		EndReason         string             `json:"end_reason"`
+		Metrics           Metrics            `json:"metrics"`
+		HLS               *HLSMetrics        `json:"hls,omitempty"`
+		MPEGTS            *MPEGTSMetrics     `json:"mpegts,omitempty"`
+		FirstPayloadMS    *int64             `json:"first_payload_ms,omitempty"`
+		Stages            []CaptureStage     `json:"stages,omitempty"`
+		Requests          []modelHTTPRequest `json:"requests,omitempty"`
+		RequestsTruncated int                `json:"requests_truncated,omitempty"`
+		FailureStage      string             `json:"failure_stage,omitempty"`
+		FailureCode       string             `json:"failure_code,omitempty"`
+		Findings          []modelFinding     `json:"findings"`
+		Player            *modelPlayer       `json:"player,omitempty"`
 	}{
 		Protocol: report.Manifest.Protocol, ElapsedMS: obs.ElapsedMS, HTTPStatus: obs.HTTPStatus, TTFBMS: obs.TTFBMS,
 		EndReason: obs.EndReason, Metrics: report.Metrics, HLS: report.HLS, MPEGTS: report.MPEGTS,
 		FirstPayloadMS: obs.FirstPayloadMS, Stages: obs.Stages, FailureStage: obs.FailureStage, FailureCode: obs.FailureCode,
 		Findings: []modelFinding{},
 	}
-	input.Requests = report.Requests
+	input.Requests = modelRequestTimings(report.Requests)
 	input.RequestsTruncated = report.RequestsTruncated
 	if player := report.Player; player != nil {
 		input.Player = &modelPlayer{
@@ -219,7 +246,7 @@ func modelInput(report Report) ([]byte, error) {
 		}
 	}
 	if len(input.Requests) == 0 {
-		input.Requests = obs.Requests
+		input.Requests = modelRequestTimings(obs.Requests)
 	}
 	for _, finding := range report.Findings {
 		input.Findings = append(input.Findings, modelFinding{

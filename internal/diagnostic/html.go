@@ -57,6 +57,16 @@ thead{color:#52657e;background:#f7f9fc}
 .timing-note{font-size:.88rem;color:#52657e}
 .request-timing th,.request-timing td{white-space:nowrap;font-size:.85rem}
 .request-timing tbody tr:nth-child(even){background:#f7f9fc}
+.http-header-block{border:1px solid #d5deea;border-radius:.375rem;margin:.5rem 0;padding:0 .7rem}
+.http-header-block summary{cursor:pointer;min-height:2.75rem;padding:.55rem 0;font-size:.85rem;font-weight:650;overflow-wrap:anywhere;box-sizing:border-box}
+.http-header-offset{margin-left:.75rem;color:#52657e;font:400 .75rem ui-monospace,monospace;white-space:nowrap}
+.http-header-values{margin-bottom:.8rem}
+.http-header-values h4{font-size:.85rem;margin:.4rem 0;color:#52657e}
+.http-header-table{border:1px solid #d5deea;border-radius:.25rem}
+.http-header-table table{table-layout:fixed}
+.http-header-table th:first-child{width:31%}
+.http-header-table th,.http-header-table td{white-space:pre-wrap;overflow-wrap:anywhere;vertical-align:top}
+.http-header-table td{font:.8rem/1.6 ui-monospace,monospace}
 .player-buffer-chart{margin:1rem 0;border:1px solid #d5deea;border-radius:.375rem;background:#f7f9fc;padding:.5rem .65rem}
 .player-buffer-chart figcaption{color:#52657e;font-size:.875rem}
 .player-buffer-chart svg{display:block;width:100%;height:auto}
@@ -65,7 +75,7 @@ thead{color:#52657e;background:#f7f9fc}
 .player-buffer-chart .line{fill:none;stroke:#164d92;stroke-width:2}
 .player-buffer-chart .point{fill:#164d92}
 .player-buffer-chart .stall{fill:#ecc781;opacity:.55}
-@media print{body{background:#fff}article{break-inside:avoid}.request-timing th,.request-timing td{white-space:normal}}
+@media print{body{background:#fff}article{break-inside:avoid}.request-timing th,.request-timing td{white-space:normal}.http-header-block:not([open])>:not(summary){display:block}}
 </style>
 </head>
 <body><main>
@@ -109,6 +119,26 @@ thead{color:#52657e;background:#f7f9fc}
 {{end}}</tbody>
 </table></div>
 {{with $.Report.RequestsTruncated}}<p class="timing-note">另有 {{.}} 条请求未展示。</p>{{end}}
+<h3>HTTP 请求与响应头</h3>
+<p class="timing-note">逐次请求展示客户端记录的头字段。敏感字段已脱敏，URL 查询参数已移除；字段大小写和顺序可能经过协议库归一化。</p>
+{{range $.HTTPRequests}}
+<details class="http-header-block"><summary>#{{.Number}}{{with .Kind}} · {{requestKind .}}{{end}} · {{if .HTTPStatus}}HTTP {{.HTTPStatus}}{{else}}未收到响应{{end}}{{with .Method}} · {{.}}{{end}}{{with .HTTPProtocol}} · {{.}}{{end}}<span class="http-header-offset">{{.StartMS}}–{{.EndMS}} ms</span></summary>
+{{if .HeadersRecorded}}
+<section class="http-header-values"><h4>请求头</h4>
+{{if .RequestHeaders}}<div class="scroll http-header-table"><table><thead><tr><th scope="col">字段</th><th scope="col">值</th></tr></thead><tbody>
+{{range .RequestHeaders}}<tr><td>{{.Name}}</td><td>{{.Value}}</td></tr>{{end}}
+</tbody></table></div>{{else}}<p class="timing-note">未记录到请求头字段。</p>{{end}}
+{{if .RequestHeadersTruncated}}<p class="timing-note">头字段达到记录上限，部分字段或值已截断。</p>{{end}}
+</section>
+<section class="http-header-values"><h4>响应头</h4>
+{{if .ResponseHeaders}}<div class="scroll http-header-table"><table><thead><tr><th scope="col">字段</th><th scope="col">值</th></tr></thead><tbody>
+{{range .ResponseHeaders}}<tr><td>{{.Name}}</td><td>{{.Value}}</td></tr>{{end}}
+</tbody></table></div>{{else}}<p class="timing-note">{{if .HTTPStatus}}未记录到响应头字段。{{else}}未收到 HTTP 响应头。{{end}}</p>{{end}}
+{{if .ResponseHeadersTruncated}}<p class="timing-note">头字段达到记录上限，部分字段或值已截断。</p>{{end}}
+</section>
+{{else}}<p class="timing-note">该记录未采集 HTTP Header。</p>{{end}}
+</details>
+{{end}}
 {{end}}
 {{if $.TimingStages}}<div class="scroll"><table>
 <thead><tr><th scope="col">阶段</th><th scope="col">开始偏移 (ms)</th><th scope="col">结束偏移 (ms)</th><th scope="col">耗时 (ms)</th></tr></thead>

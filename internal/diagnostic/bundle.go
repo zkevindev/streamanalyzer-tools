@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 )
 
+const maxManifestBytes = 256 << 10
+
 type artifactWriter struct {
 	file   *os.File
 	buffer *bufio.Writer
@@ -252,10 +254,10 @@ func dumpName(protocol string) string {
 
 func bundleEntries(files []*zip.File) (map[string]*zip.File, error) {
 	limits := map[string]uint64{
-		manifestName: 16 << 10, timelineName: maxTimeline,
+		manifestName: maxManifestBytes, timelineName: maxTimeline,
 		streamName: maxStreamBytes, rtmpStreamName: maxStreamBytes, hlsStreamName: maxStreamBytes,
 		tsStreamName: maxStreamBytes, udpStreamName: maxStreamBytes, rtpStreamName: maxStreamBytes,
-		reportName: 1 << 20, htmlName: 1 << 20,
+		reportName: 4 << 20, htmlName: 4 << 20,
 		playerName: maxPlayerBytes,
 	}
 	entries := make(map[string]*zip.File, len(limits))
@@ -279,8 +281,8 @@ func readManifest(entry *zip.File) (Manifest, error) {
 		return manifest, fmt.Errorf("%w: 清单不可读", ErrInvalid)
 	}
 	defer reader.Close()
-	data, err := io.ReadAll(io.LimitReader(reader, 16<<10+1))
-	if err != nil || len(data) > 16<<10 || json.Unmarshal(data, &manifest) != nil {
+	data, err := io.ReadAll(io.LimitReader(reader, maxManifestBytes+1))
+	if err != nil || len(data) > maxManifestBytes || json.Unmarshal(data, &manifest) != nil {
 		return manifest, fmt.Errorf("%w: 清单无效", ErrInvalid)
 	}
 	legacyFLV := manifest.Protocol == ProtocolHTTPFLV && manifest.Version == legacyFLVSchemaVersion

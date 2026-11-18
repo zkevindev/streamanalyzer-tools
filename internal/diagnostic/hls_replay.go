@@ -76,8 +76,8 @@ func replayHLS(dir string, manifest Manifest) (Report, error) {
 	}
 	defer timeline.Close()
 	scanner := bufio.NewScanner(timeline)
-	// The maximum 8 HTTP hops can each contain 16 stages.
-	scanner.Buffer(make([]byte, 1024), 32<<10)
+	// Each of the bounded redirect hops can include timings and header blocks.
+	scanner.Buffer(make([]byte, 1024), maxHLSRecordBytes)
 
 	replay := hlsReplay{
 		report: Report{

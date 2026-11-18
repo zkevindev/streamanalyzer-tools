@@ -373,6 +373,47 @@ function renderMetrics(id, values) {
     }));
 }
 
+function renderRequestHeaders(requests) {
+    const container = node('http-header-details');
+    const expanded = new Set(Array.from(container.children).filter((item) => item.open).map((item) => item.dataset.request));
+    container.replaceChildren(...requests.map((request) => {
+        const details = element('details', '', 'http-header-block');
+        details.dataset.request = String(request.number);
+        details.open = expanded.has(details.dataset.request);
+        const kind = requestKinds[request.kind] || request.kind;
+        const title = [kind ? `#${request.number} · ${kind}` : `#${request.number}`,
+            request.http_status ? `HTTP ${request.http_status}` : '未收到响应', request.method, request.http_protocol]
+            .filter(Boolean).join(' · ');
+        const summary = element('summary', title);
+        summary.append(element('span', `${request.start_ms}–${request.end_ms} ms`, 'http-header-offset'));
+        details.append(summary);
+        if (!request.headers_recorded) {
+            details.append(element('p', '该记录未采集 HTTP Header。', 'timing-note muted'));
+            return details;
+        }
+        for (const [key, title, empty] of [
+            ['request', '请求头', '未记录到请求头字段。'],
+            ['response', '响应头', request.http_status ? '未记录到响应头字段。' : '未收到 HTTP 响应头。'],
+        ]) {
+            const block = element('section', '', 'http-header-values');
+            block.append(element('h5', title));
+            const fields = request[`${key}_headers`] || [];
+            if (fields.length) {
+                const table = renderTable(['字段', '值'], fields.map((field) => [field.name, field.value]));
+                table.classList.add('http-header-table');
+                block.append(table);
+            } else {
+                block.append(element('p', empty, 'timing-note muted'));
+            }
+            if (request[`${key}_headers_truncated`]) {
+                block.append(element('p', '头字段达到记录上限，部分字段或值已截断。', 'timing-note muted'));
+            }
+            details.append(block);
+        }
+        return details;
+    }));
+}
+
 function renderRequestTiming(requests, omitted) {
     node('request-timing').hidden = requests.length === 0;
     const note = node('request-timing-truncated');
@@ -380,6 +421,7 @@ function renderRequestTiming(requests, omitted) {
     note.textContent = omitted > 0 ? `另有 ${omitted} 条请求未展示。` : '';
     if (!requests.length) {
         node('request-table').replaceChildren();
+        node('http-header-details').replaceChildren();
         return;
     }
     const hasFailures = requests.some((request) => request.failure_stage || request.failure_code);
@@ -403,6 +445,7 @@ function renderRequestTiming(requests, omitted) {
     table.setAttribute('aria-labelledby', 'request-timing-title');
     table.setAttribute('aria-describedby', 'request-timing-note');
     node('request-table').replaceChildren(table);
+    renderRequestHeaders(requests);
 }
 
 function renderSamplingTiming(report, requests) {
