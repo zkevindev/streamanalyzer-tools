@@ -3,7 +3,6 @@ package gb28181
 import (
 	"bytes"
 	"context"
-	_ "embed"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -13,18 +12,9 @@ import (
 	"strconv"
 	"time"
 
+	"streamanalyzer/internal/simulator/testpattern"
+
 	"github.com/emiago/sipgo/sip"
-)
-
-//go:generate ffmpeg -hide_banner -loglevel error -y -f lavfi -i testsrc2=size=320x180:rate=15 -t 2 -c:v libx264 -preset medium -crf 28 -pix_fmt yuv420p -x264-params aud=1:repeat-headers=1:keyint=30:scenecut=0:bframes=0 -f h264 test-pattern.h264
-//go:embed test-pattern.h264
-var testPattern []byte
-
-const testFPS = 15
-
-var (
-	audPrefix  = []byte{0, 0, 0, 1, 9}
-	testFrames = bytes.Split(testPattern, audPrefix)[1:]
 )
 
 type mediaSession struct {
@@ -457,17 +447,15 @@ func (d *device) stream(session *mediaSession) {
 }
 
 func playTestPattern(ctx context.Context, send func(mediaUnit) error) error {
-	ticker := time.NewTicker(time.Second / testFPS)
+	ticker := time.NewTicker(time.Second / testpattern.FPS)
 	defer ticker.Stop()
 	var pts int64
-	var data []byte
-	for index := 0; ; index = (index + 1) % len(testFrames) {
-		data = append(data[:0], audPrefix...)
-		data = append(data, testFrames[index]...)
+	for index := 0; ; index = (index + 1) % testpattern.Len() {
+		data := testpattern.AccessUnit(index)
 		if err := send(mediaUnit{stream: videoStreamID, data: data, pts: pts, dts: pts, key: index == 0}); err != nil {
 			return err
 		}
-		pts += 90000 / testFPS
+		pts += 90000 / testpattern.FPS
 		select {
 		case <-ctx.Done():
 			return ctx.Err()

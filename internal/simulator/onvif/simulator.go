@@ -1,0 +1,240 @@
+package onvif
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"net"
+	"net/http"
+	"strconv"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
+	"unicode/utf8"
+
+	"github.com/google/uuid"
+)
+
+const (
+	devicePath   = "/onvif/device_service"
+	mediaPath    = "/onvif/media_service"
+	profileToken = "profile-1"
+)
+
+var (
+	ErrActive = errors.New("ONVIF 模拟器正在运行")
+	ErrClosed = errors.New("ONVIF 模拟器服务已关闭")
+	ErrConfig = errors.New("ONVIF 配置无效")
+)
+
+type Config struct {
+	BindIP   string `json:"bind_ip"`
+	Name     string `json:"name"`
+	HTTPPort int    `json:"http_port"`
+	RTSPPort int    `json:"rtsp_port"`
+}
+
+type Address struct {
+	IP        string `json:"ip"`
+	Interface string `json:"interface"`
+}
+
+func Addresses() ([]Address, error) {
+	interfaces, err := net.Interfaces()
+	if err != nil {
+		return nil, err
+	}
+	result := []Address{}
+	for _, nic := range interfaces {
+		if nic.Flags&net.FlagUp == 0 || nic.Flags&(net.FlagLoopback|net.FlagMulticast) == 0 {
+			continue
+		}
+		addresses, err := nic.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, a := range addresses {
+			ip, _, _ := strings.Cut(a.String(), "/")
+			if parsed := net.ParseIP(ip); parsed.To4() != nil && (parsed.IsLoopback() || parsed.IsGlobalUnicast() || parsed.IsLinkLocalUnicast()) {
+				result = append(result, Address{IP: ip, Interface: nic.Name})
+			}
+		}
+	}
+	return result, nil
+}
+
+func (c *Config) normalize() (net.IP, *net.Interface, error) {
+	c.BindIP = strings.TrimSpace(c.BindIP)
+	c.Name = strings.TrimSpace(c.Name)
+	if c.BindIP == "" {
+		c.BindIP = "127.0.0.1"
+	}
+	if c.Name == "" {
+		c.Name = "Stream Analyzer Camera"
+	}
+	if !utf8.ValidString(c.Name) || utf8.RuneCountInString(c.Name) > 64 || strings.ContainsFunc(c.Name, func(r rune) bool { return r < 0x20 }) {
+		return nil, nil, fmt.Errorf("%w：设备名称应为 1–64 个可显示字符", ErrConfig)
+	}
+	if c.HTTPPort < 0 || c.HTTPPort > 65535 || c.RTSPPort < 0 || c.RTSPPort > 65535 {
+		return nil, nil, fmt.Errorf("%w：端口应为 0–65535", ErrConfig)
+	}
+	if c.HTTPPort != 0 && c.HTTPPort == c.RTSPPort {
+		return nil, nil, fmt.Errorf("%w：ONVIF HTTP 与 RTSP 需要不同的 TCP 端口", ErrConfig)
+	}
+	ip := net.ParseIP(c.BindIP).To4()
+	if ip == nil {
+		return nil, nil, fmt.Errorf("%w：请选择本机 IPv4 地址", ErrConfig)
+	}
+	c.BindIP = ip.String()
+	addresses, err := Addresses()
+	if err != nil {
+		return nil, nil, fmt.Errorf("读取本机网卡失败：%w", err)
+	}
+	for _, addr := range addresses {
+		if addr.IP == c.BindIP {
+			nic, err := net.InterfaceByName(addr.Interface)
+			if err != nil {
+				return nil, nil, fmt.Errorf("读取 ONVIF 发现网卡失败：%w", err)
+			}
+			return ip, nic, nil
+		}
+	}
+	return nil, nil, fmt.Errorf("%w：所选 IPv4 地址未绑定到可用网卡", ErrConfig)
+}
+
+type Status struct {
+	Active           bool   `json:"active"`
+	Name             string `json:"name,omitempty"`
+	Interface        string `json:"interface,omitempty"`
+	DiscoveryAddress string `json:"discovery_address,omitempty"`
+	EndpointID       string `json:"endpoint_id,omitempty"`
+	DeviceURL        string `json:"device_url,omitempty"`
+	MediaURL         string `json:"media_url,omitempty"`
+	StreamURL        string `json:"stream_url,omitempty"`
+	DiscoveryReplies uint64 `json:"discovery_replies"`
+	SOAPRequests     uint64 `json:"soap_requests"`
+	RTSPPlays        uint64 `json:"rtsp_plays"`
+}
+
+type camera struct {
+	status    Status
+	listener  net.Listener
+	http      *http.Server
+	discovery *discoveryServer
+	video     *videoServer
+	cancel    context.CancelFunc
+	workers   sync.WaitGroup
+
+	discoveryReplies atomic.Uint64
+	soapRequests     atomic.Uint64
+	rtspPlays        atomic.Uint64
+}
+
+type Manager struct {
+	mu                    sync.Mutex
+	camera                *camera
+	last                  Status
+	lastDiscoveryInstance uint32
+	closed                bool
+}
+
+func (m *Manager) Start(cfg Config) (Status, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return Status{}, ErrClosed
+	}
+	if m.camera != nil {
+		return Status{}, ErrActive
+	}
+	ip, nic, err := cfg.normalize()
+	if err != nil {
+		return Status{}, err
+	}
+	listener, err := net.Listen("tcp4", net.JoinHostPort(cfg.BindIP, strconv.Itoa(cfg.HTTPPort)))
+	if err != nil {
+		return Status{}, fmt.Errorf("无法监听 ONVIF HTTP 端口：%w", err)
+	}
+	discovery, err := openDiscovery(ip, nic)
+	if err != nil {
+		listener.Close()
+		return Status{}, fmt.Errorf("无法监听 WS-Discovery：%w", err)
+	}
+	c := &camera{listener: listener, discovery: discovery}
+	video, err := startVideo(ip, cfg.RTSPPort, &c.rtspPlays)
+	if err != nil {
+		discovery.close()
+		listener.Close()
+		return Status{}, fmt.Errorf("无法启动 RTSP：%w", err)
+	}
+	c.video = video
+	discovery.instance = max(uint32(time.Now().Unix()), m.lastDiscoveryInstance+1)
+	m.lastDiscoveryInstance = discovery.instance
+	origin := "http://" + listener.Addr().String()
+	c.status = Status{
+		Active: true, Name: cfg.Name, Interface: nic.Name, DiscoveryAddress: discovery.group.String(),
+		EndpointID: "urn:uuid:" + uuid.NewSHA1(uuid.NameSpaceURL, []byte("streamanalyzer:onvif:"+cfg.BindIP+"/"+cfg.Name)).String(),
+		DeviceURL:  origin + devicePath, MediaURL: origin + mediaPath, StreamURL: "rtsp://" + video.server.RTSPAddress + streamPath,
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc(devicePath, c.serveSOAP(deviceNS, c.deviceReply))
+	mux.HandleFunc(mediaPath, c.serveSOAP(mediaNS, c.mediaReply))
+	c.http = &http.Server{
+		Handler: mux, ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second, IdleTimeout: 15 * time.Second,
+		MaxHeaderBytes: 16 << 10,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	c.cancel = cancel
+	c.workers.Go(func() { _ = c.http.Serve(c.listener) })
+	c.workers.Go(func() { c.discovery.serve(c) })
+	c.workers.Go(func() { c.video.play(ctx) })
+	m.camera = c
+	return c.snapshot(), nil
+}
+
+func (c *camera) snapshot() Status {
+	status := c.status
+	status.DiscoveryReplies = c.discoveryReplies.Load()
+	status.SOAPRequests = c.soapRequests.Load()
+	status.RTSPPlays = c.rtspPlays.Load()
+	return status
+}
+
+func (m *Manager) Status() Status {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.camera != nil {
+		return m.camera.snapshot()
+	}
+	return m.last
+}
+
+func (m *Manager) stop() {
+	if c := m.camera; c != nil {
+		c.cancel()
+		// Close the prebound listener too, in case Stop runs before Serve.
+		c.http.Close()
+		c.listener.Close()
+		c.discovery.close()
+		c.workers.Wait()
+		c.video.close()
+		m.last = c.snapshot()
+		m.last.Active = false
+		m.camera = nil
+	}
+}
+
+func (m *Manager) Stop() Status {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.stop()
+	return m.last
+}
+
+func (m *Manager) Close() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.closed = true
+	m.stop()
+}

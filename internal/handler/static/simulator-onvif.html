@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ONVIF 模拟器 · Stream Analyzer</title>
+  <link rel="stylesheet" href="/static/workbench-theme.css">
+  <link rel="stylesheet" href="/static/diagnostics.css">
+  <link rel="stylesheet" href="/static/simulators.css">
+  <script src="/static/simulator-onvif.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">跳转到主要内容</a>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="wordmark" href="/"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>Stream Analyzer</a>
+      <nav aria-label="主导航">
+        <a href="/diagnostics">排障工作台</a>
+        <a href="/simulators" aria-current="page">模拟器</a>
+        <a href="/realtime?protocol=rtmp">RTMP 实时分析</a>
+        <a href="/hls-stats">HLS 分析</a>
+      </nav>
+    </div>
+  </header>
+  <main id="main" tabindex="-1">
+    <nav class="simulator-protocols" aria-label="模拟协议">
+      <a href="/simulators">GB28181</a>
+      <a href="/simulators/onvif" aria-current="page">ONVIF</a>
+    </nav>
+    <div class="page-heading">
+      <div>
+        <h1>ONVIF 模拟器</h1>
+        <p class="muted">模拟一台摄像机，联调 WS-Discovery、媒体配置查询和 RTSP 拉流。</p>
+      </div>
+    </div>
+    <p id="notice" class="error" role="alert" hidden></p>
+    <div class="simulator-grid">
+      <section class="panel" aria-labelledby="config-title">
+        <div class="panel-heading"><h2 id="config-title">接入配置</h2></div>
+        <form id="onvif-form" class="panel-body" autocomplete="off">
+          <fieldset id="simulator-fields" disabled>
+            <div class="sim-fields">
+              <div>
+                <label for="bind-ip">本机 IPv4 网卡</label>
+                <select id="bind-ip" name="bind_ip" aria-describedby="network-hint" required></select>
+              </div>
+              <div><label for="device-name">设备名称</label><input id="device-name" name="name" maxlength="64" value="Stream Analyzer Camera" required></div>
+              <div><label for="http-port">ONVIF HTTP 端口</label><input id="http-port" name="http_port" type="number" min="0" max="65535" value="0" aria-describedby="port-hint" required></div>
+              <div><label for="rtsp-port">RTSP 端口</label><input id="rtsp-port" name="rtsp_port" type="number" min="0" max="65535" value="0" aria-describedby="port-hint" required></div>
+            </div>
+            <p class="muted field-hint" id="network-hint">用局域网客户端发现时，选择与客户端同网段的网卡。</p>
+            <p class="muted field-hint" id="port-hint">端口填 0 时自动分配。WS-Discovery 使用 UDP 3702。</p>
+          </fieldset>
+          <div class="sim-controls">
+            <button id="start" type="submit" disabled>启动 ONVIF</button>
+            <button id="stop" class="secondary" type="button" disabled>停止设备</button>
+          </div>
+          <p class="muted field-hint">媒体源为 320 × 180、15 fps 的内置 H.264 测试画面，无需鉴权。</p>
+        </form>
+      </section>
+      <section class="panel" aria-labelledby="status-title">
+        <div class="panel-heading">
+          <h2 id="status-title">设备状态</h2>
+          <span id="state" class="status" role="status">正在读取</span>
+        </div>
+        <div class="panel-body">
+          <dl class="metrics sim-metrics">
+            <div><dt>发现应答</dt><dd id="discovery-replies">0</dd></div>
+            <div><dt>SOAP 请求</dt><dd id="soap-requests">0</dd></div>
+            <div><dt>RTSP PLAY 请求</dt><dd id="rtsp-plays">0</dd></div>
+          </dl>
+          <dl id="endpoints" class="onvif-addresses" hidden>
+            <div><dt>设备服务</dt><dd id="device-url"></dd></div>
+            <div><dt>媒体服务</dt><dd id="media-url"></dd></div>
+            <div><dt>RTSP 播放地址</dt><dd id="rtsp-url"></dd></div>
+          </dl>
+        </div>
+      </section>
+    </div>
+  </main>
+</body>
+</html>

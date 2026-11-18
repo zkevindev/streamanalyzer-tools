@@ -3,13 +3,17 @@ module streamanalyzer
 go 1.26.0
 
 require (
-	github.com/abema/go-mp4 v1.5.0
+	github.com/abema/go-mp4 v1.6.0
 	github.com/asticode/go-astits v1.15.0
+	github.com/bluenviron/gortsplib/v5 v5.5.4
+	github.com/bluenviron/mediacommon/v2 v2.9.0
 	github.com/emiago/sipgo v1.7.4
 	github.com/gin-gonic/gin v1.10.0
 	github.com/google/gopacket v1.1.19
+	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
 	github.com/keybase/go-keychain v0.0.1
+	github.com/pion/rtp v1.10.2
 	github.com/sunfish-shogi/bufseekio v0.0.0-20210207115823-a4185644b365
 	github.com/wailsapp/wails/v3 v3.1.0
 	github.com/xuri/excelize/v2 v2.9.0
@@ -43,7 +47,6 @@ require (
 	github.com/gobwas/ws v1.3.2 // indirect
 	github.com/goccy/go-json v0.10.2 // indirect
 	github.com/godbus/dbus/v5 v5.2.2 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/hashicorp/errwrap v1.1.0 // indirect
 	github.com/hashicorp/go-multierror v1.1.0 // indirect
 	github.com/icholy/digest v1.2.0 // indirect
@@ -58,6 +61,12 @@ require (
 	github.com/mohae/deepcopy v0.0.0-20170929034955-c48cc78d4826 // indirect
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/pelletier/go-toml/v2 v2.2.2 // indirect
+	github.com/pion/logging v0.2.4 // indirect
+	github.com/pion/randutil v0.1.0 // indirect
+	github.com/pion/rtcp v1.2.16 // indirect
+	github.com/pion/sdp/v3 v3.0.18 // indirect
+	github.com/pion/srtp/v3 v3.0.11 // indirect
+	github.com/pion/transport/v4 v4.0.2 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/richardlehane/mscfb v1.0.6 // indirect
