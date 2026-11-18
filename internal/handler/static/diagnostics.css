@@ -69,6 +69,11 @@ button:disabled { opacity: .55; cursor: wait; }
 .player-preview p { font-size: .875rem; }
 .player-preview button { justify-self: start; }
 #player-report { margin-bottom: 1rem; }
+#player-video-report { margin: .8rem 0; }
+#player-video-title { margin: 0 0 .5rem; font-size: .95rem; }
+.video-window-samples { margin-block: .65rem; }
+.video-window-samples > summary { cursor: pointer; min-height: 2.75rem; padding-block: .5rem; font-size: .875rem; font-weight: 600; }
+.video-window-samples table { white-space: nowrap; font-variant-numeric: tabular-nums; }
 .player-buffer-chart { margin: .65rem 0 .85rem; padding: .5rem .65rem; border: 1px solid var(--border); border-radius: .375rem; background: var(--surface-inset); }
 .player-buffer-chart figcaption { color: var(--muted); font-size: .825rem; }
 .player-buffer-chart svg { display: block; width: 100%; height: auto; min-height: 7rem; overflow: visible; }

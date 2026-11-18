@@ -164,22 +164,23 @@ type modelFinding struct {
 }
 
 type modelPlayer struct {
-	State             string        `json:"state"`
-	Source            string        `json:"source"`
-	Engine            string        `json:"engine"`
-	StartOffsetMS     int64         `json:"start_offset_ms"`
-	FirstScreenMS     *int64        `json:"first_screen_ms,omitempty"`
-	FirstScreenMethod string        `json:"first_screen_method,omitempty"`
-	FirstPlayingMS    *int64        `json:"first_playing_ms,omitempty"`
-	StallCount        int           `json:"stall_count"`
-	TotalStallMS      int64         `json:"total_stall_ms"`
-	MaxStallMS        int64         `json:"max_stall_ms"`
-	ActiveMS          int64         `json:"active_ms"`
-	StallRatio        float64       `json:"stall_ratio"`
-	MinBufferMS       *int64        `json:"min_buffer_ms,omitempty"`
-	MaxBufferMS       int64         `json:"max_buffer_ms"`
-	StallThresholdMS  int64         `json:"stall_threshold_ms"`
-	Stalls            []PlayerStall `json:"stalls"`
+	State             string             `json:"state"`
+	Source            string             `json:"source"`
+	Engine            string             `json:"engine"`
+	StartOffsetMS     int64              `json:"start_offset_ms"`
+	FirstScreenMS     *int64             `json:"first_screen_ms,omitempty"`
+	FirstScreenMethod string             `json:"first_screen_method,omitempty"`
+	FirstPlayingMS    *int64             `json:"first_playing_ms,omitempty"`
+	StallCount        int                `json:"stall_count"`
+	TotalStallMS      int64              `json:"total_stall_ms"`
+	MaxStallMS        int64              `json:"max_stall_ms"`
+	ActiveMS          int64              `json:"active_ms"`
+	StallRatio        float64            `json:"stall_ratio"`
+	MinBufferMS       *int64             `json:"min_buffer_ms,omitempty"`
+	MaxBufferMS       int64              `json:"max_buffer_ms"`
+	StallThresholdMS  int64              `json:"stall_threshold_ms"`
+	Stalls            []PlayerStall      `json:"stalls"`
+	Video             *PlayerVideoReport `json:"video,omitempty"`
 }
 
 // Keep connection metadata and header text local even as the report grows.
@@ -263,6 +264,7 @@ func modelInput(report Report) ([]byte, error) {
 			StallCount: player.StallCount, TotalStallMS: player.TotalStallMS, MaxStallMS: player.MaxStallMS, ActiveMS: player.ActiveMS,
 			StallRatio: player.StallRatio, MinBufferMS: player.MinBufferMS, MaxBufferMS: player.MaxBufferMS, StallThresholdMS: player.StallThresholdMS,
 			Stalls: player.Stalls[:min(20, len(player.Stalls))],
+			Video:  player.Video,
 		}
 	}
 	if len(input.Requests) == 0 {

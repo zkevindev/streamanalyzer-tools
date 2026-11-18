@@ -552,6 +552,48 @@ function renderBufferChart(samples, stalls, elapsed, startMS = 0) {
     return figure;
 }
 
+const playerVideoQualitySources = {
+    playback_quality: 'VideoPlaybackQuality', webkit: 'WebKit 视频计数',
+    mixed: '混合计数来源', unavailable: '未提供帧质量计数',
+};
+const videoObservedCount = (value) => value == null ? '未观测' : String(value);
+const videoObservedTime = (value) => value == null ? '未观测' : time(value);
+
+function renderPlayerVideo(video) {
+    if (!video) {
+        renderMetrics('player-video-metrics', []);
+        node('player-video-note').textContent = '该记录未采集视频呈帧与丢帧数据。';
+        return;
+    }
+    const ratio = video.dropped_ratio == null ? '未观测' : `${(video.dropped_ratio * 100).toFixed(2)}%`;
+    renderMetrics('player-video-metrics', [
+        ['帧质量计数来源', playerVideoQualitySources[video.quality_source] || '未提供帧质量计数'],
+        ['视频帧增量', videoObservedCount(video.total_frames)],
+        ['丢帧增量', videoObservedCount(video.dropped_frames)],
+        ['丢帧比例', ratio],
+        ['呈帧增量', videoObservedCount(video.presented_frames)],
+        ['最大呈帧回调间隔', videoObservedTime(video.max_frame_gap_ms)],
+        ['计数重置', videoObservedCount(video.counter_resets)],
+        ['视频样本数量', videoObservedCount(video.sample_count)],
+    ]);
+    node('player-video-note').textContent = '帧增量按连续前台播放样本的差值汇总，暂停、跳转、后台和采样结束后的记录不计入。呈帧与回调间隔来自视频帧回调，低帧率内容和页面调度也会影响间隔，需结合缓冲、收流和媒体帧率一起判断。';
+}
+
+function renderVideoWindowSamples(samples) {
+    const observed = (samples || []).filter((sample) => sample.video && [sample.video.total_frames, sample.video.dropped_frames,
+        sample.video.presented_frames, sample.video.frame_age_ms].some((value) => value != null));
+    if (!observed.length) return null;
+    const block = element('details', '', 'video-window-samples');
+    block.append(element('summary', `窗口视频样本 · ${observed.length} 条`),
+        element('p', '此处显示采样时的原始累计计数；距最近呈帧回调的时间受播放器状态和页面调度影响。', 'timing-note muted'),
+        renderTable(['采样偏移', '播放状态', '视频帧计数', '丢帧计数', '呈帧计数', '距最近呈帧回调'], observed.map((sample) => [
+            time(sample.offset_ms), [sample.paused ? '暂停' : '', sample.seeking ? '跳转' : '', sample.hidden ? '后台' : ''].filter(Boolean).join(' / ') || '前台',
+            videoObservedCount(sample.video.total_frames), videoObservedCount(sample.video.dropped_frames),
+            videoObservedCount(sample.video.presented_frames), videoObservedTime(sample.video.frame_age_ms),
+        ])));
+    return block;
+}
+
 function renderPlayerReport(player, elapsed) {
     node('player-report').hidden = !player;
     if (!player) return;
@@ -574,6 +616,7 @@ function renderPlayerReport(player, elapsed) {
     renderMetrics('player-metrics', values);
     const threshold = player.stall_threshold_ms > 0 ? `至少 ${player.stall_threshold_ms} ms 的` : '';
     node('player-method').textContent = `卡顿统计从开始播放到采样结束，计入${threshold}等待。暂停、跳转和后台期间停止计时。正常结束后可短暂补记首屏。`;
+    renderPlayerVideo(player.video);
     const stalls = player.stalls || [];
     const samples = player.buffer_samples || [];
     node('player-buffer').replaceChildren(...(samples.length ? [renderBufferChart(samples, stalls, elapsed)] : []));
@@ -728,6 +771,8 @@ function renderInvestigation(item) {
     card.append(element('p', `来源 ${playerSources[c.source] || c.source || '未记录'}${c.source === 'independent_pull' ? '，采样连接与播放器连接独立，关联结果供对照。' : ''}`, 'timing-note muted'));
     for (const note of c.notes || []) card.append(element('p', note, 'timing-note muted'));
     if (c.buffer_samples?.length) card.append(renderBufferChart(c.buffer_samples, [item.stall], c.window_end_ms, c.window_start_ms));
+    const videoSamples = renderVideoWindowSamples(c.buffer_samples);
+    if (videoSamples) card.append(videoSamples);
     card.append(element('h5', '关联收流间隔'));
     if (c.gaps?.length) card.append(renderTable(['媒体', '开始偏移', '结束偏移', '间隔'], c.gaps.map((gap) => [tagLabels[gap.kind] || gap.kind, time(gap.start_ms), time(gap.end_ms), time(gap.duration_ms)])));
     else card.append(element('p', '窗口内没有可关联的音视频接收间隔记录。', 'timing-note muted'));
