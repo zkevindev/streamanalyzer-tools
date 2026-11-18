@@ -6,11 +6,16 @@
     const maxCurrentMS = 1000000000000;
     const maxEvents = 3000;
     const maxSamples = 1401;
+    const maxFrameCounter = 1000000000;
     const socketNormalClose = 1000;
     const socketUnavailable = 1008;
 
     function milliseconds(seconds, maximum) {
         return Number.isFinite(seconds) ? Math.min(maximum, Math.max(0, Math.round(seconds * 1000))) : 0;
+    }
+
+    function frameCounter(value) {
+        return Number.isSafeInteger(value) && value >= 0 && value <= maxFrameCounter ? value : null;
     }
 
     function bufferedAhead(video) {
@@ -119,6 +124,11 @@
             this.firstFrame = false;
             this.hasPlayed = false;
             this.frameCallback = null;
+            this.presentedFrames = null;
+            this.lastFrameElapsed = null;
+            this.activeFrameElapsed = null;
+            this.maxFrameGapMS = null;
+            this.framePlaybackActive = false;
             this.active = false;
             this.canPlay = false;
             this.measurementEnded = false;
@@ -130,7 +140,14 @@
         }
 
         event(kind, detail = {}) {
-            if (!this.active || this.events.length >= maxEvents - (kind === 'stop' ? 0 : 1)) return;
+            if (!this.active) return;
+            if (['pause', 'seeking', 'ended', 'error', 'autoplay_blocked', 'unsupported', 'hidden', 'stop'].includes(kind)) {
+                this.framePlaybackActive = false;
+                this.resetFrameBaseline();
+            } else if (kind === 'playing') {
+                this.framePlaybackActive = !this.measurementEnded && !document.hidden;
+            }
+            if (this.events.length >= maxEvents - (kind === 'stop' ? 0 : 1)) return;
             this.events.push({at_ms: this.elapsed(), kind, ...detail});
             this.options.onChange?.({kind, ...detail});
         }
@@ -140,7 +157,7 @@
             const video = this.video;
             const at = this.elapsed();
             if (this.samples.at(-1)?.at_ms === at) return;
-            this.samples.push({
+            const sample = {
                 at_ms: at,
                 current_ms: milliseconds(video.currentTime, maxCurrentMS),
                 buffer_ms: bufferedAhead(video),
@@ -148,7 +165,91 @@
                 paused: video.paused,
                 seeking: video.seeking,
                 hidden: document.hidden,
-            });
+            };
+            const quality = this.videoSample(at);
+            if (quality) sample.video = quality;
+            this.samples.push(sample);
+        }
+
+        // Browser counters describe observed video playback, not the cause of a stall.
+        videoSample(at) {
+            const video = this.video;
+            let source = 'unavailable';
+            let total = null;
+            let dropped = null;
+            try {
+                if (typeof video.getVideoPlaybackQuality === 'function') {
+                    const quality = video.getVideoPlaybackQuality();
+                    const frames = frameCounter(quality?.totalVideoFrames);
+                    const losses = frameCounter(quality?.droppedVideoFrames);
+                    if (frames !== null && losses !== null && losses <= frames) {
+                        source = 'playback_quality';
+                        total = frames;
+                        dropped = losses;
+                    }
+                }
+            } catch {
+                // Some embedded browsers expose unsupported quality methods.
+            }
+            if (source === 'unavailable') {
+                try {
+                    const frames = frameCounter(video.webkitDecodedFrameCount);
+                    const losses = frameCounter(video.webkitDroppedFrameCount);
+                    if (frames !== null && losses !== null && losses <= frames) {
+                        source = 'webkit';
+                        total = frames;
+                        dropped = losses;
+                    }
+                } catch {
+                    // Unsupported platform counters must not stop buffer sampling.
+                }
+            }
+            if (total === null && this.presentedFrames === null && this.lastFrameElapsed === null && this.maxFrameGapMS === null) return null;
+            const result = {quality_source: source};
+            if (total !== null) result.total_frames = total;
+            if (dropped !== null) result.dropped_frames = dropped;
+            if (this.presentedFrames !== null) result.presented_frames = this.presentedFrames;
+            if (this.lastFrameElapsed !== null) result.frame_age_ms = Math.min(maxElapsedMS, Math.max(0, at - this.lastFrameElapsed));
+            if (this.maxFrameGapMS !== null) result.max_frame_gap_ms = this.maxFrameGapMS;
+            return result;
+        }
+
+        resetFrameBaseline() {
+            this.activeFrameElapsed = null;
+        }
+
+        observeFrame() {
+            if (!this.active || (this.measurementEnded && this.firstFrame)) return false;
+            try {
+                this.frameCallback = this.video.requestVideoFrameCallback((_now, metadata) => {
+                    this.frameCallback = null;
+                    if (!this.active) return;
+                    this.recordFirstFrame('video_frame_callback');
+                    if (!this.active) return;
+                    if (!this.measurementEnded) {
+                        const at = this.elapsed();
+                        this.lastFrameElapsed = at;
+                        this.presentedFrames = frameCounter(metadata?.presentedFrames);
+                        if (this.framePlaybackActive && !this.video.paused && !this.video.seeking && !this.video.ended && !this.video.error && !document.hidden) {
+                            if (this.activeFrameElapsed !== null) {
+                                const gap = Math.max(0, at - this.activeFrameElapsed);
+                                this.maxFrameGapMS = Math.max(this.maxFrameGapMS ?? 0, gap);
+                            }
+                            this.activeFrameElapsed = at;
+                        } else {
+                            this.resetFrameBaseline();
+                        }
+                    }
+                    this.observeFrame();
+                });
+                return true;
+            } catch {
+                this.frameCallback = null;
+                this.lastFrameElapsed = null;
+                this.presentedFrames = null;
+                this.resetFrameBaseline();
+                return false;
+            }
         }
 
         listen(target, type, callback) {
@@ -166,6 +267,7 @@
             const video = this.video;
             for (const type of ['waiting', 'pause', 'seeking', 'seeked', 'ended']) {
                 this.listen(video, type, () => {
+                    if (type !== 'waiting') this.resetFrameBaseline();
                     if (type !== 'waiting' || !this.measurementEnded) this.event(type);
                 });
             }
@@ -174,6 +276,7 @@
                 this.event('playing');
             });
             this.listen(video, 'error', () => {
+                this.resetFrameBaseline();
                 const code = video.error?.code;
                 if (code === 4) {
                     if (!this.measurementEnded) this.event('unsupported', {code: 'unsupported'});
@@ -182,6 +285,7 @@
                 }
             });
             this.listen(document, 'visibilitychange', () => {
+                this.resetFrameBaseline();
                 const hidden = document.hidden;
                 this.event(hidden ? 'hidden' : 'visible');
                 if (!hidden && this.hasPlayed && !video.paused && !video.seeking && video.readyState >= 3) {
@@ -189,15 +293,7 @@
                 }
             });
             if (typeof video.requestVideoFrameCallback === 'function') {
-                try {
-                    this.frameCallback = video.requestVideoFrameCallback(() => {
-                        this.frameCallback = null;
-                        this.recordFirstFrame('video_frame_callback');
-                    });
-                    return;
-                } catch {
-                    // Some embedded browsers expose the API without implementing it.
-                }
+                if (this.observeFrame()) return;
             }
             this.listen(video, 'loadeddata', () => {
                 if (video.videoWidth > 0) this.recordFirstFrame('loadeddata_estimate');
@@ -320,7 +416,7 @@
 
         recording(complete) {
             return {
-                version: 1,
+                version: 2,
                 revision: ++this.revision,
                 started_at: this.startedAt.toISOString(),
                 elapsed_ms: this.elapsed(),
@@ -336,6 +432,11 @@
             if (!this.active || this.measurementEnded) return;
             // The decoder can still present a buffered first frame after capture ends.
             this.measurementEnded = true;
+            this.resetFrameBaseline();
+            if (this.firstFrame && this.frameCallback !== null) {
+                this.video.cancelVideoFrameCallback?.(this.frameCallback);
+                this.frameCallback = null;
+            }
             this.event('stop', {code: 'stopped'});
         }
 

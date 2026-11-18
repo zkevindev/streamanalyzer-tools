@@ -122,6 +122,11 @@
                         <p class="timing-note muted">首屏与开始播放从提交采样计时。缓冲曲线和卡顿区间从后端采样开始计时。</p>
                         <dl id="player-metrics" class="metrics"></dl>
                         <p id="player-method" class="timing-note muted"></p>
+                        <section id="player-video-report" aria-labelledby="player-video-title">
+                            <h4 id="player-video-title">视频呈帧与丢帧</h4>
+                            <dl id="player-video-metrics" class="metrics" hidden></dl>
+                            <p id="player-video-note" class="timing-note muted"></p>
+                        </section>
                         <div id="player-buffer"></div>
                         <div id="player-stalls"></div>
                         <section id="stall-investigations" aria-labelledby="stall-investigations-title" hidden>

@@ -29,13 +29,14 @@ type PlayerEvent struct {
 }
 
 type PlayerSample struct {
-	AtMS       int64 `json:"at_ms"`
-	CurrentMS  int64 `json:"current_ms"`
-	BufferMS   int64 `json:"buffer_ms"`
-	ReadyState int   `json:"ready_state"`
-	Paused     bool  `json:"paused"`
-	Seeking    bool  `json:"seeking"`
-	Hidden     bool  `json:"hidden"`
+	AtMS       int64              `json:"at_ms"`
+	CurrentMS  int64              `json:"current_ms"`
+	BufferMS   int64              `json:"buffer_ms"`
+	ReadyState int                `json:"ready_state"`
+	Paused     bool               `json:"paused"`
+	Seeking    bool               `json:"seeking"`
+	Hidden     bool               `json:"hidden"`
+	Video      *PlayerVideoSample `json:"video,omitempty"`
 }
 
 type PlayerRecording struct {
@@ -51,13 +52,14 @@ type PlayerRecording struct {
 }
 
 type PlayerBufferSample struct {
-	OffsetMS   int64 `json:"offset_ms"`
-	CurrentMS  int64 `json:"current_ms"`
-	BufferMS   int64 `json:"buffer_ms"`
-	ReadyState int   `json:"ready_state"`
-	Paused     bool  `json:"paused"`
-	Seeking    bool  `json:"seeking"`
-	Hidden     bool  `json:"hidden"`
+	OffsetMS   int64              `json:"offset_ms"`
+	CurrentMS  int64              `json:"current_ms"`
+	BufferMS   int64              `json:"buffer_ms"`
+	ReadyState int                `json:"ready_state"`
+	Paused     bool               `json:"paused"`
+	Seeking    bool               `json:"seeking"`
+	Hidden     bool               `json:"hidden"`
+	Video      *PlayerVideoSample `json:"video,omitempty"`
 }
 
 type PlayerStall struct {
@@ -87,13 +89,14 @@ type PlayerReport struct {
 	BufferSamples     []PlayerBufferSample `json:"buffer_samples"`
 	Stalls            []PlayerStall        `json:"stalls"`
 	Events            []PlayerEvent        `json:"events"`
+	Video             *PlayerVideoReport   `json:"video,omitempty"`
 }
 
 func validatePlayerRecording(record PlayerRecording, reference time.Time) error {
 	invalid := func() error {
 		return fmt.Errorf("%w: 播放器记录的事件、时钟或缓冲区数据无效", ErrInvalid)
 	}
-	if record.Version != 1 || record.Revision < 0 || record.StartedAt.IsZero() ||
+	if (record.Version != 1 && record.Version != 2) || record.Revision < 0 || record.StartedAt.IsZero() ||
 		record.ElapsedMS < 0 || record.ElapsedMS > maxPlayerElapsedMS ||
 		len(record.Events) > maxPlayerEvents || len(record.Samples) > maxPlayerSamples {
 		return invalid()
@@ -143,6 +146,9 @@ func validatePlayerRecording(record PlayerRecording, reference time.Time) error 
 			sample.ReadyState < 0 || sample.ReadyState > 4 {
 			return invalid()
 		}
+		if sample.Video != nil && (record.Version != 2 || !validPlayerVideoSample(*sample.Video, sample.AtMS)) {
+			return invalid()
+		}
 		last = sample.AtMS
 	}
 	return nil
@@ -162,8 +168,7 @@ func analyzePlayer(record PlayerRecording, observation Observation) *PlayerRepor
 		result.State = "awaiting"
 	}
 	activeStart, stallStart := int64(-1), int64(-1)
-	type activeSpan struct{ start, end int64 }
-	var activeSpans []activeSpan
+	var activeSpans []playerActiveSpan
 	paused, seeking, hidden, stopped := false, false, false, false
 	closeStall := func(end int64) {
 		if stallStart < 0 {
@@ -182,7 +187,7 @@ func analyzePlayer(record PlayerRecording, observation Observation) *PlayerRepor
 		closeStall(end)
 		if activeStart >= 0 {
 			result.ActiveMS += end - activeStart
-			activeSpans = append(activeSpans, activeSpan{activeStart, end})
+			activeSpans = append(activeSpans, playerActiveSpan{activeStart, end})
 			activeStart = -1
 		}
 	}
@@ -246,6 +251,7 @@ func analyzePlayer(record PlayerRecording, observation Observation) *PlayerRepor
 		result.BufferSamples = append(result.BufferSamples, PlayerBufferSample{
 			OffsetMS: offset + sample.AtMS, CurrentMS: sample.CurrentMS, BufferMS: sample.BufferMS,
 			ReadyState: sample.ReadyState, Paused: sample.Paused, Seeking: sample.Seeking, Hidden: sample.Hidden,
+			Video: clonePlayerVideoSample(sample.Video),
 		})
 		active := false
 		for _, span := range activeSpans {
@@ -262,5 +268,6 @@ func analyzePlayer(record PlayerRecording, observation Observation) *PlayerRepor
 			result.MaxBufferMS = max(result.MaxBufferMS, sample.BufferMS)
 		}
 	}
+	result.Video = analyzePlayerVideo(record.Samples, activeSpans)
 	return result
 }

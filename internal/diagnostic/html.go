@@ -42,9 +42,28 @@ var reportPage = template.Must(template.New("report").Funcs(template.FuncMap{
 	"investigationMedia":     investigationMediaLabel,
 	"investigationAlignment": investigationAlignmentLabel,
 	"investigationModel":     investigationModelLabel,
+	"videoSource":            playerVideoQualitySourceLabel,
+	"videoCount":             playerVideoObservedCount,
+	"videoMS":                playerVideoObservedTime,
+	"videoRatio":             playerVideoDroppedRatio,
+	"videoSampleState":       playerVideoSampleState,
 }).Parse(`{{define "codecRows"}}
 {{with .VideoCodecs}}<dt>视频编码</dt><dd>{{join . " / "}}</dd>{{end}}
 {{with .AudioCodecs}}<dt>音频编码</dt><dd>{{join . " / "}}</dd>{{end}}
+{{end}}{{define "playerVideo"}}
+<section class="player-video-report"><h3>视频呈帧与丢帧</h3>
+{{with .}}<dl>
+<dt>帧质量计数来源</dt><dd>{{videoSource .QualitySource}}</dd>
+<dt>视频帧增量</dt><dd>{{videoCount .TotalFrames}}</dd>
+<dt>丢帧增量</dt><dd>{{videoCount .DroppedFrames}}</dd>
+<dt>丢帧比例</dt><dd>{{videoRatio .DroppedRatio}}</dd>
+<dt>呈帧增量</dt><dd>{{videoCount .PresentedFrames}}</dd>
+<dt>最大呈帧回调间隔</dt><dd>{{videoMS .MaxFrameGapMS}}</dd>
+<dt>计数重置</dt><dd>{{.CounterResets}}</dd>
+<dt>视频样本数量</dt><dd>{{.SampleCount}}</dd>
+</dl><p class="timing-note">帧增量按连续前台播放样本的差值汇总，暂停、跳转、后台和采样结束后的记录不计入。呈帧与回调间隔来自视频帧回调，低帧率内容和页面调度也会影响间隔，需结合缓冲、收流和媒体帧率一起判断。</p>
+{{else}}<p class="timing-note">该记录未采集视频呈帧与丢帧数据。</p>{{end}}
+</section>
 {{end}}<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -85,6 +104,9 @@ thead{color:#52657e;background:#f7f9fc}
 .player-buffer-chart .line{fill:none;stroke:#164d92;stroke-width:2}
 .player-buffer-chart .point{fill:#164d92}
 .player-buffer-chart .stall{fill:#ecc781;opacity:.55}
+.player-video-report{margin-block:.9rem}
+.video-window-samples summary{cursor:pointer;min-height:2.75rem;padding-block:.5rem;font-size:.875rem;font-weight:600}
+.video-window-samples table{white-space:nowrap}
 .stall-investigation{border-color:#9fb4ce}
 .stall-investigation h3{margin-top:1rem}
 .stall-investigation p{overflow-wrap:anywhere}
@@ -179,6 +201,7 @@ thead{color:#52657e;background:#f7f9fc}
 {{with .MinBufferMS}}<dt>最小可播放缓冲</dt><dd>{{.}} ms</dd>{{end}}
 </dl>
 <p class="timing-note">卡顿统计从开始播放到采样结束，计入{{with .StallThresholdMS}}至少 {{.}} ms 的{{end}}等待。暂停、跳转和后台期间停止计时。正常结束后可短暂补记首屏。</p>
+{{template "playerVideo" .Video}}
 {{with $.PlayerChart}}
 <figure class="player-buffer-chart"><figcaption>可播放缓冲{{if .Stalls}} · 阴影为卡顿区间{{end}}</figcaption>
 <svg viewBox="0 0 615 152" role="img" aria-label="可播放缓冲，横轴是距采样开始的秒数">
@@ -217,6 +240,10 @@ thead{color:#52657e;background:#f7f9fc}
 {{range .XTicks}}<text x="{{.Position}}" y="131" text-anchor="middle">{{.Label}}</text>{{end}}
 <text x="315" y="149" text-anchor="middle">距采样开始</text>
 </svg></figure>{{end}}
+{{if .VideoSamples}}<details class="video-window-samples"><summary>窗口视频样本 · {{len .VideoSamples}} 条</summary>
+<p class="timing-note">此处显示采样时的原始累计计数；距最近呈帧回调的时间受播放器状态和页面调度影响。</p>
+<div class="scroll"><table><thead><tr><th scope="col">采样偏移 (ms)</th><th scope="col">播放状态</th><th scope="col">视频帧计数</th><th scope="col">丢帧计数</th><th scope="col">呈帧计数</th><th scope="col">距最近呈帧回调</th></tr></thead>
+<tbody>{{range .VideoSamples}}<tr><td>{{.OffsetMS}}</td><td>{{videoSampleState .}}</td>{{with .Video}}<td>{{videoCount .TotalFrames}}</td><td>{{videoCount .DroppedFrames}}</td><td>{{videoCount .PresentedFrames}}</td><td>{{videoMS .FrameAgeMS}}</td>{{end}}</tr>{{end}}</tbody></table></div></details>{{end}}
 <h3>关联收流间隔</h3>
 {{if .Correlation.Gaps}}<div class="scroll"><table><thead><tr><th scope="col">媒体</th><th scope="col">开始偏移 (ms)</th><th scope="col">结束偏移 (ms)</th><th scope="col">间隔 (ms)</th></tr></thead>
 <tbody>{{range .Correlation.Gaps}}<tr><td>{{if eq .Kind "video"}}视频{{else if eq .Kind "audio"}}音频{{else}}{{.Kind}}{{end}}</td><td>{{.StartMS}}</td><td>{{.EndMS}}</td><td>{{.DurationMS}}</td></tr>{{end}}</tbody></table></div>
@@ -461,6 +488,57 @@ func tsEventLabel(kind string) string {
 	}
 }
 
+func playerVideoQualitySourceLabel(source string) string {
+	switch source {
+	case "playback_quality":
+		return "VideoPlaybackQuality"
+	case "webkit":
+		return "WebKit 视频计数"
+	case "mixed":
+		return "混合计数来源"
+	default:
+		return "未提供帧质量计数"
+	}
+}
+
+func playerVideoObservedCount(value *int64) string {
+	if value == nil {
+		return "未观测"
+	}
+	return strconv.FormatInt(*value, 10)
+}
+
+func playerVideoObservedTime(value *int64) string {
+	if value == nil {
+		return "未观测"
+	}
+	return strconv.FormatInt(*value, 10) + " ms"
+}
+
+func playerVideoDroppedRatio(value *float64) string {
+	if value == nil {
+		return "未观测"
+	}
+	return fmt.Sprintf("%.2f%%", *value*100)
+}
+
+func playerVideoSampleState(sample PlayerBufferSample) string {
+	var states []string
+	if sample.Paused {
+		states = append(states, "暂停")
+	}
+	if sample.Seeking {
+		states = append(states, "跳转")
+	}
+	if sample.Hidden {
+		states = append(states, "后台")
+	}
+	if len(states) == 0 {
+		return "前台"
+	}
+	return strings.Join(states, " / ")
+}
+
 func playerSourceLabel(source string) string {
 	switch source {
 	case "same_capture":
@@ -637,6 +715,7 @@ type investigationHTML struct {
 	OtherImages   []investigationHTMLClip
 	Clips         []investigationHTMLClip
 	Chart         *playerChartData
+	VideoSamples  []PlayerBufferSample
 }
 
 type investigationHTMLImage struct {
@@ -659,6 +738,11 @@ func investigationHTMLItems(items []StallInvestigation, backURL string, assets m
 	embeddedBytes := 0
 	for _, item := range items {
 		view := investigationHTML{StallInvestigation: item}
+		for _, sample := range item.Correlation.BufferSamples {
+			if sample.Video != nil && (sample.Video.TotalFrames != nil || sample.Video.DroppedFrames != nil || sample.Video.PresentedFrames != nil || sample.Video.FrameAgeMS != nil) {
+				view.VideoSamples = append(view.VideoSamples, sample)
+			}
+		}
 		if len(item.Correlation.BufferSamples) > 0 {
 			view.Chart = playerChartRange(&PlayerReport{BufferSamples: item.Correlation.BufferSamples, Stalls: []PlayerStall{item.Stall}}, item.Correlation.WindowEndMS, item.Correlation.WindowStartMS)
 		}
