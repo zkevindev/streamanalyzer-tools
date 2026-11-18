@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -27,6 +28,28 @@ func RegisterSimulatorRoutes(r *gin.Engine, simulator *gb28181.Manager) {
 		}
 		c.Header("Content-Disposition", `attachment; filename="gb28181-trace.json"`)
 		c.IndentedJSON(http.StatusOK, snapshot)
+	})
+	api.GET("/sessions/:id/evidence.zip", func(c *gin.Context) {
+		var output bytes.Buffer
+		if err := simulator.SessionArchive(c.Param("id"), &output); err != nil {
+			if errors.Is(err, gb28181.ErrSessionNotFound) {
+				c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+			} else {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": "无法生成 GB28181 证据包"})
+			}
+			return
+		}
+		c.Header("Content-Disposition", "attachment; filename=gb28181-evidence.zip")
+		c.Data(http.StatusOK, "application/zip", output.Bytes())
+	})
+	api.POST("/evidence/import", func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, gb28181.MaxEvidenceBytes)
+		report, err := gb28181.ImportEvidence(c.Request.Body)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, report)
 	})
 	api.POST("/start", func(c *gin.Context) {
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16<<10)

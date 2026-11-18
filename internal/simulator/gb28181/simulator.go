@@ -35,6 +35,7 @@ type Config struct {
 	LocalIP      string `json:"local_ip"`
 	LocalPort    int    `json:"local_port"`
 	Heartbeat    int    `json:"heartbeat_seconds"`
+	CaptureRTP   bool   `json:"capture_rtp,omitempty"`
 	AudioCodec   string `json:"audio_codec,omitempty"`
 }
 
@@ -99,28 +100,31 @@ type Event struct {
 	Time      time.Time `json:"time"`
 	Direction string    `json:"direction"`
 	Summary   string    `json:"summary"`
-	Packet    string    `json:"packet,omitempty"`
+	CallID    string    `json:"call_id,omitempty"`
+	method    string
+	Packet    string `json:"packet,omitempty"`
 }
 
 type Status struct {
-	State          string         `json:"state"`
-	Active         bool           `json:"active"`
-	Platform       string         `json:"platform,omitempty"`
-	SIPTransport   string         `json:"sip_transport,omitempty"`
-	DeviceID       string         `json:"device_id,omitempty"`
-	ChannelID      string         `json:"channel_id,omitempty"`
-	LocalAddress   string         `json:"local_address,omitempty"`
-	Error          string         `json:"error,omitempty"`
-	MediaState     string         `json:"media_state"`
-	MediaTransport mediaTransport `json:"media_transport,omitempty"`
-	MediaLocal     string         `json:"media_local,omitempty"`
-	MediaError     string         `json:"media_error,omitempty"`
-	MediaTarget    string         `json:"media_target,omitempty"`
-	MediaSource    SourceInfo     `json:"media_source"`
-	RTPPackets     uint64         `json:"rtp_packets"`
-	VideoFrames    uint64         `json:"video_frames"`
-	AudioPackets   uint64         `json:"audio_packets"`
-	Events         []Event        `json:"events"`
+	State          string          `json:"state"`
+	Active         bool            `json:"active"`
+	Platform       string          `json:"platform,omitempty"`
+	SIPTransport   string          `json:"sip_transport,omitempty"`
+	DeviceID       string          `json:"device_id,omitempty"`
+	ChannelID      string          `json:"channel_id,omitempty"`
+	LocalAddress   string          `json:"local_address,omitempty"`
+	Error          string          `json:"error,omitempty"`
+	MediaState     string          `json:"media_state"`
+	MediaTransport mediaTransport  `json:"media_transport,omitempty"`
+	MediaLocal     string          `json:"media_local,omitempty"`
+	MediaError     string          `json:"media_error,omitempty"`
+	MediaTarget    string          `json:"media_target,omitempty"`
+	MediaSource    SourceInfo      `json:"media_source"`
+	RTPPackets     uint64          `json:"rtp_packets"`
+	VideoFrames    uint64          `json:"video_frames"`
+	AudioPackets   uint64          `json:"audio_packets"`
+	Sessions       []SessionReport `json:"sessions,omitempty"`
+	Events         []Event         `json:"events"`
 }
 
 // Manager owns the one simulator instance shared by the workbench and the HTTP API.
@@ -219,6 +223,11 @@ func (m *Manager) Status() Status {
 	result := d.status
 	result.Active = d.running()
 	result.Events = slices.Clone(d.status.Events)
+	for i := len(d.evidence) - 1; i >= 0; i-- {
+		report := d.evidence[i].SessionReport
+		report.Timeline = slices.Clone(report.Timeline)
+		result.Sessions = append(result.Sessions, report)
+	}
 	if result.Events == nil {
 		result.Events = []Event{}
 	}
@@ -274,6 +283,10 @@ func (d *device) state(state, detail string) {
 }
 
 func (d *device) log(direction, summary, packet string) {
+	d.addEvent(Event{Direction: direction, Summary: summary, Packet: packet})
+}
+
+func (d *device) addEvent(event Event) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	const maxEvents = 100
@@ -281,7 +294,14 @@ func (d *device) log(direction, summary, packet string) {
 		copy(d.status.Events, d.status.Events[1:])
 		d.status.Events = d.status.Events[:maxEvents-1]
 	}
-	d.status.Events = append(d.status.Events, Event{eventID.Add(1), time.Now(), direction, summary, packet})
+	event.ID, event.Time = eventID.Add(1), time.Now()
+	d.status.Events = append(d.status.Events, event)
+	for i := len(d.evidence) - 1; event.CallID != "" && i >= 0; i-- {
+		if d.evidence[i].CallID == event.CallID {
+			d.evidence[i].addSignal(event)
+			break
+		}
+	}
 }
 
 // udpSIPWire records datagrams from the configured platform.
@@ -320,13 +340,22 @@ func (d *device) logPacket(direction string, p []byte) {
 	head, body, _ := strings.Cut(strings.ReplaceAll(string(p), "\r\n", "\n"), "\n\n")
 	lines := strings.Split(head, "\n")
 	var packet strings.Builder
+	var callID, method string
 	redacting := false
 	for i, line := range lines {
 		if i > 0 && len(line) > 0 && (line[0] == ' ' || line[0] == '\t') && redacting {
 			continue
 		}
-		name, _, _ := strings.Cut(line, ":")
+		name, value, _ := strings.Cut(line, ":")
 		name = strings.TrimSpace(name)
+		switch strings.ToLower(name) {
+		case "call-id", "i":
+			callID = truncate(strings.TrimSpace(value), 240)
+		case "cseq":
+			if fields := strings.Fields(value); len(fields) == 2 {
+				method = fields[1]
+			}
+		}
 		redacting = strings.EqualFold(name, "Authorization") || strings.EqualFold(name, "Proxy-Authorization")
 		if redacting {
 			line = name + ": [redacted]"
@@ -338,7 +367,7 @@ func (d *device) logPacket(direction string, p []byte) {
 		packet.WriteByte('\n')
 		packet.WriteString(body)
 	}
-	d.log(direction, truncate(lines[0], 240), truncate(packet.String(), 4096))
+	d.addEvent(Event{Direction: direction, Summary: truncate(lines[0], 240), Packet: truncate(packet.String(), 4096), CallID: callID, method: method})
 }
 
 func truncate(s string, maxBytes int) string {

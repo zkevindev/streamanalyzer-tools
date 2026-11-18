@@ -15,6 +15,12 @@ const videoFile = el('video-file');
 const directions = { in: '收到', out: '发送', system: '事件' };
 const numberFields = ['platform_port', 'local_port', 'heartbeat_seconds'];
 
+const sessionStages = {
+  invite: '收到 INVITE', invite_ok: '发送 INVITE 200 OK', ack: '收到 ACK',
+  media_connected: '媒体就绪', first_rtp: '发出首个 RTP 包', first_keyframe: '发完首个视频关键帧',
+  bye: '收到 BYE', ended: '会话结束', failed: '会话失败',
+};
+let liveSessions = [];
 let active = false;
 let loaded = false;
 let busy = false;
@@ -86,7 +92,75 @@ function render(status) {
   if (el('state-error').textContent !== (status.error || '')) el('state-error').textContent = status.error || '';
   updateButtons();
   renderEvents(status.events);
+  renderSessions(status.sessions || []);
 }
+
+function renderTimeline(target, marks) {
+  target.hidden = !marks.length;
+  target.replaceChildren(...marks.map(mark => {
+    const row = document.createElement('li');
+    const time = document.createElement('time');
+    time.textContent = '+' + Number(mark.offset_ms).toFixed(1) + ' ms';
+    const message = document.createElement('span');
+    message.textContent = (sessionStages[mark.stage] || mark.stage) + (mark.detail ? ' · ' + mark.detail : '');
+    row.append(time, message);
+    return row;
+  }));
+}
+
+function renderSessions(sessions) {
+  liveSessions = sessions;
+  const select = el('sessions');
+  const selected = select.value;
+  const ids = sessions.map(session => session.id);
+  if ([...select.options].map(option => option.value).join(',') !== ids.join(',')) {
+    select.replaceChildren(...sessions.map(session => new Option(session.call_id, session.id)));
+    if (!sessions.length) select.append(new Option('等待点播', ''));
+    if (ids.includes(selected)) select.value = selected;
+  }
+  select.disabled = !sessions.length;
+  const session = sessions.find(candidate => candidate.id === select.value);
+  renderTimeline(el('session-timeline'), session?.timeline || []);
+  const capture = el('session-capture');
+  capture.hidden = !session;
+  capture.textContent = session?.capture_enabled
+    ? 'RTP 采样 ' + (session.capture_bytes || 0).toLocaleString('zh-CN') + ' 字节' + (session.capture_truncated ? '（已达上限）' : '')
+    : '未启用 RTP 采样';
+  const download = el('export-evidence');
+  download.hidden = !session;
+  if (session) download.href = api + '/sessions/' + session.id + '/evidence.zip';
+}
+
+el('sessions').addEventListener('change', () => renderSessions(liveSessions));
+el('import-evidence').addEventListener('change', async event => {
+  const input = event.currentTarget;
+  const file = input.files[0];
+  if (!file) return;
+  input.disabled = true;
+  const output = el('evidence-review');
+  output.hidden = false;
+  output.textContent = '正在校验证据…';
+  renderTimeline(el('review-timeline'), []);
+  el('review-signaling').hidden = true;
+  try {
+    const response = await fetch(api + '/evidence/import', { method: 'POST', body: file });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || '导入失败');
+    const r = data.rtp;
+    output.textContent = data.session.call_id + (r
+      ? ' · RTP ' + r.packets + ' 包 · 序列缺口 ' + r.sequence_gaps + ' · 乱序 ' + r.out_of_order + ' · 重复 ' + r.duplicates + ' · 完整 PS ' + r.ps_units + ' · 不完整 PS ' + r.partial_units
+      : ' · 信令时间线');
+    renderTimeline(el('review-timeline'), data.session.timeline || []);
+    el('review-signaling').hidden = !data.signaling?.length;
+    el('review-packets').textContent = (data.signaling || [])
+      .map(event => '[' + event.direction + '] ' + (event.packet || event.summary)).join('\n\n');
+  } catch (error) {
+    output.textContent = error.message;
+  } finally {
+    input.value = '';
+    input.disabled = false;
+  }
+});
 
 function renderSource(status) {
   const source = status.media_source || {};
@@ -192,6 +266,7 @@ form.addEventListener('submit', (event) => {
   event.preventDefault();
   const config = Object.fromEntries(new FormData(form));
   for (const name of numberFields) config[name] = Number(config[name]);
+  config.capture_rtp = el('capture-rtp').checked;
   const file = videoFile.files[0];
   if (!file) {
     void change('/start', config);
@@ -218,15 +293,18 @@ if (window.parent !== window) {
   let desktop = false;
   let exporting = false;
   const feedback = el('export-feedback');
-  el('export-trace').addEventListener('click', (event) => {
+  for (const id of ['export-trace', 'export-evidence']) el(id).addEventListener('click', (event) => {
     if (!desktop) return;
     event.preventDefault();
     if (exporting) return;
     exporting = true;
     feedback.hidden = false;
     feedback.classList.remove('error');
-    feedback.textContent = '请选择 SIP 信令的保存位置。';
-    window.parent.postMessage({ kind: 'save-artifact', name: 'gb28181-trace.json' }, '*');
+    feedback.textContent = id === 'export-evidence' ? '请选择证据包的保存位置。' : '请选择 SIP 信令的保存位置。';
+    const data = id === 'export-evidence'
+      ? { id: el('sessions').value, name: 'gb28181-evidence.zip' }
+      : { name: 'gb28181-trace.json' };
+    window.parent.postMessage({ kind: 'save-artifact', ...data }, '*');
   });
   window.addEventListener('message', (event) => {
     if (event.source !== window.parent) return;
