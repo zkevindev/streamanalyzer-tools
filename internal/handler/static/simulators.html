@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GB28181 模拟器 · Stream Analyzer</title>
+  <link rel="stylesheet" href="/static/workbench-theme.css">
+  <link rel="stylesheet" href="/static/diagnostics.css">
+  <link rel="stylesheet" href="/static/simulators.css">
+  <script src="/static/simulators.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">跳转到主要内容</a>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="wordmark" href="/"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>Stream Analyzer</a>
+      <nav aria-label="主导航">
+        <a href="/diagnostics">排障工作台</a>
+        <a href="/simulators" aria-current="page">模拟器</a>
+        <a href="/realtime?protocol=rtmp">RTMP 实时分析</a>
+        <a href="/hls-stats">HLS 分析</a>
+      </nav>
+    </div>
+  </header>
+  <main id="main" tabindex="-1">
+    <div class="page-heading">
+      <div>
+        <h1>GB28181 模拟器</h1>
+        <p class="muted">模拟一台国标摄像机，联调 SIP 注册、通道查询与实时点播。</p>
+      </div>
+    </div>
+    <p id="notice" class="error" role="alert" hidden></p>
+    <div class="simulator-grid">
+      <section class="panel" aria-labelledby="config-title">
+        <div class="panel-heading"><h2 id="config-title">接入配置</h2></div>
+        <form id="simulator-form" class="panel-body" autocomplete="off">
+          <fieldset id="simulator-fields" disabled>
+            <div class="sim-fields host-fields">
+              <div><label for="platform-host">平台 SIP 地址</label><input id="platform-host" name="platform_host" placeholder="例如 192.168.1.10" maxlength="253" required></div>
+              <div><label for="platform-port">端口</label><input id="platform-port" name="platform_port" type="number" min="1" max="65535" value="5060" required></div>
+              <div>
+                <label for="sip-transport">SIP 传输</label>
+                <select id="sip-transport" name="sip_transport">
+                  <option value="udp">UDP</option>
+                  <option value="tcp">TCP</option>
+                </select>
+              </div>
+            </div>
+            <div class="sim-fields">
+              <div><label for="platform-id">平台国标编号</label><input id="platform-id" name="platform_id" class="identifier" inputmode="numeric" pattern="[0-9]{20}" maxlength="20" value="34020000002000000001" required></div>
+              <div><label for="domain">SIP 域</label><input id="domain" name="domain" class="identifier" placeholder="默认取平台编号前 10 位" maxlength="253"></div>
+              <div><label for="device-id">设备国标编号</label><input id="device-id" name="device_id" class="identifier" inputmode="numeric" pattern="[0-9]{20}" maxlength="20" value="34020000001320000001" required></div>
+              <div><label for="channel-id">通道国标编号</label><input id="channel-id" name="channel_id" class="identifier" inputmode="numeric" pattern="[0-9]{20}" maxlength="20" value="34020000001320000002" required></div>
+              <div><label for="username">鉴权用户名</label><input id="username" name="username" placeholder="默认使用设备编号" maxlength="128"></div>
+              <div><label for="password">SIP 密码</label><input id="password" name="password" type="password" placeholder="按平台配置填写" maxlength="1024" autocomplete="new-password"></div>
+            </div>
+            <div class="sim-fields sim-media-fields">
+              <div>
+                <label for="video-file">视频源</label>
+                <input id="video-file" type="file" accept="video/*,.mkv,.ts,.flv,.ps,.mpg" aria-describedby="source-hint">
+                <button id="clear-video" class="secondary clear-video" type="button" hidden>改用测试画面</button>
+              </div>
+              <div>
+                <label for="audio-codec">本地视频音频</label>
+                <select id="audio-codec" name="audio_codec" disabled>
+                  <option value="g711a">G.711 A-law</option>
+                  <option value="g711u">G.711 μ-law</option>
+                  <option value="none">仅视频</option>
+                </select>
+              </div>
+            </div>
+            <p id="source-hint" class="muted field-hint">留空使用内置测试画面。本地文件最大 512 MiB，需要 FFmpeg 和 ffprobe。</p>
+            <details class="sim-advanced">
+              <summary>本机信令与保活</summary>
+              <div class="sim-fields">
+                <div><label for="local-ip">本机 SIP 地址</label><input id="local-ip" name="local_ip" class="identifier" placeholder="按平台路由自动选择" maxlength="15"></div>
+                <div><label for="local-port">本机 SIP 端口</label><input id="local-port" name="local_port" type="number" min="0" max="65535" value="0" aria-describedby="local-port-hint"><p class="muted field-hint" id="local-port-hint">0 表示自动分配</p></div>
+                <div><label for="heartbeat">心跳间隔（秒）</label><input id="heartbeat" name="heartbeat_seconds" type="number" min="5" max="300" value="60"></div>
+              </div>
+            </details>
+          </fieldset>
+          <div class="sim-controls">
+            <button id="start" type="submit" disabled>启动模拟设备</button>
+            <button id="stop" class="secondary" type="button" disabled>停止设备</button>
+          </div>
+          <p class="muted field-hint">SIP 传输需与平台接入配置一致。平台点播时单独协商媒体传输。</p>
+        </form>
+      </section>
+      <div class="sim-monitor">
+        <section class="panel" aria-labelledby="status-title">
+          <div class="panel-heading">
+            <h2 id="status-title">设备状态</h2>
+            <span id="state" class="status" role="status">正在读取</span>
+          </div>
+          <div class="panel-body">
+            <dl class="metrics sim-metrics">
+              <div><dt id="local-sip-label">本机 SIP</dt><dd id="local-address">—</dd></div>
+              <div><dt>平台 SIP</dt><dd id="platform-address">—</dd></div>
+              <div><dt>媒体状态</dt><dd id="media-state">—</dd></div>
+              <div><dt>已发送 RTP 包</dt><dd id="rtp-packets">0</dd></div>
+            </dl>
+            <p class="muted field-hint" id="device-info" hidden></p>
+            <p class="muted field-hint" id="media-source" hidden></p>
+            <p class="muted field-hint" id="media-route" hidden></p>
+            <p class="muted field-hint" id="media-units" hidden></p>
+            <p class="sim-error" id="media-error" role="status" hidden></p>
+            <p class="sim-error" id="state-error" role="status" hidden></p>
+          </div>
+        </section>
+        <section class="panel" aria-labelledby="log-title">
+          <div class="panel-heading">
+            <h2 id="log-title">SIP 信令</h2>
+            <div class="trace-actions">
+              <span class="muted field-hint">最近 100 条</span>
+              <a id="export-trace" class="button secondary" href="/api/simulators/gb28181/trace.json" download hidden>导出 JSON</a>
+            </div>
+          </div>
+          <p id="export-feedback" class="export-feedback muted" role="status" hidden></p>
+          <p id="empty-events" class="muted panel-body">设备启动后，信令和媒体事件会显示在这里。</p>
+          <ol id="events" class="sim-events" aria-label="信令与媒体事件"></ol>
+        </section>
+      </div>
+    </div>
+  </main>
+</body>
+</html>

@@ -1,6 +1,10 @@
 package codec
 
-import "encoding/binary"
+import (
+	"bytes"
+	"encoding/binary"
+	"fmt"
+)
 
 // NALU describes one NAL unit inside an AVCC/HVCC length-prefixed frame payload.
 type NALU struct {
@@ -162,4 +166,30 @@ func FrameKindFromNALUs(payload []byte, lengthSize int, isHEVC bool) string {
 		}
 	}
 	return kind
+}
+
+// LengthPrefixedNALToAnnexB converts an AVCC or HVCC access unit into Annex B.
+func LengthPrefixedNALToAnnexB(payload []byte, naluLenSize int) ([]byte, error) {
+	if naluLenSize < 1 || naluLenSize > 4 {
+		naluLenSize = 4
+	}
+	var out bytes.Buffer
+	off := 0
+	for off+naluLenSize <= len(payload) {
+		n := 0
+		for i := 0; i < naluLenSize; i++ {
+			n = (n << 8) | int(payload[off+i])
+		}
+		off += naluLenSize
+		if n <= 0 || off+n > len(payload) {
+			return nil, fmt.Errorf("invalid nalu size")
+		}
+		out.Write([]byte{0x00, 0x00, 0x00, 0x01})
+		out.Write(payload[off : off+n])
+		off += n
+	}
+	if off != len(payload) {
+		return nil, fmt.Errorf("trailing bytes in length-prefixed payload")
+	}
+	return out.Bytes(), nil
 }

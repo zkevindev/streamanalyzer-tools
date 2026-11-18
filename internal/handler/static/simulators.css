@@ -1,0 +1,42 @@
+.page-heading p { margin-top: .35rem; }
+.simulator-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr); gap: 1rem; align-items: start; }
+.sim-monitor { display: grid; gap: 1rem; min-width: 0; }
+#simulator-fields { min-width: 0; border: 0; padding: 0; margin: 0; }
+.sim-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .8rem .75rem; }
+.host-fields { grid-template-columns: minmax(0, 1fr) minmax(5.25rem, 20%) minmax(5rem, 20%); margin-bottom: .8rem; }
+.sim-media-fields { margin-top: .85rem; align-items: start; }
+.sim-media-fields input[type="file"] { margin-bottom: 0; overflow: hidden; text-overflow: ellipsis; }
+.clear-video { margin-top: .4rem; }
+#media-source, #source-hint { overflow-wrap: anywhere; }
+.identifier { font-family: var(--font-data); }
+.sim-advanced { margin: .95rem 0; border-block: 1px solid var(--border); }
+.sim-advanced summary { min-height: 2.75rem; padding: .6rem 0; cursor: pointer; font-weight: 600; font-size: .875rem; color: var(--accent); }
+.sim-advanced .sim-fields { margin-bottom: .9rem; }
+.sim-controls { display: flex; flex-wrap: wrap; gap: .55rem; }
+.sim-controls + p { margin-top: .7rem; }
+.sim-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-bottom: 0; }
+.sim-error { margin-top: .7rem; color: #982a31; overflow-wrap: anywhere; }
+.trace-actions { display: flex; align-items: center; justify-content: end; flex-wrap: wrap; gap: .25rem .6rem; }
+.trace-actions .field-hint { margin-top: 0; }
+.export-feedback { padding: .55rem .8rem; font-size: .875rem; }
+.export-feedback.error { color: #982a31; }
+.sim-events { margin: 0; padding: 0; list-style: none; max-height: 32rem; overflow: auto; }
+.sim-events li + li { border-top: 1px solid var(--border); }
+.sim-events summary, .event-row { display: grid; grid-template-columns: 4.3rem 3rem minmax(0, 1fr); align-items: start; gap: .5rem; padding: .65rem .8rem; min-height: 2.75rem; }
+.sim-events summary { cursor: pointer; }
+.sim-events summary:hover, .sim-events details[open] summary { background: var(--surface-inset); }
+.event-time { color: var(--muted); font: .77rem/1.65 var(--font-data); }
+.event-direction { text-align: center; }
+.event-direction[data-direction="out"] { color: var(--accent); background: var(--accent-light); }
+details > summary .event-summary::before { content: "▸ "; color: var(--muted); }
+details[open] > summary .event-summary::before { content: "▾ "; }
+.event-summary { font: .8rem/1.55 var(--font-data); overflow-wrap: anywhere; }
+.event-packet { margin: .1rem .8rem .7rem; padding: .65rem .75rem; background: var(--surface-inset); border: 1px solid var(--border); border-radius: .375rem; font: .78rem/1.55 var(--font-data); white-space: pre-wrap; overflow-wrap: anywhere; }
+@media (max-width: 880px) {
+  .simulator-grid { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 470px) {
+  .sim-fields { grid-template-columns: minmax(0, 1fr); }
+  .host-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .host-fields > :first-child { grid-column: 1 / -1; }
+}
