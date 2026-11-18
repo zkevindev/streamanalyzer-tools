@@ -204,7 +204,7 @@ func (m *Manager) available() error {
 
 func (m *Manager) start(cfg Config, media *localMedia) {
 	ctx, cancel := context.WithCancel(context.Background())
-	source := SourceInfo{VideoMode: "builtin", VideoCodec: "h264", AudioCodec: "none"}
+	source := SourceInfo{VideoMode: "builtin", VideoCodec: "h264", OutputCodec: "h264", AudioCodec: "none"}
 	if media != nil {
 		source = media.info
 	}

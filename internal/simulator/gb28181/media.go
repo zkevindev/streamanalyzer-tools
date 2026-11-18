@@ -264,13 +264,13 @@ func (d *device) stream(session *mediaSession) {
 	d.mu.Unlock()
 
 	source := "测试画面"
-	audioCodec := "none"
+	videoCodec, audioCodec := "h264", "none"
 	if d.file != nil {
 		source = "本地视频 " + d.file.info.Filename
-		audioCodec = d.file.info.AudioCodec
+		videoCodec, audioCodec = d.file.info.OutputCodec, d.file.info.AudioCodec
 	}
 	d.log("system", fmt.Sprintf("点播%s（%s）→ %s", source, session.offer.transport, conn.RemoteAddr()), "")
-	muxer := newProgramMuxer(audioCodec)
+	muxer := newProgramMuxer(videoCodec, audioCodec)
 	seq := uint16(rand.Uint32())
 	rtpBase := rand.Uint32()
 	faults := mediaFaults{config: d.cfg.Faults}

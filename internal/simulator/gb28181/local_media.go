@@ -2,7 +2,6 @@ package gb28181
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -16,11 +15,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"streamanalyzer/internal/codec"
-
-	"github.com/yutopp/go-flv"
-	"github.com/yutopp/go-flv/tag"
 )
 
 const MaxLocalVideoBytes = 512 << 20
@@ -30,10 +24,11 @@ var ErrVideoTooLarge = errors.New("本地视频超过 512 MiB")
 const localVideoFormats = "mov,matroska,webm,flv,mpegts,avi,mpeg"
 
 type SourceInfo struct {
-	Filename   string `json:"filename,omitempty"`
-	VideoCodec string `json:"video_codec,omitempty"`
-	VideoMode  string `json:"video_mode,omitempty"`
-	AudioCodec string `json:"audio_codec,omitempty"`
+	Filename    string `json:"filename,omitempty"`
+	VideoCodec  string `json:"video_codec,omitempty"`
+	OutputCodec string `json:"output_codec,omitempty"`
+	VideoMode   string `json:"video_mode,omitempty"`
+	AudioCodec  string `json:"audio_codec,omitempty"`
 }
 
 type localMedia struct {
@@ -83,7 +78,7 @@ func prepareLocalMedia(ctx context.Context, name, audio string, input io.Reader)
 	}
 	name = truncate(path.Base(strings.ReplaceAll(name, "\\", "/")), 240)
 	profile := &localMedia{path: file.Name(), ffmpeg: ffmpeg, videoIndex: -1, audioIndex: -1,
-		info: SourceInfo{Filename: name, VideoMode: "transcode", AudioCodec: "none"}}
+		info: SourceInfo{Filename: name, VideoMode: "transcode", OutputCodec: "h264", AudioCodec: "none"}}
 	if err := profile.probe(ctx, ffprobe, audio); err != nil {
 		return nil, err
 	}
@@ -149,8 +144,8 @@ func (m *localMedia) probe(parent context.Context, ffprobe, audio string) error 
 		switch {
 		case stream.Type == "video" && stream.Flags.Picture == 0 && m.videoIndex < 0:
 			m.videoIndex, m.info.VideoCodec = stream.Index, stream.Codec
-			if stream.Codec == "h264" {
-				m.info.VideoMode = "copy"
+			if stream.Codec == "h264" || stream.Codec == "hevc" {
+				m.info.VideoMode, m.info.OutputCodec = "copy", stream.Codec
 			}
 		case stream.Type == "audio" && audio != "none" && m.audioIndex < 0:
 			m.audioIndex, m.info.AudioCodec = stream.Index, audio
@@ -171,7 +166,7 @@ func (m *localMedia) play(parent context.Context, send func(mediaUnit) error) er
 	defer cancel()
 	args := []string{"-nostdin", "-hide_banner", "-loglevel", "error",
 		"-protocol_whitelist", "file", "-format_whitelist", localVideoFormats,
-		"-re", "-stream_loop", "-1", "-i", m.path, "-map", "0:" + strconv.Itoa(m.videoIndex)}
+		"-stream_loop", "-1", "-i", m.path, "-map", "0:" + strconv.Itoa(m.videoIndex)}
 	if m.info.VideoMode == "copy" {
 		args = append(args, "-c:v", "copy")
 	} else {
@@ -187,7 +182,9 @@ func (m *localMedia) play(parent context.Context, send func(mediaUnit) error) er
 			"-af", "aresample=8000,asetnsamples=n=160:p=0", "-ar", "8000", "-ac", "1")
 	}
 	args = append(args, "-max_interleave_delta", "1000000", "-flush_packets", "1",
-		"-flvflags", "no_duration_filesize+no_metadata", "-f", "flv", "pipe:1")
+		"-avoid_negative_ts", "make_non_negative", "-mpegts_copyts", "1", "-muxdelay", "0",
+		"-omit_video_pes_length", "0", "-pes_payload_size", "0",
+		"-mpegts_start_pid", "256", "-f", "mpegts", "pipe:1")
 	cmd := exec.CommandContext(ctx, m.ffmpeg, args...)
 	var stderr mediaStderr
 	cmd.Stderr = &stderr
@@ -199,7 +196,7 @@ func (m *localMedia) play(parent context.Context, send func(mediaUnit) error) er
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("启动 FFmpeg 失败：%w", err)
 	}
-	readErr := readMediaFLV(bufio.NewReaderSize(stdout, 32<<10), send)
+	readErr := readMediaTS(ctx, bufio.NewReaderSize(stdout, 32<<10), m.info.OutputCodec, m.audioIndex >= 0, paceMedia(ctx, 1, send))
 	if !errors.Is(readErr, io.EOF) {
 		cancel()
 	}
@@ -228,104 +225,4 @@ func (w *mediaStderr) Write(p []byte) (int, error) {
 		_, _ = w.Builder.Write(p[:min(len(p), remaining)])
 	}
 	return len(p), nil
-}
-
-func readMediaFLV(reader io.Reader, send func(mediaUnit) error) error {
-	decoder, err := flv.NewDecoder(reader)
-	if err != nil {
-		return fmt.Errorf("读取 FFmpeg 媒体头失败：%w", err)
-	}
-	var params []byte
-	var lengthSize int
-	var lastTimestamp uint32
-	var epoch int64
-	annexStart := []byte{0, 0, 0, 1}
-	for {
-		var entry tag.FlvTag
-		if err := decoder.Decode(&entry); err != nil {
-			return fmt.Errorf("读取 FFmpeg 媒体包失败：%w", err)
-		}
-		if lastTimestamp > entry.Timestamp && lastTimestamp-entry.Timestamp > 1<<31 {
-			epoch += 1 << 32
-		}
-		lastTimestamp = entry.Timestamp
-		dts := (epoch + int64(entry.Timestamp)) * 90
-		unit := mediaUnit{pts: dts, dts: dts}
-		switch data := entry.Data.(type) {
-		case *tag.VideoData:
-			payload, err := io.ReadAll(data)
-			if err != nil {
-				return err
-			}
-			if data.CodecID != tag.CodecIDAVC {
-				return errors.New("FFmpeg 视频输出应为 H.264")
-			}
-			switch data.AVCPacketType {
-			case tag.AVCPacketTypeSequenceHeader:
-				cfg, err := codec.ParseAVCDecoderConfigurationRecord(payload)
-				if err != nil {
-					return fmt.Errorf("读取 H.264 配置失败：%w", err)
-				}
-				lengthSize, params = int(cfg.LengthSizeMinusOne)+1, params[:0]
-				for _, sets := range [][][]byte{cfg.SequenceParameterSets, cfg.PictureParameterSets} {
-					for _, nal := range sets {
-						params = append(params, annexStart...)
-						params = append(params, nal...)
-					}
-				}
-				continue
-			case tag.AVCPacketTypeNALU:
-				if lengthSize == 0 {
-					return errors.New("H.264 视频缺少参数集配置")
-				}
-				annex, err := codec.LengthPrefixedNALToAnnexB(payload, lengthSize)
-				if err != nil {
-					return fmt.Errorf("读取 H.264 访问单元失败：%w", err)
-				}
-				unit.stream, unit.pts = videoStreamID, dts+int64(data.CompositionTime)*90
-				unit.data = annex
-				if data.FrameType == tag.FrameTypeKeyFrame {
-					unit.key = true
-					unit.data = prependParameterSets(annex, params)
-				}
-			default:
-				continue
-			}
-		case *tag.AudioData:
-			if data.SoundFormat != tag.SoundFormatG711ALawLogarithmicPCM && data.SoundFormat != tag.SoundFormatG711muLawLogarithmicPCM {
-				return errors.New("FFmpeg 音频输出应为 G.711")
-			}
-			unit.stream = audioStreamID
-			unit.data, err = io.ReadAll(data)
-			if err != nil {
-				return err
-			}
-		default:
-			continue
-		}
-		if len(unit.data) != 0 {
-			if err := send(unit); err != nil {
-				return err
-			}
-		}
-	}
-}
-
-// Keep an in-band access-unit delimiter ahead of any reinserted SPS and PPS.
-func prependParameterSets(annex, params []byte) []byte {
-	if len(annex) < 5 || len(params) == 0 {
-		return annex
-	}
-	prefixLen := 0
-	if annex[4]&0x1f == 9 {
-		next := bytes.Index(annex[5:], []byte{0, 0, 0, 1})
-		if next < 0 {
-			return annex
-		}
-		prefixLen = 5 + next
-	}
-	out := make([]byte, 0, len(annex)+len(params))
-	out = append(out, annex[:prefixLen]...)
-	out = append(out, params...)
-	return append(out, annex[prefixLen:]...)
 }
