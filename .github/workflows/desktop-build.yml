@@ -64,7 +64,7 @@ jobs:
 
   linux:
     name: Linux (amd64)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -74,7 +74,7 @@ jobs:
       - name: Install native dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev libpcap-dev
+          sudo apt-get install -y --no-install-recommends build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev libpcap-dev
       - name: Install Wails
         run: go install -tags gtk3 github.com/wailsapp/wails/v3/cmd/wails3@"${WAILS_VERSION}"
       - name: Build executable
