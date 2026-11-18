@@ -23,7 +23,7 @@ func (c *capturePacketConn) Write(p []byte) (int, error) {
 
 func TestMediaFaultsPacketCadence(t *testing.T) {
 	conn := &capturePacketConn{}
-	trace := sessionEvidence{SessionReport: SessionReport{CaptureEnabled: true, Start: time.Now()}}
+	trace := sessionEvidence{fleet: &fleet{}, SessionReport: SessionReport{CaptureEnabled: true, Start: time.Now()}}
 	seq := uint16(65534)
 	rules := packetFaults{dropEvery: 3, reorderEvery: 1}
 	sent, err := sendRTP(conn, mediaOffer{transport: mediaUDP, payload: 96}, bytes.Repeat([]byte{1}, 4000), 90, &seq,

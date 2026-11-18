@@ -18,11 +18,16 @@ func RegisterSimulatorRoutes(r *gin.Engine, simulator *gb28181.Manager) {
 	})
 	api := r.Group("/api/simulators/gb28181", localDiagnostics)
 	api.GET("", func(c *gin.Context) {
-		c.JSON(http.StatusOK, simulator.Status())
+		status, ok := simulator.StatusFor(c.Query("device_id"), c.Query("channel_id"))
+		if !ok {
+			c.JSON(http.StatusNotFound, gin.H{"error": "当前批次中没有该设备或通道"})
+			return
+		}
+		c.JSON(http.StatusOK, status)
 	})
 	api.GET("/trace.json", func(c *gin.Context) {
-		snapshot := simulator.Status()
-		if len(snapshot.Events) == 0 {
+		snapshot, ok := simulator.StatusFor(c.Query("device_id"), c.Query("channel_id"))
+		if !ok || len(snapshot.Events) == 0 {
 			c.JSON(http.StatusNotFound, gin.H{"error": "暂无可导出的 SIP 信令"})
 			return
 		}
@@ -69,7 +74,11 @@ func RegisterSimulatorRoutes(r *gin.Engine, simulator *gb28181.Manager) {
 	})
 	api.POST("/stop", func(c *gin.Context) {
 		simulator.Stop()
-		c.JSON(http.StatusAccepted, simulator.Status())
+		status, ok := simulator.StatusFor(c.Query("device_id"), c.Query("channel_id"))
+		if !ok {
+			status = simulator.Status()
+		}
+		c.JSON(http.StatusAccepted, status)
 	})
 }
 

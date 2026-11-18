@@ -30,6 +30,8 @@ type SessionMark struct {
 
 type SessionReport struct {
 	ID               string         `json:"id"`
+	DeviceID         string         `json:"device_id,omitempty"`
+	ChannelID        string         `json:"channel_id,omitempty"`
 	CallID           string         `json:"call_id"`
 	Start            time.Time      `json:"start"`
 	Mode             string         `json:"mode,omitempty"`
@@ -45,31 +47,71 @@ type SessionReport struct {
 
 type sessionEvidence struct {
 	SessionReport
-	signal  []Event
-	packets []byte
+	localTag string
+	fleet    *fleet
+	signal   []Event
+	packets  []byte
 }
 
-func (d *device) newEvidence(callID string, transport mediaTransport) *sessionEvidence {
+func (d *device) newEvidence(channelID, callID string, transport mediaTransport) *sessionEvidence {
 	var id [16]byte
 	rand.Read(id[:])
-	ev := &sessionEvidence{SessionReport: SessionReport{
-		ID: hex.EncodeToString(id[:]), CallID: truncate(callID, 240), Start: time.Now(),
+	ev := &sessionEvidence{fleet: d.fleet, SessionReport: SessionReport{
+		ID: hex.EncodeToString(id[:]), DeviceID: d.cfg.DeviceID, ChannelID: channelID, CallID: truncate(callID, 240), Start: time.Now(),
 		Transport: transport, Source: d.status.MediaSource, CaptureEnabled: d.cfg.CaptureRTP, Faults: d.cfg.Faults,
 	}}
 	for i := len(d.status.Events) - 1; i >= 0; i-- {
 		event := d.status.Events[i]
-		if event.CallID == ev.CallID && event.Direction == "in" && strings.HasPrefix(event.Summary, "INVITE ") {
+		if event.CallID == ev.CallID && event.channelID == channelID && event.Direction == "in" && strings.HasPrefix(event.Summary, "INVITE ") {
 			ev.Start = event.Time
 			ev.addSignal(event)
 			break
 		}
 	}
 	ev.mark("invite", "", ev.Start, true)
-	if len(d.evidence) == 6 {
-		d.evidence = slices.Delete(d.evidence, 0, 1)
+	// Keep active reports even when more than six channels are playing.
+	const historyLimit = 6
+	count, oldest := 0, -1
+	for i, previous := range d.evidence {
+		active := d.media[previous.ChannelID]
+		if active == nil || active.evidence != previous {
+			count++
+			if oldest == -1 {
+				oldest = i
+			}
+		}
+	}
+	if count >= historyLimit {
+		d.fleet.captureBytes.Add(-int64(len(d.evidence[oldest].packets)))
+		d.evidence = slices.Delete(d.evidence, oldest, oldest+1)
 	}
 	d.evidence = append(d.evidence, ev)
 	return ev
+}
+
+// The local tag identifies a dialog even if the platform reused a Call-ID
+// on several channels or addressed an in-dialog request to the device URI.
+func (d *device) addSignalToEvidence(event Event) {
+	if event.CallID == "" || event.channelID == "" && event.toTag == "" {
+		return
+	}
+	var byChannel *sessionEvidence
+	for i := len(d.evidence) - 1; i >= 0; i-- {
+		e := d.evidence[i]
+		if event.CallID != e.CallID {
+			continue
+		}
+		if event.toTag != "" && event.toTag == e.localTag {
+			e.addSignal(event)
+			return
+		}
+		if byChannel == nil && event.channelID == e.ChannelID {
+			byChannel = e
+		}
+	}
+	if byChannel != nil {
+		byChannel.addSignal(event)
+	}
 }
 
 func (e *sessionEvidence) mark(stage, detail string, now time.Time, once bool) {
@@ -106,7 +148,8 @@ func (e *sessionEvidence) capture(packet []byte, first bool) {
 	if !e.CaptureEnabled || e.CaptureTruncated {
 		return
 	}
-	if len(e.packets)+10+len(packet) > captureLimit {
+	size := int64(10 + len(packet))
+	if int64(len(e.packets))+size > captureLimit || !e.fleet.reserveCapture(size) {
 		e.CaptureTruncated = true
 		return
 	}
@@ -116,25 +159,45 @@ func (e *sessionEvidence) capture(packet []byte, first bool) {
 	e.CaptureBytes = len(e.packets)
 }
 
-func (m *Manager) SessionArchive(id string, dest io.Writer) error {
-	m.mu.Lock()
-	d := m.device
-	m.mu.Unlock()
-	if d == nil {
-		return ErrSessionNotFound
+func (f *fleet) reserveCapture(size int64) bool {
+	for {
+		used := f.captureBytes.Load()
+		if used+size > maxFleetCaptureBytes {
+			return false
+		}
+		if f.captureBytes.CompareAndSwap(used, used+size) {
+			return true
+		}
 	}
+}
+
+func (d *device) evidenceSnapshot(id string) sessionEvidence {
 	d.mu.Lock()
-	var data sessionEvidence
+	defer d.mu.Unlock()
 	for _, e := range d.evidence {
 		if e.ID == id {
-			data = *e
+			data := *e
 			data.Timeline = slices.Clone(e.Timeline)
 			data.signal = slices.Clone(e.signal)
 			data.packets = bytes.Clone(e.packets)
+			return data
+		}
+	}
+	return sessionEvidence{}
+}
+
+func (m *Manager) SessionArchive(id string, dest io.Writer) error {
+	f := m.currentFleet()
+	if f == nil {
+		return ErrSessionNotFound
+	}
+	var data sessionEvidence
+	for _, d := range f.devices {
+		data = d.evidenceSnapshot(id)
+		if data.ID != "" {
 			break
 		}
 	}
-	d.mu.Unlock()
 	if data.ID == "" {
 		return ErrSessionNotFound
 	}

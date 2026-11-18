@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/xml"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/emiago/sipgo"
@@ -85,24 +86,28 @@ func (d *device) onMessage(flow *sipFlow, req *sip.Request, tx sip.ServerTransac
 		d.respond(req, tx, 501, "Not Implemented")
 		return
 	}
-	if query.DeviceID != d.cfg.DeviceID && query.DeviceID != d.cfg.ChannelID {
+	if d.channelFor(query.DeviceID) == "" {
 		d.respond(req, tx, 404, "Not Found")
 		return
 	}
-	var reply []byte
-	if query.Command == "RecordInfo" {
-		var err error
-		reply, err = d.recordInfo(query)
+	var replies [][]byte
+	switch query.Command {
+	case "Catalog":
+		replies = d.catalogReplies(query)
+	case "RecordInfo":
+		reply, err := d.recordInfo(query)
 		if err != nil {
 			d.respond(req, tx, 400, "Bad Request")
 			return
 		}
-	} else {
-		reply = d.queryReply(query.Command, query.SN, query.DeviceID)
-	}
-	if reply == nil {
-		d.respond(req, tx, 501, "Not Implemented")
-		return
+		replies = [][]byte{reply}
+	default:
+		reply := d.queryReply(query.Command, query.SN, query.DeviceID)
+		if reply == nil {
+			d.respond(req, tx, 501, "Not Implemented")
+			return
+		}
+		replies = [][]byte{reply}
 	}
 	flow.awaitRegistration()
 	d.mu.Lock()
@@ -115,26 +120,56 @@ func (d *device) onMessage(flow *sipFlow, req *sip.Request, tx sip.ServerTransac
 	d.mu.Unlock()
 	defer d.workers.Done()
 	d.respond(req, tx, 200, "OK")
-	if err := d.sendXML(flow, reply); err != nil && flow.ctx.Err() == nil {
-		d.log("system", query.Command+" 应答未获确认："+err.Error(), "")
+	for _, reply := range replies {
+		if err := d.sendXML(flow, reply); err != nil {
+			if flow.ctx.Err() == nil {
+				d.log("system", query.Command+" 应答未获确认："+err.Error(), "")
+			}
+			return
+		}
 	}
+}
+
+func (d *device) catalogReplies(query simulatorQuery) [][]byte {
+	channels := d.channels
+	if query.DeviceID != d.cfg.DeviceID {
+		channels = []string{query.DeviceID}
+	}
+	// A single Catalog item fits the SIP UDP datagram limit. Keep the total
+	// and SN constant across replies, and let TCP carry the complete list.
+	pageSize := len(channels)
+	if d.cfg.SIPTransport == "udp" {
+		pageSize = 1
+	}
+	var replies [][]byte
+	for from := 0; from < len(channels); from += pageSize {
+		page := channels[from:min(from+pageSize, len(channels))]
+		var body strings.Builder
+		fmt.Fprintf(&body, `<SumNum>%d</SumNum><DeviceList Num="%d">`, len(channels), len(page))
+		for _, channel := range page {
+			fmt.Fprintf(&body, `<Item><DeviceID>%s</DeviceID><Name>Test Camera</Name><Manufacturer>Stream Analyzer</Manufacturer><Model>Simulator</Model><Owner>Simulator</Owner><CivilCode>%s</CivilCode><Address>Laboratory</Address><Parental>0</Parental><ParentID>%s</ParentID><SafetyWay>0</SafetyWay><RegisterWay>1</RegisterWay><Secrecy>0</Secrecy><Status>ON</Status></Item>`,
+				channel, channel[:6], d.cfg.DeviceID)
+		}
+		body.WriteString("</DeviceList>")
+		replies = append(replies, queryResponse(query.Command, query.SN, query.DeviceID, body.String()))
+	}
+	return replies
 }
 
 func (d *device) queryReply(command string, sn uint32, target string) []byte {
 	var detail string
 	switch command {
-	case "Catalog":
-		channel := d.cfg.ChannelID
-		detail = fmt.Sprintf(`<SumNum>1</SumNum><DeviceList Num="1">
-<Item><DeviceID>%s</DeviceID><Name>Test Camera</Name><Manufacturer>Stream Analyzer</Manufacturer><Model>Simulator</Model><Owner>Simulator</Owner><CivilCode>%s</CivilCode><Address>Laboratory</Address><Parental>0</Parental><ParentID>%s</ParentID><SafetyWay>0</SafetyWay><RegisterWay>1</RegisterWay><Secrecy>0</Secrecy><Status>ON</Status></Item>
-</DeviceList>`, channel, channel[:6], d.cfg.DeviceID)
 	case "DeviceInfo":
-		detail = "<Result>OK</Result><DeviceName>Test Camera</DeviceName><Manufacturer>Stream Analyzer</Manufacturer><Model>Simulator</Model><Firmware>1.0</Firmware><Channel>1</Channel>"
+		detail = fmt.Sprintf("<Result>OK</Result><DeviceName>Test Camera</DeviceName><Manufacturer>Stream Analyzer</Manufacturer><Model>Simulator</Model><Firmware>1.0</Firmware><Channel>%d</Channel>", len(d.channels))
 	case "DeviceStatus":
 		detail = "<Result>OK</Result><Online>ONLINE</Online><Status>OK</Status><Encode>ON</Encode><Record>OFF</Record>"
 	default:
 		return nil
 	}
+	return queryResponse(command, sn, target, detail)
+}
+
+func queryResponse(command string, sn uint32, target, detail string) []byte {
 	return []byte(fmt.Sprintf("%s<Response><CmdType>%s</CmdType><SN>%d</SN><DeviceID>%s</DeviceID>%s</Response>",
 		xml.Header, command, sn, target, detail))
 }

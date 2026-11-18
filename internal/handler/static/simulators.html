@@ -26,7 +26,7 @@
     <div class="page-heading">
       <div>
         <h1>GB28181 模拟器</h1>
-        <p class="muted">模拟一台国标摄像机，联调 SIP 注册、通道查询与实时点播。</p>
+        <p class="muted">批量模拟国标设备，联调 SIP 注册、通道目录和并发点播。</p>
       </div>
     </div>
     <p id="notice" class="error" role="alert" hidden></p>
@@ -51,7 +51,7 @@
               <div><label for="domain">SIP 域</label><input id="domain" name="domain" class="identifier" placeholder="默认取平台编号前 10 位" maxlength="253"></div>
               <div><label for="device-id">设备国标编号</label><input id="device-id" name="device_id" class="identifier" inputmode="numeric" pattern="[0-9]{20}" maxlength="20" value="34020000001320000001" required></div>
               <div><label for="channel-id">通道国标编号</label><input id="channel-id" name="channel_id" class="identifier" inputmode="numeric" pattern="[0-9]{20}" maxlength="20" value="34020000001320000002" required></div>
-              <div><label for="username">鉴权用户名</label><input id="username" name="username" placeholder="默认使用设备编号" maxlength="128"></div>
+              <div><label for="username">鉴权用户名</label><input id="username" name="username" placeholder="留空时取每台设备的编号" maxlength="128"></div>
               <div><label for="password">SIP 密码</label><input id="password" name="password" type="password" placeholder="按平台配置填写" maxlength="1024" autocomplete="new-password"></div>
             </div>
             <div class="sim-fields sim-media-fields">
@@ -76,10 +76,19 @@
             </div>
             <p id="source-hint" class="muted field-hint">留空使用内置测试画面。本地文件最大 512 MiB，需要 FFmpeg 和 ffprobe。</p>
             <details class="sim-advanced">
+              <summary>批量设备与通道</summary>
+              <div class="sim-fields">
+                <div><label for="device-count">设备数</label><input id="device-count" name="device_count" type="number" min="1" max="16" value="1" required></div>
+                <div><label for="channel-count">每台通道数</label><input id="channel-count" name="channels_per_device" type="number" min="1" max="16" value="1" required></div>
+                <div><label for="register-interval">启动间隔（ms）</label><input id="register-interval" name="register_interval_ms" type="number" min="0" max="5000" value="100" required></div>
+              </div>
+              <p class="muted field-hint">从上方编号的末七位递增分配。每个通道可独立点播，一批最多同时建立 32 路媒体会话。</p>
+            </details>
+            <details class="sim-advanced">
               <summary>本机信令与保活</summary>
               <div class="sim-fields">
                 <div><label for="local-ip">本机 SIP 地址</label><input id="local-ip" name="local_ip" class="identifier" placeholder="按平台路由自动选择" maxlength="15"></div>
-                <div><label for="local-port">本机 SIP 端口</label><input id="local-port" name="local_port" type="number" min="0" max="65535" value="0" aria-describedby="local-port-hint"><p class="muted field-hint" id="local-port-hint">0 表示自动分配</p></div>
+                <div><label for="local-port">本机 SIP 端口</label><input id="local-port" name="local_port" type="number" min="0" max="65535" value="0" aria-describedby="local-port-hint"><p class="muted field-hint" id="local-port-hint">0 表示自动分配。其他值作为连续端口的起点。</p></div>
                 <div><label for="heartbeat">心跳间隔（秒）</label><input id="heartbeat" name="heartbeat_seconds" type="number" min="5" max="300" value="60"></div>
               </div>
             </details>
@@ -100,7 +109,7 @@
           </fieldset>
           <div class="sim-controls">
             <button id="start" type="submit" disabled>启动模拟设备</button>
-            <button id="stop" class="secondary" type="button" disabled>停止设备</button>
+            <button id="stop" class="secondary" type="button" disabled>停止全部设备</button>
           </div>
           <p class="muted field-hint">SIP 传输需与平台接入配置一致。平台点播时单独协商媒体传输。</p>
         </form>
@@ -112,6 +121,13 @@
             <span id="state" class="status" role="status">正在读取</span>
           </div>
           <div class="panel-body">
+            <div id="simulator-targets" class="sim-targets" hidden>
+              <p class="muted" id="fleet-summary"></p>
+              <div class="sim-fields">
+                <div><label for="device-picker">设备</label><select id="device-picker" class="identifier"></select></div>
+                <div><label for="channel-picker">通道</label><select id="channel-picker" class="identifier"></select></div>
+              </div>
+            </div>
             <dl class="metrics sim-metrics">
               <div><dt id="local-sip-label">本机 SIP</dt><dd id="local-address">—</dd></div>
               <div><dt>平台 SIP</dt><dd id="platform-address">—</dd></div>
