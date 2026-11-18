@@ -38,6 +38,13 @@ func TestTSInputHTTPCaptureRetainsShortResponse(t *testing.T) {
 		obs.FailureStage != "receive" || obs.FirstPayloadMS == nil || obs.TTFBMS == nil {
 		t.Fatalf("unexpected HTTP TS capture observation: %+v", obs)
 	}
+	if len(obs.Requests) != 1 || obs.Requests[0].BodyEndMS == nil || obs.Requests[0].HTTPStatus != 200 ||
+		obs.Requests[0].FailureStage != "receive" || obs.Requests[0].FailureCode != "body_error" {
+		t.Fatalf("HTTP TS partial response lost request timing: %+v", obs.Requests)
+	}
+	if err := validateObservationDetails(obs); err != nil {
+		t.Fatal(err)
+	}
 	var captured bytes.Buffer
 	var spanCount int
 	err = walkTSChunks(dir, report.Manifest, func(_ tsSpan, data []byte) error {

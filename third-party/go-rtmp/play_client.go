@@ -36,6 +36,17 @@ type PlayOptions struct {
 	// Logger, if set, receives the library's internal diagnostics. Without it
 	// go-rtmp discards them, which makes protocol-level issues invisible.
 	Logger logrus.FieldLogger
+
+	// OnStage receives completed TLS and RTMP setup phases. DNS and TCP
+	// connection callbacks can be supplied through the context's httptrace.
+	OnStage func(PlayStage)
+}
+
+type PlayStage struct {
+	Name      string
+	StartedAt time.Time
+	EndedAt   time.Time
+	Err       error
 }
 
 func ParsePlayURL(rawURL string) (*PlayTarget, error) {
@@ -107,16 +118,30 @@ func DialAndPlay(ctx context.Context, rawURL string, handler Handler, opts *Play
 		connConfig.Logger = opts.Logger
 	}
 
-	var socket net.Conn
-	dialer := &net.Dialer{}
-	if target.Protocol == "rtmps" {
-		secureDialer := &tls.Dialer{NetDialer: dialer}
-		socket, err = secureDialer.DialContext(ctx, "tcp", target.Host)
-	} else {
-		socket, err = dialer.DialContext(ctx, "tcp", target.Host)
+	beginStage := func(name string) func(error) {
+		start := time.Now()
+		return func(err error) {
+			if opts != nil && opts.OnStage != nil {
+				opts.OnStage(PlayStage{Name: name, StartedAt: start, EndedAt: time.Now(), Err: err})
+			}
+		}
 	}
+	dialer := &net.Dialer{}
+	socket, err := dialer.DialContext(ctx, "tcp", target.Host)
 	if err != nil {
 		return nil, nil, nil, errors.Wrap(err, "failed to dial")
+	}
+	if target.Protocol == "rtmps" {
+		finishTLS := beginStage("tls")
+		serverName, _, _ := net.SplitHostPort(target.Host)
+		secure := tls.Client(socket, &tls.Config{ServerName: serverName})
+		err = secure.HandshakeContext(ctx)
+		finishTLS(err)
+		if err != nil {
+			_ = socket.Close()
+			return nil, nil, nil, errors.Wrap(err, "failed TLS handshake")
+		}
+		socket = secure
 	}
 
 	// Close the socket directly to interrupt a blocked handshake or write.
@@ -131,7 +156,9 @@ func DialAndPlay(ctx context.Context, rawURL string, handler Handler, opts *Play
 		}
 	}()
 
+	finishHandshake := beginStage("handshake")
 	cc, err := newClientConnWithSetup(socket, connConfig)
+	finishHandshake(err)
 	if err != nil {
 		close(stopWatching)
 		return nil, nil, nil, err
@@ -160,7 +187,10 @@ func DialAndPlay(ctx context.Context, rawURL string, handler Handler, opts *Play
 			VideoFunction: 1,
 		},
 	}
-	if err := cc.ConnectContext(ctx, connect); err != nil {
+	finishConnect := beginStage("app_connect")
+	err = cc.ConnectContext(ctx, connect)
+	finishConnect(err)
+	if err != nil {
 		return nil, nil, nil, errors.Wrap(err, "failed to connect")
 	}
 
@@ -171,19 +201,25 @@ func DialAndPlay(ctx context.Context, rawURL string, handler Handler, opts *Play
 		start = opts.Start
 	}
 
+	finishCreate := beginStage("create_stream")
 	stream, err := cc.CreateStreamContext(ctx, nil, chunkSize)
+	finishCreate(err)
 	if err != nil {
 		return nil, nil, nil, errors.Wrap(err, "failed to create stream")
 	}
 
+	finishPlay := beginStage("play")
 	if err := stream.Play(&message.NetStreamPlay{
 		StreamName: target.StreamName,
 		Start:      start,
 	}); err != nil {
+		finishPlay(err)
 		return nil, nil, nil, errors.Wrap(err, "failed to send play command")
 	}
 
-	if err := stream.waitPlayResult(ctx); err != nil {
+	err = stream.waitPlayResult(ctx)
+	finishPlay(err)
+	if err != nil {
 		return nil, nil, nil, errors.Wrap(err, "failed to start play")
 	}
 

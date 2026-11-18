@@ -69,6 +69,12 @@ button:disabled { opacity: .55; cursor: wait; }
 .metrics dd { font: 650 clamp(.88rem, 1.8vw, 1.1rem) / 1.4 var(--font-data); margin: .15rem 0 0; overflow-wrap: anywhere; }
 .tool-row { display: flex; flex-wrap: wrap; gap: .5rem; margin-bottom: 1.15rem; }
 .report-title { margin: .9rem 0 .6rem; }
+#request-timing { margin-block: .9rem; }
+#request-timing h4 { margin: 0 0 .25rem; font-size: .92rem; }
+.timing-note { margin: 0 0 .45rem; font-size: .8rem; }
+#request-table .scroll { max-height: 24rem; border: 1px solid var(--border); border-radius: .375rem; }
+#request-table thead th { position: sticky; top: 0; background: var(--surface-inset); }
+#request-table tbody tr:nth-child(even) { background: var(--surface-inset); }
 .trace { background: var(--surface-inset); border: 1px solid var(--border); border-radius: .375rem; padding: .6rem .75rem; margin-bottom: .75rem; }
 .trace-scale { margin: 0 .4rem 0 3.5rem; display: flex; justify-content: space-between; color: var(--muted); font: .72rem var(--font-data); }
 .trace-row { display: grid; grid-template-columns: 3rem minmax(0, 1fr); gap: .5rem; padding: .35rem .4rem; width: 100%; border: 0; background: transparent; color: var(--text); text-align: left; font: 650 .78rem var(--font-data); }

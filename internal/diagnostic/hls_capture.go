@@ -9,11 +9,9 @@ import (
 	"io"
 	"math"
 	"net/http"
-	"net/http/httptrace"
 	"net/url"
 	"strconv"
 	"strings"
-	"sync/atomic"
 	"time"
 
 	"streamanalyzer/internal/hlsdelivery/m3u8"
@@ -35,18 +33,19 @@ const (
 )
 
 type hlsRecord struct {
-	Kind       string `json:"kind"`
-	Rendition  string `json:"rendition"`
-	Result     string `json:"result"`
-	Artifact   string `json:"artifact,omitempty"`
-	Playlist   int    `json:"playlist,omitempty"`
-	Sequence   *int   `json:"sequence,omitempty"`
-	Init       int    `json:"init,omitempty"`
-	Bytes      int    `json:"bytes"`
-	ArrivalMS  int64  `json:"arrival_ms"`
-	DurationMS int64  `json:"duration_ms"`
-	TTFBMS     *int64 `json:"ttfb_ms,omitempty"`
-	HTTPStatus int    `json:"http_status,omitempty"`
+	Requests   []HTTPRequestTiming `json:"requests,omitempty"`
+	Kind       string              `json:"kind"`
+	Rendition  string              `json:"rendition"`
+	Result     string              `json:"result"`
+	Artifact   string              `json:"artifact,omitempty"`
+	Playlist   int                 `json:"playlist,omitempty"`
+	Sequence   *int                `json:"sequence,omitempty"`
+	Init       int                 `json:"init,omitempty"`
+	Bytes      int                 `json:"bytes"`
+	ArrivalMS  int64               `json:"arrival_ms"`
+	DurationMS int64               `json:"duration_ms"`
+	TTFBMS     *int64              `json:"ttfb_ms,omitempty"`
+	HTTPStatus int                 `json:"http_status,omitempty"`
 }
 
 type hlsCapture struct {
@@ -143,7 +142,7 @@ func (c *hlsCapture) run(ctx context.Context, target *url.URL, obs *Observation)
 	}
 	initial := hlsRecord{Kind: hlsPlaylist, Rendition: hlsMain}
 	row, body, base := c.fetch(ctx, target, initial, nil)
-	obs.HTTPStatus, obs.TTFBMS = row.HTTPStatus, row.TTFBMS
+	obs.HTTPStatus = row.HTTPStatus
 	if err := c.record(row, body); err != nil {
 		return "", err
 	}
@@ -353,12 +352,30 @@ func hlsObjectLimit(kind string) int64 {
 }
 
 func (c *hlsCapture) fetch(ctx context.Context, target *url.URL, row hlsRecord, byteRange *m3u8.ByteRange) (result hlsRecord, body []byte, final *url.URL) {
-	start := time.Now()
+	startMS := time.Since(c.start).Milliseconds()
+	var timing Observation
+	bodyEndMS := int64(-1)
 	result = row
 	defer func() {
-		finished := time.Now()
-		result.ArrivalMS = finished.Sub(c.start).Milliseconds()
-		result.DurationMS = finished.Sub(start).Milliseconds()
+		result.ArrivalMS = time.Since(c.start).Milliseconds()
+		result.DurationMS = result.ArrivalMS - startMS
+		if bodyEndMS >= 0 && len(timing.Requests) > 0 {
+			last := timing.Requests[len(timing.Requests)-1]
+			stage := CaptureStage{Name: "receive", StartMS: last.EndMS, EndMS: bodyEndMS}
+			timing.Stages = append(timing.Stages, stage)
+			recordHTTPBody(&timing, stage)
+		}
+		result.Requests = timing.Requests
+		if timing.TTFBMS != nil {
+			ms := *timing.TTFBMS - startMS
+			result.TTFBMS = &ms
+		}
+		if c.count == 0 && c.observation != nil {
+			c.observation.Stages = timing.Stages
+			c.observation.Requests = timing.Requests
+			c.observation.TTFBMS = timing.TTFBMS
+			c.observation.FailureStage, c.observation.FailureCode = timing.FailureStage, timing.FailureCode
+		}
 	}()
 
 	result.Result = "request_error"
@@ -367,18 +384,8 @@ func (c *hlsCapture) fetch(ctx context.Context, target *url.URL, row hlsRecord, 
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
-	finishAttempt := func(error) {}
-	if c.count == 0 && c.observation != nil {
-		ctx, finishAttempt = recordHTTPAttempt(ctx, c.observation, c.start)
-	}
-	var firstByte atomic.Int64
-	firstByte.Store(-1)
-	trace := &httptrace.ClientTrace{GotFirstResponseByte: func() {
-		firstByte.Store(time.Since(start).Milliseconds())
-	}}
-	req, err := http.NewRequestWithContext(httptrace.WithClientTrace(ctx, trace), http.MethodGet, target.String(), nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
 	if err != nil {
-		finishAttempt(err)
 		return result, nil, nil
 	}
 	req.Header.Set("User-Agent", "StreamAnalyzer-Diagnostic/1.0")
@@ -396,11 +403,7 @@ func (c *hlsCapture) fetch(ctx context.Context, target *url.URL, row hlsRecord, 
 		rangeEnd = rangeStart + int64(byteRange.Length-1)
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", rangeStart, rangeEnd))
 	}
-	resp, err := c.client.Do(req)
-	finishAttempt(err)
-	if ms := firstByte.Load(); ms >= 0 {
-		result.TTFBMS = &ms
-	}
+	resp, err := doObservedRequest(c.client, req, &timing, c.start)
 	if err != nil {
 		return result, nil, nil
 	}
@@ -409,8 +412,10 @@ func (c *hlsCapture) fetch(ctx context.Context, target *url.URL, row hlsRecord, 
 
 	if resp.StatusCode != http.StatusOK && (byteRange == nil || resp.StatusCode != http.StatusPartialContent) {
 		result.Result = "http_status"
-		if c.count == 0 && c.observation != nil {
-			c.observation.FailureStage, c.observation.FailureCode = "response_headers", "http_status"
+		timing.FailureStage, timing.FailureCode = "response_headers", "http_status"
+		if len(timing.Requests) > 0 {
+			last := &timing.Requests[len(timing.Requests)-1]
+			last.FailureStage, last.FailureCode = timing.FailureStage, timing.FailureCode
 		}
 		return result, nil, resp.Request.URL
 	}
@@ -425,6 +430,7 @@ func (c *hlsCapture) fetch(ctx context.Context, target *url.URL, row hlsRecord, 
 		payload = io.TeeReader(resp.Body, payloadWriter{io.Discard, c.observation, c.start})
 	}
 	body, err = io.ReadAll(io.LimitReader(payload, limit+1))
+	bodyEndMS = time.Since(c.start).Milliseconds()
 	switch {
 	case int64(len(body)) > limit:
 		body, result.Result = body[:limit], "size_limit"
@@ -436,6 +442,15 @@ func (c *hlsCapture) fetch(ctx context.Context, target *url.URL, row hlsRecord, 
 		result.Result = "body_error"
 	default:
 		result.Result = "ok"
+	}
+	if result.Result == "body_error" {
+		timing.FailureStage, timing.FailureCode = "receive", "body_error"
+		if err != nil {
+			switch code := modelNetworkError(err, 0).Code; code {
+			case "timeout", "canceled":
+				timing.FailureCode = code
+			}
+		}
 	}
 	return result, body, resp.Request.URL
 }

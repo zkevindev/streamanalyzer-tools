@@ -98,15 +98,13 @@ func sampleRTMP(ctx context.Context, dir string, target *url.URL, seconds int) (
 }
 
 func captureRTMP(ctx context.Context, target *url.URL, tap *rtmpTap, obs *Observation) string {
-	client, _, _, err := rtmp.DialAndPlay(ctx, target.String(), &rtmp.DefaultHandler{}, &rtmp.PlayOptions{Start: -2, RecvTap: tap})
+	setup := &rtmpSetupTiming{start: tap.start}
+	ctx = setup.context(ctx)
+	client, _, _, err := rtmp.DialAndPlay(ctx, target.String(), &rtmp.DefaultHandler{}, &rtmp.PlayOptions{Start: -2, RecvTap: tap, OnStage: setup.completed})
 	playEnd := time.Since(tap.start).Milliseconds()
-	obs.Stages = append(obs.Stages, CaptureStage{Name: "play", EndMS: playEnd})
-	if err != nil {
-		obs.FailureStage = "play"
-		obs.FailureCode = modelNetworkError(err, 0).Code
-		if obs.FailureCode == "network_error" {
-			obs.FailureCode = "rtmp_error"
-		}
+	setup.finish(obs, err)
+	if err != nil && ctx.Err() != nil {
+		obs.FailureCode = modelNetworkError(ctx.Err(), 0).Code
 	}
 	reason := "rtmp_error"
 	if err == nil {

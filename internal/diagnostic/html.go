@@ -4,8 +4,14 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"strconv"
 	"strings"
 )
+
+var httpTimingPhases = []struct{ Name, Label string }{
+	{"dns", "DNS"}, {"connect", "TCP"}, {"tls", "TLS"}, {"request_send", "发送请求"},
+	{"response_first_byte", "等待首字节"}, {"response_headers", "接收响应头"},
+}
 
 var reportPage = template.Must(template.New("report").Funcs(template.FuncMap{
 	"seconds":       func(ms int64) float64 { return float64(ms) / 1000 },
@@ -14,6 +20,9 @@ var reportPage = template.Must(template.New("report").Funcs(template.FuncMap{
 	"join":          strings.Join,
 	"modelProvider": modelProviderLabel,
 	"stageName":     stageLabel,
+	"mediaArrival":  mediaArrivalLabel,
+	"phaseDuration": requestPhaseDuration,
+	"requestKind":   httpTimingKindLabel,
 	"elapsed":       func(startMS, endMS int64) int64 { return endMS - startMS },
 	"pid":           func(pid uint16) string { return fmt.Sprintf("0x%04X", pid) },
 	"streamType":    func(streamType uint8) string { return fmt.Sprintf("0x%02X", streamType) },
@@ -40,7 +49,10 @@ th,td{text-align:left;padding:.4rem .65rem;border-bottom:1px solid #d5deea}
 [data-severity="error"]{border-left:4px solid #b5464d}
 thead{color:#52657e;background:#f7f9fc}
 .scroll{overflow-x:auto}a{color:#164d92}code{font-size:.9em}
-@media print{body{background:#fff}article{break-inside:avoid}}
+.timing-note{font-size:.88rem;color:#52657e}
+.request-timing th,.request-timing td{white-space:nowrap;font-size:.85rem}
+.request-timing tbody tr:nth-child(even){background:#f7f9fc}
+@media print{body{background:#fff}article{break-inside:avoid}.request-timing th,.request-timing td{white-space:normal}}
 </style>
 </head>
 <body><main>
@@ -54,20 +66,40 @@ thead{color:#52657e;background:#f7f9fc}
 <dt>采样时长</dt><dd>{{printf "%.3f" (seconds .ElapsedMS)}} 秒 / 计划 {{.RequestedSeconds}} 秒</dd>
 <dt>结束原因</dt><dd>{{finish .EndReason}}</dd>
 {{if .HTTPStatus}}<dt>HTTP 状态</dt><dd>{{.HTTPStatus}}</dd>{{end}}
-{{with .TTFBMS}}<dt>{{if eq $.Report.Manifest.Protocol "rtmp"}}RTMP 首字节{{else}}响应首字节{{end}}</dt><dd>{{.}} ms</dd>{{end}}
+{{if not $.HTTPRequests}}{{with .TTFBMS}}<dt>{{if eq $.Report.Manifest.Protocol "rtmp"}}RTMP 首字节{{else}}响应首字节{{end}}</dt><dd>{{.}} ms</dd>{{end}}{{end}}
 </dl></article>
-{{if or .Stages .FirstPayloadMS .FailureStage .FailureCode}}
-<article><h2>采样阶段</h2>
-{{if or .FirstPayloadMS .FailureStage .FailureCode}}
+{{$metrics := $.Report.Metrics}}
+{{$arrivals := or .FirstPayloadMS $metrics.FirstVideoMS $metrics.FirstAudioMS $metrics.FirstKeyframeMS}}
+{{if or $.TimingStages $.HTTPRequests $arrivals .FailureStage .FailureCode}}
+<article><h2>采样时序</h2>
+<p class="timing-note">到达时间以采样开始为基准。</p>
+{{$unit := $metrics.MediaTimingUnit}}
+{{if not $unit}}{{if eq $.Report.Manifest.Protocol "hls"}}{{$unit = "segment"}}{{else if $.MPEGTS}}{{$unit = "pes"}}{{end}}{{end}}
 <dl>
-{{with .FirstPayloadMS}}<dt>首个载荷到达</dt><dd>{{.}} ms</dd>{{end}}
-{{with .FailureStage}}<dt>故障阶段</dt><dd>{{stageName .}}</dd>{{end}}
+<dt>首个载荷到达</dt><dd>{{with .FirstPayloadMS}}{{.}} ms{{else}}未观测{{end}}</dd>
+<dt>{{mediaArrival $unit "视频"}}</dt><dd>{{with $metrics.FirstVideoMS}}{{.}} ms{{else}}未观测{{end}}</dd>
+<dt>{{mediaArrival $unit "音频"}}</dt><dd>{{with $metrics.FirstAudioMS}}{{.}} ms{{else}}未观测{{end}}</dd>
+{{if eq $.Report.Manifest.Protocol "" "http-flv" "rtmp"}}<dt>首个关键帧到达</dt><dd>{{with $metrics.FirstKeyframeMS}}{{.}} ms{{else}}未观测{{end}}</dd>{{end}}
+{{with .FailureStage}}<dt>故障阶段</dt><dd>{{stageName . $.LegacyRTMP}}</dd>{{end}}
 {{with .FailureCode}}<dt>故障代码</dt><dd><code>{{.}}</code></dd>{{end}}
 </dl>
+{{if $.HTTPRequests}}
+<h3 id="request-timing-title">HTTP 请求耗时</h3>
+<p id="request-timing-note" class="timing-note">单位为毫秒。采样偏移从采样开始计时，TTFB 从当次请求开始计时。— 表示未测得。</p>
+<div class="scroll" tabindex="0" role="region" aria-labelledby="request-timing-title" aria-describedby="request-timing-note"><table class="request-timing">
+<thead><tr><th scope="col">请求</th><th scope="col">HTTP 状态</th><th scope="col">采样偏移</th>{{range $.HTTPPhases}}<th scope="col">{{.Label}}</th>{{end}}<th scope="col">TTFB</th><th scope="col">至响应头总耗时</th><th scope="col">响应体接收</th>{{if $.HTTPFailures}}<th scope="col">故障阶段 / 代码</th>{{end}}</tr></thead>
+<tbody>{{range $request := $.HTTPRequests}}
+<tr><th scope="row">#{{.Number}}{{with .Kind}} · {{requestKind .}}{{end}}</th><td>{{with .HTTPStatus}}{{.}}{{else}}—{{end}}</td><td>{{.StartMS}}–{{.EndMS}}</td>
+{{range $.HTTPPhases}}<td>{{phaseDuration $request.Stages .Name}}</td>{{end}}
+<td>{{with .TTFBMS}}{{.}}{{else}}—{{end}}</td><td>{{.TotalMS}}</td><td>{{with .BodyEndMS}}{{elapsed $request.EndMS .}}{{else}}—{{end}}</td>
+{{if $.HTTPFailures}}<td>{{if or .FailureStage .FailureCode}}{{with .FailureStage}}{{stageName . false}}{{end}}{{if and .FailureStage .FailureCode}} / {{end}}{{with .FailureCode}}<code>{{.}}</code>{{end}}{{else}}—{{end}}</td>{{end}}</tr>
+{{end}}</tbody>
+</table></div>
+{{with $.Report.RequestsTruncated}}<p class="timing-note">另有 {{.}} 条请求未展示。</p>{{end}}
 {{end}}
-{{if .Stages}}<div class="scroll"><table>
+{{if $.TimingStages}}<div class="scroll"><table>
 <thead><tr><th scope="col">阶段</th><th scope="col">开始偏移 (ms)</th><th scope="col">结束偏移 (ms)</th><th scope="col">耗时 (ms)</th></tr></thead>
-<tbody>{{range .Stages}}<tr><th scope="row">{{stageName .Name}}</th><td>{{.StartMS}}</td><td>{{.EndMS}}</td><td>{{elapsed .StartMS .EndMS}}</td></tr>{{end}}</tbody>
+<tbody>{{range $.TimingStages}}<tr><th scope="row">{{stageName .Name $.LegacyRTMP}}</th><td>{{.StartMS}}</td><td>{{.EndMS}}</td><td>{{elapsed .StartMS .EndMS}}</td></tr>{{end}}</tbody>
 </table></div>{{end}}
 </article>
 {{end}}
@@ -125,9 +157,6 @@ thead{color:#52657e;background:#f7f9fc}
 <article><h2>媒体指标</h2><dl>
 <dt>视频帧</dt><dd>{{.VideoFrames}}</dd>
 <dt>音频帧</dt><dd>{{.AudioFrames}}</dd>
-{{with .FirstVideoMS}}<dt>首个视频帧</dt><dd>{{.}} ms</dd>{{end}}
-{{with .FirstAudioMS}}<dt>首个音频帧</dt><dd>{{.}} ms</dd>{{end}}
-{{with .FirstKeyframeMS}}<dt>首个关键帧</dt><dd>{{.}} ms</dd>{{end}}
 <dt>视频帧间最大到达间隔</dt><dd>{{if gt .VideoFrames 1}}{{.MaxVideoGapMS}} ms{{else}}未测得{{end}}</dd>
 {{with .MaxAudioGapMS}}<dt>音频帧间最大到达间隔</dt><dd>{{.}} ms</dd>{{end}}
 <dt>最大关键帧间隔</dt><dd>{{if .MaxGOPMS}}{{.MaxGOPMS}} ms{{else}}未测得{{end}}</dd>
@@ -191,27 +220,87 @@ func modelProviderLabel(provider string) string {
 	}
 }
 
-func stageLabel(name string) string {
+func stageLabel(name string, legacyRTMP bool) string {
 	switch name {
 	case "dns":
 		return "DNS 解析"
 	case "connect":
-		return "建立连接"
+		return "TCP 建连"
 	case "tls":
 		return "TLS 握手"
 	case "response_headers":
 		return "HTTP 响应头"
+	case "request_send":
+		return "发送请求"
+	case "response_first_byte":
+		return "等待响应首字节"
 	case "listen":
 		return "建立监听"
 	case "receive":
 		return "接收数据"
 	case "handshake":
 		return "RTMP 握手"
+	case "app_connect":
+		return "RTMP 应用连接"
+	case "create_stream":
+		return "RTMP 创建流"
 	case "play":
-		return "RTMP 建连与播放协商"
+		if legacyRTMP {
+			return "RTMP 建连与播放协商"
+		}
+		return "RTMP 播放协商"
 	default:
 		return name
 	}
+}
+
+func mediaArrivalLabel(unit, track string) string {
+	switch unit {
+	case "segment":
+		return "首个" + track + "分片完成"
+	case "pes":
+		return "首个" + track + " PES 起始"
+	default:
+		return "首个" + track + "帧到达"
+	}
+}
+
+func httpTimingKindLabel(kind string) string {
+	switch kind {
+	case "hls_playlist":
+		return "播放列表"
+	case "hls_init":
+		return "初始化段"
+	case "hls_segment":
+		return "媒体分片"
+	default:
+		return kind
+	}
+}
+
+func requestPhaseDuration(stages []CaptureStage, name string) string {
+	var durations []string
+	for _, stage := range stages {
+		if stage.Name == name {
+			durations = append(durations, strconv.FormatInt(stage.EndMS-stage.StartMS, 10))
+		}
+	}
+	if len(durations) == 0 {
+		return "—"
+	}
+	return strings.Join(durations, " / ")
+}
+
+func nonHTTPStages(stages []CaptureStage) []CaptureStage {
+	var result []CaptureStage
+	for _, stage := range stages {
+		switch stage.Name {
+		case "dns", "connect", "tls", "request_send", "response_first_byte", "response_headers":
+			continue
+		}
+		result = append(result, stage)
+	}
+	return result
 }
 
 func tsEventLabel(kind string) string {
@@ -245,13 +334,39 @@ func RenderHTML(w io.Writer, report Report, explanation *Explanation, backURL st
 	case ProtocolRTPTS:
 		protocol, mpegTS, datagram, rtp = "RTP MPEG-TS", true, true, true
 	}
+	requests := report.Requests
+	if len(requests) == 0 {
+		requests = report.Manifest.Observation.Requests
+	}
+	stages := report.Manifest.Observation.Stages
+	if len(requests) > 0 {
+		stages = nonHTTPStages(stages)
+	}
+	var hasHTTPFailures, hasRTMPHandshake bool
+	for _, request := range requests {
+		if request.FailureStage != "" || request.FailureCode != "" {
+			hasHTTPFailures = true
+			break
+		}
+	}
+	for _, stage := range stages {
+		if stage.Name == "handshake" {
+			hasRTMPHandshake = true
+			break
+		}
+	}
 	return reportPage.Execute(w, struct {
-		Report      Report
-		Explanation *Explanation
-		BackURL     string
-		Protocol    string
-		MPEGTS      bool
-		Datagram    bool
-		RTP         bool
-	}{report, explanation, backURL, protocol, mpegTS, datagram, rtp})
+		Report       Report
+		Explanation  *Explanation
+		BackURL      string
+		Protocol     string
+		MPEGTS       bool
+		Datagram     bool
+		RTP          bool
+		HTTPRequests []HTTPRequestTiming
+		HTTPPhases   []struct{ Name, Label string }
+		HTTPFailures bool
+		TimingStages []CaptureStage
+		LegacyRTMP   bool
+	}{report, explanation, backURL, protocol, mpegTS, datagram, rtp, requests, httpTimingPhases, hasHTTPFailures, stages, report.Manifest.Protocol == ProtocolRTMP && !hasRTMPHandshake})
 }

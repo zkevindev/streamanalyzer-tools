@@ -22,8 +22,19 @@ const protocols = {
     'rtp-ts': { label: 'RTP MPEG-TS', example: 'rtp://127.0.0.1:5000', dump: '原始 RTP 数据报', mpegTS: true, receive: true },
 };
 const stageLabels = {
-    dns: 'DNS 解析', connect: '建立连接', tls: 'TLS 握手', response_headers: 'HTTP 响应头',
-    listen: '建立监听', receive: '接收数据', handshake: 'RTMP 握手', play: 'RTMP 建连与播放协商',
+    dns: 'DNS 解析', connect: 'TCP 建连', tls: 'TLS 握手', request_send: '发送请求',
+    response_first_byte: '等待响应首字节', response_headers: 'HTTP 响应头',
+    listen: '建立监听', receive: '接收数据', handshake: 'RTMP 握手', app_connect: 'RTMP 应用连接',
+    create_stream: 'RTMP 创建流', play: 'RTMP 播放协商',
+};
+const httpStages = [
+    ['dns', 'DNS'], ['connect', 'TCP'], ['tls', 'TLS'], ['request_send', '发送请求'],
+    ['response_first_byte', '等待首字节'], ['response_headers', '接收响应头'],
+];
+const requestKinds = { hls_playlist: '播放列表', hls_init: '初始化段', hls_segment: '媒体分片' };
+const mediaArrivalLabels = {
+    segment: ['首个视频分片完成', '首个音频分片完成'],
+    pes: ['首个视频 PES 起始', '首个音频 PES 起始'],
 };
 const modelProviderLabels = {
     'openai-compatible': 'OpenAI 兼容接口',
@@ -199,15 +210,58 @@ function renderMetrics(id, values) {
     }));
 }
 
-function renderSamplingTiming(observation) {
-    const stages = observation.stages || [];
-    const values = [];
-    if (observation.first_payload_ms != null) values.push(['首个载荷到达', time(observation.first_payload_ms)]);
-    if (observation.failure_stage) values.push(['故障阶段', stageLabels[observation.failure_stage] || observation.failure_stage]);
+function renderRequestTiming(requests, omitted) {
+    node('request-timing').hidden = requests.length === 0;
+    const note = node('request-timing-truncated');
+    note.hidden = omitted <= 0;
+    note.textContent = omitted > 0 ? `另有 ${omitted} 条请求未展示。` : '';
+    if (!requests.length) {
+        node('request-table').replaceChildren();
+        return;
+    }
+    const hasFailures = requests.some((request) => request.failure_stage || request.failure_code);
+    const columns = ['请求', 'HTTP 状态', '采样偏移', ...httpStages.map(([, label]) => label), 'TTFB', '至响应头总耗时', '响应体接收'];
+    if (hasFailures) columns.push('故障阶段 / 代码');
+    const rows = requests.map((request) => {
+        const kind = requestKinds[request.kind] || request.kind;
+        const durations = httpStages.map(([name]) => (request.stages || [])
+            .filter((stage) => stage.name === name)
+            .map((stage) => stage.end_ms - stage.start_ms)
+            .join(' / ') || '—');
+        const row = [kind ? `#${request.number} · ${kind}` : `#${request.number}`, request.http_status || '—',
+            `${request.start_ms}–${request.end_ms}`, ...durations, request.ttfb_ms, request.total_ms,
+            request.body_end_ms == null ? null : request.body_end_ms - request.end_ms];
+        if (hasFailures) row.push([stageLabels[request.failure_stage] || request.failure_stage, request.failure_code].filter(Boolean).join(' / ') || '—');
+        return row;
+    });
+    const table = renderTable(columns, rows);
+    table.tabIndex = 0;
+    table.setAttribute('role', 'region');
+    table.setAttribute('aria-labelledby', 'request-timing-title');
+    table.setAttribute('aria-describedby', 'request-timing-note');
+    node('request-table').replaceChildren(table);
+}
+
+function renderSamplingTiming(report, requests) {
+    const { observation, protocol } = report.manifest;
+    const metrics = report.metrics;
+    const stages = (observation.stages || []).filter((stage) => !requests.length || !httpStages.some(([name]) => stage.name === name));
+    const legacyRTMP = stages.some((stage) => stage.name === 'play') && !stages.some((stage) => stage.name === 'handshake');
+    const stageName = (name) => name === 'play' && legacyRTMP ? 'RTMP 建连与播放协商' : (stageLabels[name] || name);
+    const unit = metrics.media_timing_unit || (protocol === 'hls' ? 'segment' : protocols[protocol]?.mpegTS ? 'pes' : '');
+    const [video, audio] = mediaArrivalLabels[unit] || ['首个视频帧到达', '首个音频帧到达'];
+    const arrivals = [['首个载荷到达', observation.first_payload_ms], [video, metrics.first_video_ms], [audio, metrics.first_audio_ms]];
+    if (!protocol || protocol === 'http-flv' || protocol === 'rtmp') arrivals.push(['首个关键帧到达', metrics.first_keyframe_ms]);
+    const show = stages.length > 0 || requests.length > 0 || arrivals.some(([, ms]) => ms != null) ||
+        Boolean(observation.failure_stage || observation.failure_code);
+    node('sampling-timing').hidden = !show;
+    if (!show) return;
+    const values = arrivals.map(([label, ms]) => [label, ms == null ? '未观测' : time(ms)]);
+    if (observation.failure_stage) values.push(['故障阶段', stageName(observation.failure_stage)]);
     if (observation.failure_code) values.push(['故障代码', observation.failure_code]);
-    node('sampling-timing').hidden = stages.length === 0 && values.length === 0;
     renderMetrics('timing-metrics', values);
-    const rows = stages.map((stage) => [stageLabels[stage.name] || stage.name, stage.start_ms, stage.end_ms, stage.end_ms - stage.start_ms]);
+    renderRequestTiming(requests, report.requests_truncated ?? 0);
+    const rows = stages.map((stage) => [stageName(stage.name), stage.start_ms, stage.end_ms, stage.end_ms - stage.start_ms]);
     node('timing-table').replaceChildren(...(rows.length ? [renderTable(['阶段', '开始偏移 (ms)', '结束偏移 (ms)', '耗时 (ms)'], rows)] : []));
 }
 
@@ -250,6 +304,7 @@ function renderTransport(protocol, ts) {
 function renderReport(report) {
     const observed = report.manifest.observation;
     const protocol = report.manifest.protocol;
+    const requests = report.requests?.length ? report.requests : (observed.requests || []);
     const m = report.metrics;
     const values = [];
     if (protocol === 'hls') {
@@ -267,23 +322,20 @@ function renderReport(report) {
         );
     } else if (!protocols[protocol]?.mpegTS) {
         values.push(
-            ['首个视频帧', time(m.first_video_ms)],
             ['视频帧 / 音频帧', `${m.video_frames} / ${m.audio_frames}`],
             ['视频最大到达间隔', time(m.video_frames > 1 ? m.max_video_gap_ms : null)],
             ['最大关键帧间隔', time(m.max_gop_ms || null)],
         );
-        if (m.first_audio_ms != null) values.push(['首个音频帧', time(m.first_audio_ms)]);
-        if (m.first_keyframe_ms != null) values.push(['首个关键帧', time(m.first_keyframe_ms)]);
         if (m.max_audio_gap_ms > 0) values.push(['音频最大到达间隔', time(m.max_audio_gap_ms)]);
     }
-    if (observed.ttfb_ms != null) {
+    if (observed.ttfb_ms != null && !requests.length) {
         values.push([protocol === 'rtmp' ? 'RTMP 首字节' : '响应首字节', time(observed.ttfb_ms)]);
     }
     if (m.video_codecs?.length) values.push(['视频编码', m.video_codecs.join(' / ')]);
     if (m.audio_codecs?.length) values.push(['音频编码', m.audio_codecs.join(' / ')]);
     values.push([protocols[protocol]?.dump || '原始流', bytes(report.manifest.stream.bytes)]);
     renderMetrics('metrics', values);
-    renderSamplingTiming(observed);
+    renderSamplingTiming(report, requests);
     renderTransport(protocol, report.mpegts);
     renderTrace(report.findings, observed.elapsed_ms);
     const findings = report.findings.map((finding) => {

@@ -103,17 +103,15 @@ func (c *tsCapture) keep(data []byte) (bool, error) {
 }
 
 func (c *tsCapture) http(ctx context.Context, client *http.Client, target *url.URL) error {
-	ctx, finishAttempt := recordHTTPAttempt(ctx, c.observation, c.start)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target.String(), nil)
 	if err != nil {
-		finishAttempt(err)
+		c.observation.FailureStage, c.observation.FailureCode = httpFailure("request_send", err)
 		c.observation.EndReason = "request_error"
 		return nil
 	}
 	req.Header.Set("User-Agent", "StreamAnalyzer-Diagnostic/1.0")
 	req.Header.Set("Accept-Encoding", "identity")
-	resp, err := client.Do(req)
-	finishAttempt(err)
+	resp, err := doObservedRequest(client, req, c.observation, c.start)
 	if err != nil {
 		c.observation.EndReason = captureEnd(ctx, "request_error")
 		return nil
@@ -224,6 +222,7 @@ func (c *tsCapture) beginReceive() func() {
 		if c.observation.EndReason == "duration_limit" && c.observation.FirstPayloadMS == nil {
 			c.observation.FailureStage, c.observation.FailureCode = "receive", "timeout"
 		}
+		recordHTTPBody(c.observation, c.observation.Stages[index])
 	}
 }
 
