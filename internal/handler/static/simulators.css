@@ -50,3 +50,7 @@ details[open] > summary .event-summary::before { content: "▾ "; }
 .session-timeline time { color:var(--muted); font: .8rem var(--font-data); }
 
 .recording-config { margin-top:.65rem; }
+
+.sim-targets { margin-bottom: .85rem; }
+.sim-targets > p { margin-bottom: .6rem; }
+.sim-targets select { min-width: 0; text-overflow: ellipsis; }

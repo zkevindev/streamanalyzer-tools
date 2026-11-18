@@ -5,7 +5,7 @@ const el = (id) => document.getElementById(id);
 const form = el('simulator-form');
 const events = el('events');
 const states = {
-  idle: '未启动', registering: '正在注册', registered: '已注册',
+  idle: '未启动', queued: '等待注册', registering: '正在注册', registered: '已注册',
   retrying: '正在重注册', stopping: '正在停止', stopped: '已停止', failed: '注册失败',
 };
 const mediaStates = { idle: '等待点播', waiting_ack: '等待 ACK', starting_source: '正在读取视频', delaying: '延迟起播', paused: '录像已暂停', playback_done: '录像回放结束', streaming: '正在推流', failed: '点播失败' };
@@ -13,7 +13,9 @@ const mediaTransports = { udp: 'UDP', 'tcp-active': 'TCP（设备主动连接）
 const audioLabels = { g711a: 'G.711 A-law', g711u: 'G.711 μ-law', none: '仅视频' };
 const videoFile = el('video-file');
 const directions = { in: '收到', out: '发送', system: '事件' };
-const numberFields = ['platform_port', 'local_port', 'heartbeat_seconds'];
+const numberFields = ['platform_port', 'local_port', 'heartbeat_seconds', 'device_count', 'channels_per_device', 'register_interval_ms'];
+const devicePicker = el('device-picker');
+const channelPicker = el('channel-picker');
 
 const sessionStages = {
   invite: '收到 INVITE', invite_ok: '发送 INVITE 200 OK', ack: '收到 ACK',
@@ -30,7 +32,7 @@ let busy = false;
 let generation = 0;
 let pollError = false;
 
-async function request(path = '', body) {
+async function request(path = '', body, query = '') {
   const options = { cache: 'no-store' };
   if (path) {
     options.method = 'POST';
@@ -41,9 +43,13 @@ async function request(path = '', body) {
       options.body = JSON.stringify(body);
     }
   }
-  const response = await fetch(api + path, options);
+  const response = await fetch(api + path + query, options);
   const result = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(result.error || '模拟器请求失败。');
+  if (!response.ok) {
+    const error = new Error(result.error || '模拟器请求失败。');
+    error.status = response.status;
+    throw error;
+  }
   return result;
 }
 
@@ -52,18 +58,57 @@ function notice(message = '') {
   el('notice').textContent = message;
 }
 
-function updateButtons(state = el('state').dataset.state) {
+function updateButtons() {
   el('simulator-fields').disabled = busy || active || !loaded;
   el('audio-codec').disabled = videoFile.files.length === 0;
   el('recording-config').hidden = videoFile.files.length === 0;
   el('clear-video').hidden = videoFile.files.length === 0 || active;
   el('start').disabled = busy || active || !loaded;
-  el('stop').disabled = busy || !active || state === 'stopping';
+  el('stop').disabled = busy || !active;
+}
+
+function selectionQuery(includeChannel = true) {
+  const params = new URLSearchParams();
+  if (devicePicker.value) params.set('device_id', devicePicker.value);
+  if (includeChannel && channelPicker.value) params.set('channel_id', channelPicker.value);
+  const query = params.toString();
+  return query ? '?' + query : '';
+}
+
+function renderPicker(select, entries, selected) {
+  if ([...select.options].map(option => option.value).join(',') !== entries.map(entry => entry.id).join(',')) {
+    select.replaceChildren(...entries.map(entry => new Option(entry.label, entry.id)));
+  } else {
+    entries.forEach((entry, index) => {
+      if (select.options[index].text !== entry.label) select.options[index].text = entry.label;
+    });
+  }
+  select.value = selected || '';
+  select.disabled = entries.length < 2;
+}
+
+function renderTargets(status) {
+  const devices = status.devices || [];
+  const channels = status.channels || [];
+  el('simulator-targets').hidden = devices.length < 2 && channels.length < 2;
+  const registered = devices.filter(device => device.state === 'registered').length;
+  const playing = devices.reduce((total, device) => total + device.active_media, 0);
+  el('fleet-summary').textContent = `已注册 ${registered} / ${devices.length} 台 · ${playing} 路媒体会话`;
+  renderPicker(devicePicker, devices.map(device => ({
+    id: device.device_id,
+    label: `${device.device_id} · ${states[device.state] || device.state}`,
+  })), status.device_id);
+  renderPicker(channelPicker, channels.map(channel => ({
+    id: channel.channel_id,
+    label: `${channel.channel_id} · ${mediaStates[channel.media_state] || '正在连接'}`,
+  })), status.channel_id);
+  el('export-trace').href = api + '/trace.json' + selectionQuery(false);
 }
 
 function render(status) {
   active = status.active;
   loaded = true;
+  renderTargets(status);
   const badge = el('state');
   const label = states[status.state] || status.state;
   if (badge.textContent !== label) badge.textContent = label;
@@ -154,7 +199,7 @@ el('import-evidence').addEventListener('change', async event => {
     const data = await response.json();
     if (!response.ok) throw new Error(data.error || '导入失败');
     const r = data.rtp;
-    output.textContent = data.session.call_id + (r
+    output.textContent = [data.session.device_id, data.session.channel_id, data.session.call_id].filter(Boolean).join(' · ') + (r
       ? ' · RTP ' + r.packets + ' 包 · 序列缺口 ' + r.sequence_gaps + ' · 乱序 ' + r.out_of_order + ' · 重复 ' + r.duplicates + ' · 完整 PS ' + r.ps_units + ' · 不完整 PS ' + r.partial_units
       : ' · 信令时间线');
     renderTimeline(el('review-timeline'), data.session.timeline || []);
@@ -229,27 +274,44 @@ function renderEvents(items) {
   }
 }
 
-async function poll() {
+async function refresh() {
   const current = generation;
-  if (!busy) {
-    try {
-      const status = await request();
-      if (current === generation && !busy) {
-        if (pollError) {
-          notice();
-          pollError = false;
-        }
-        render(status);
+  const query = selectionQuery();
+  try {
+    const status = await request('', undefined, query).catch(error => {
+      if (!query || error.status !== 404) throw error;
+      return request();
+    });
+    if (current === generation && !busy) {
+      if (pollError) {
+        notice();
+        pollError = false;
       }
-    } catch (error) {
-      if (current === generation && !busy) {
-        pollError = true;
-        notice(error.message);
-      }
+      render(status);
+    }
+  } catch (error) {
+    if (current === generation && !busy) {
+      pollError = true;
+      notice(error.message);
     }
   }
+}
+
+async function poll() {
+  if (!busy) await refresh();
   window.setTimeout(poll, active ? 1000 : 2500);
 }
+
+function changeTarget() {
+  generation++;
+  void refresh();
+}
+
+devicePicker.addEventListener('change', () => {
+  channelPicker.value = '';
+  changeTarget();
+});
+channelPicker.addEventListener('change', changeTarget);
 
 async function change(path, body) {
   generation++;
@@ -259,7 +321,7 @@ async function change(path, body) {
   updateButtons();
   notice();
   try {
-    const status = await request(path, body);
+    const status = await request(path, body, path === '/stop' ? selectionQuery() : '');
     if (path !== '/stop') {
       events.replaceChildren();
       el('password').value = '';
@@ -326,7 +388,7 @@ if (window.parent !== window) {
     feedback.textContent = id === 'export-evidence' ? '请选择证据包的保存位置。' : '请选择 SIP 信令的保存位置。';
     const data = id === 'export-evidence'
       ? { id: el('sessions').value, name: 'gb28181-evidence.zip' }
-      : { name: 'gb28181-trace.json' };
+      : { id: devicePicker.value, name: 'gb28181-trace.json' };
     window.parent.postMessage({ kind: 'save-artifact', ...data }, '*');
   });
   window.addEventListener('message', (event) => {

@@ -1,17 +1,15 @@
 package gb28181
 
 import (
-	"context"
 	"errors"
-	"io"
 	"net"
 	"regexp"
-	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/emiago/sipgo/sip"
 )
 
 var (
@@ -23,22 +21,25 @@ var (
 )
 
 type Config struct {
-	PlatformHost   string       `json:"platform_host"`
-	PlatformPort   int          `json:"platform_port"`
-	SIPTransport   string       `json:"sip_transport,omitempty"`
-	PlatformID     string       `json:"platform_id"`
-	Domain         string       `json:"domain"`
-	DeviceID       string       `json:"device_id"`
-	ChannelID      string       `json:"channel_id"`
-	Username       string       `json:"username"`
-	Password       string       `json:"password"`
-	LocalIP        string       `json:"local_ip"`
-	LocalPort      int          `json:"local_port"`
-	Heartbeat      int          `json:"heartbeat_seconds"`
-	Faults         *FaultConfig `json:"faults,omitempty"`
-	CaptureRTP     bool         `json:"capture_rtp,omitempty"`
-	RecordingStart string       `json:"recording_start,omitempty"`
-	AudioCodec     string       `json:"audio_codec,omitempty"`
+	PlatformHost       string       `json:"platform_host"`
+	PlatformPort       int          `json:"platform_port"`
+	SIPTransport       string       `json:"sip_transport,omitempty"`
+	PlatformID         string       `json:"platform_id"`
+	Domain             string       `json:"domain"`
+	DeviceID           string       `json:"device_id"`
+	DeviceCount        int          `json:"device_count,omitempty"`
+	ChannelsPerDevice  int          `json:"channels_per_device,omitempty"`
+	RegisterIntervalMS int          `json:"register_interval_ms,omitempty"`
+	ChannelID          string       `json:"channel_id"`
+	Username           string       `json:"username"`
+	Password           string       `json:"password"`
+	LocalIP            string       `json:"local_ip"`
+	LocalPort          int          `json:"local_port"`
+	Heartbeat          int          `json:"heartbeat_seconds"`
+	Faults             *FaultConfig `json:"faults,omitempty"`
+	CaptureRTP         bool         `json:"capture_rtp,omitempty"`
+	RecordingStart     string       `json:"recording_start,omitempty"`
+	AudioCodec         string       `json:"audio_codec,omitempty"`
 }
 
 func (c *Config) validate() error {
@@ -79,9 +80,6 @@ func (c *Config) validate() error {
 	if c.LocalPort < 0 || c.LocalPort > 65535 {
 		return errors.New("本机 SIP 端口应为 0–65535")
 	}
-	if c.Username == "" {
-		c.Username = c.DeviceID
-	}
 	if len(c.Username) > 128 || strings.ContainsAny(c.Username, "\r\n\x00") || len(c.Password) > 1024 {
 		return errors.New("SIP 鉴权用户名或密码格式无效")
 	}
@@ -112,163 +110,38 @@ type Event struct {
 	Summary   string    `json:"summary"`
 	CallID    string    `json:"call_id,omitempty"`
 	method    string
+	channelID string
+	toTag     string
 	Packet    string `json:"packet,omitempty"`
 }
 
+type MediaStatus struct {
+	MediaState     string         `json:"media_state"`
+	MediaTransport mediaTransport `json:"media_transport,omitempty"`
+	MediaLocal     string         `json:"media_local,omitempty"`
+	MediaError     string         `json:"media_error,omitempty"`
+	MediaTarget    string         `json:"media_target,omitempty"`
+	RTPPackets     uint64         `json:"rtp_packets"`
+	VideoFrames    uint64         `json:"video_frames"`
+	AudioPackets   uint64         `json:"audio_packets"`
+}
+
 type Status struct {
-	State          string          `json:"state"`
-	Active         bool            `json:"active"`
-	Platform       string          `json:"platform,omitempty"`
-	SIPTransport   string          `json:"sip_transport,omitempty"`
-	DeviceID       string          `json:"device_id,omitempty"`
-	ChannelID      string          `json:"channel_id,omitempty"`
-	LocalAddress   string          `json:"local_address,omitempty"`
-	Error          string          `json:"error,omitempty"`
-	MediaState     string          `json:"media_state"`
-	MediaTransport mediaTransport  `json:"media_transport,omitempty"`
-	MediaLocal     string          `json:"media_local,omitempty"`
-	MediaError     string          `json:"media_error,omitempty"`
-	MediaTarget    string          `json:"media_target,omitempty"`
-	Recording      *RecordingInfo  `json:"recording,omitempty"`
-	MediaSource    SourceInfo      `json:"media_source"`
-	RTPPackets     uint64          `json:"rtp_packets"`
-	VideoFrames    uint64          `json:"video_frames"`
-	AudioPackets   uint64          `json:"audio_packets"`
-	Sessions       []SessionReport `json:"sessions,omitempty"`
-	Events         []Event         `json:"events"`
-}
-
-// Manager owns the one simulator instance shared by the workbench and the HTTP API.
-type Manager struct {
-	mu        sync.Mutex
-	device    *device
-	preparing bool
-	closed    bool
-}
-
-func (m *Manager) Start(cfg Config) error {
-	if err := cfg.validate(); err != nil {
-		return err
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if err := m.available(); err != nil {
-		return err
-	}
-	m.start(cfg, nil)
-	return nil
-}
-
-func (m *Manager) StartFile(ctx context.Context, cfg Config, name string, input io.Reader) error {
-	if err := cfg.validate(); err != nil {
-		return err
-	}
-	m.mu.Lock()
-	if err := m.available(); err != nil {
-		m.mu.Unlock()
-		return err
-	}
-	m.preparing = true
-	m.mu.Unlock()
-	defer func() {
-		m.mu.Lock()
-		m.preparing = false
-		m.mu.Unlock()
-	}()
-
-	media, err := prepareLocalMedia(ctx, name, cfg.AudioCodec, input)
-	if err != nil {
-		return err
-	}
-	if err := media.setRecording(cfg.RecordingStart, time.Now()); err != nil {
-		media.remove()
-		return err
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.closed {
-		media.remove()
-		return ErrClosed
-	}
-	if err := ctx.Err(); err != nil {
-		media.remove()
-		return err
-	}
-	m.start(cfg, media)
-	return nil
-}
-
-// available and start are called with m.mu held.
-func (m *Manager) available() error {
-	if m.closed {
-		return ErrClosed
-	}
-	if m.preparing || m.device != nil && m.device.running() {
-		return ErrActive
-	}
-	return nil
-}
-
-func (m *Manager) start(cfg Config, media *localMedia) {
-	ctx, cancel := context.WithCancel(context.Background())
-	source := SourceInfo{VideoMode: "builtin", VideoCodec: "h264", OutputCodec: "h264", AudioCodec: "none"}
-	if media != nil {
-		source = media.info
-	}
-	d := &device{
-		cfg: cfg, ctx: ctx, cancel: cancel, done: make(chan struct{}),
-		file: media,
-		status: Status{State: "registering", MediaState: "idle",
-			Platform: net.JoinHostPort(cfg.PlatformHost, strconv.Itoa(cfg.PlatformPort)), SIPTransport: cfg.SIPTransport,
-			DeviceID: cfg.DeviceID, ChannelID: cfg.ChannelID, MediaSource: source},
-	}
-	if media != nil {
-		d.status.Recording = media.recording
-	}
-	m.device = d
-	go d.run()
-}
-
-func (m *Manager) Status() Status {
-	m.mu.Lock()
-	d := m.device
-	m.mu.Unlock()
-	if d == nil {
-		return Status{State: "idle", MediaState: "idle", Events: []Event{}}
-	}
-	d.mu.Lock()
-	defer d.mu.Unlock()
-	result := d.status
-	result.Active = d.running()
-	result.Events = slices.Clone(d.status.Events)
-	for i := len(d.evidence) - 1; i >= 0; i-- {
-		report := d.evidence[i].SessionReport
-		report.Timeline = slices.Clone(report.Timeline)
-		result.Sessions = append(result.Sessions, report)
-	}
-	if result.Events == nil {
-		result.Events = []Event{}
-	}
-	return result
-}
-
-func (m *Manager) Stop() {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if d := m.device; d != nil && d.running() {
-		d.stop()
-	}
-}
-
-func (m *Manager) Close() {
-	m.mu.Lock()
-	m.closed = true
-	d := m.device
-	m.mu.Unlock()
-	if d != nil {
-		d.stop()
-		<-d.done
-	}
+	MediaStatus
+	State        string          `json:"state"`
+	Active       bool            `json:"active"`
+	Platform     string          `json:"platform,omitempty"`
+	SIPTransport string          `json:"sip_transport,omitempty"`
+	DeviceID     string          `json:"device_id,omitempty"`
+	ChannelID    string          `json:"channel_id,omitempty"`
+	LocalAddress string          `json:"local_address,omitempty"`
+	Error        string          `json:"error,omitempty"`
+	Recording    *RecordingInfo  `json:"recording,omitempty"`
+	MediaSource  SourceInfo      `json:"media_source"`
+	Sessions     []SessionReport `json:"sessions,omitempty"`
+	Events       []Event         `json:"events"`
+	Devices      []DeviceSummary `json:"devices,omitempty"`
+	Channels     []ChannelStatus `json:"channels,omitempty"`
 }
 
 func (d *device) running() bool {
@@ -314,12 +187,7 @@ func (d *device) addEvent(event Event) {
 	}
 	event.ID, event.Time = eventID.Add(1), time.Now()
 	d.status.Events = append(d.status.Events, event)
-	for i := len(d.evidence) - 1; event.CallID != "" && i >= 0; i-- {
-		if d.evidence[i].CallID == event.CallID {
-			d.evidence[i].addSignal(event)
-			break
-		}
-	}
+	d.addSignalToEvidence(event)
 }
 
 // udpSIPWire records datagrams from the configured platform.
@@ -358,7 +226,7 @@ func (d *device) logPacket(direction string, p []byte) {
 	head, body, _ := strings.Cut(strings.ReplaceAll(string(p), "\r\n", "\n"), "\n\n")
 	lines := strings.Split(head, "\n")
 	var packet strings.Builder
-	var callID, method string
+	var callID, method, to string
 	redacting := false
 	for i, line := range lines {
 		if i > 0 && len(line) > 0 && (line[0] == ' ' || line[0] == '\t') && redacting {
@@ -369,6 +237,8 @@ func (d *device) logPacket(direction string, p []byte) {
 		switch strings.ToLower(name) {
 		case "call-id", "i":
 			callID = truncate(strings.TrimSpace(value), 240)
+		case "to", "t":
+			to = strings.TrimSpace(value)
 		case "cseq":
 			if fields := strings.Fields(value); len(fields) == 2 {
 				method = fields[1]
@@ -385,7 +255,22 @@ func (d *device) logPacket(direction string, p []byte) {
 		packet.WriteByte('\n')
 		packet.WriteString(body)
 	}
-	d.addEvent(Event{Direction: direction, Summary: truncate(lines[0], 240), Packet: truncate(packet.String(), 4096), CallID: callID, method: method})
+	event := Event{Direction: direction, Summary: truncate(lines[0], 240), Packet: truncate(packet.String(), 4096), CallID: callID, method: method}
+	switch method {
+	case "INVITE", "ACK", "BYE", "INFO":
+		var uri sip.Uri
+		params := sip.NewParams()
+		if _, err := sip.ParseAddressValue(to, &uri, &params); err == nil {
+			event.channelID = d.channelFor(uri.User)
+			event.toTag, _ = params.Get("tag")
+		}
+		if direction == "in" && method == "INVITE" {
+			if fields := strings.Fields(lines[0]); len(fields) == 3 && fields[0] == "INVITE" && sip.ParseUri(fields[1], &uri) == nil {
+				event.channelID = d.channelFor(uri.User)
+			}
+		}
+	}
+	d.addEvent(event)
 }
 
 func truncate(s string, maxBytes int) string {

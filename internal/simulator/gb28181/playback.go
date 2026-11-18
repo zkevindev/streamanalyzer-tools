@@ -199,13 +199,13 @@ func (p *playbackSession) run(ctx context.Context, file *localMedia, send func(m
 
 func (d *device) onPlaybackInfo(req *sip.Request, tx sip.ServerTransaction) {
 	d.mu.Lock()
-	session := d.media
-	if session == nil || session.playback == nil || !session.matches(req) || session.ctx.Err() != nil {
+	session := d.dialog(req)
+	if session == nil || session.playback == nil || session.ctx.Err() != nil {
 		d.mu.Unlock()
 		d.respond(req, tx, 481, "Call/Transaction Does Not Exist")
 		return
 	}
-	if !session.started || d.status.MediaState == "playback_done" {
+	if !session.started || session.status.MediaState == "playback_done" {
 		d.mu.Unlock()
 		d.respond(req, tx, 491, "Request Pending")
 		return
@@ -229,16 +229,16 @@ func (d *device) onPlaybackInfo(req *sip.Request, tx sip.ServerTransaction) {
 
 func (d *device) finishPlayback(session *mediaSession) {
 	d.mu.Lock()
-	if d.media != session || session.ctx.Err() != nil {
+	if d.media[session.channelID] != session || session.ctx.Err() != nil {
 		d.mu.Unlock()
 		return
 	}
 	session.evidence.mark("playback_done", "", time.Now(), true)
 	session.conn.Close()
-	d.status.MediaState = "playback_done"
+	session.status.MediaState = "playback_done"
 	d.mu.Unlock()
 	body := fmt.Sprintf("%s<Notify><CmdType>MediaStatus</CmdType><SN>%d</SN><DeviceID>%s</DeviceID><NotifyType>121</NotifyType></Notify>",
-		xml.Header, d.xmlSN.Add(1), d.cfg.ChannelID)
+		xml.Header, d.xmlSN.Add(1), session.channelID)
 	if err := d.sendXML(session.flow, []byte(body)); err != nil && session.ctx.Err() == nil {
 		d.log("system", "回放结束通知未获确认："+err.Error(), "")
 	}

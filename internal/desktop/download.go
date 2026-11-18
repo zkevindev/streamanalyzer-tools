@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"streamanalyzer/internal/diagnostic"
 )
@@ -24,8 +25,15 @@ func (s Shell) download(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var path string
-	if request.Name == "gb28181-trace.json" && request.ID == "" {
+	if request.Name == "gb28181-trace.json" {
 		path = "/api/simulators/gb28181/trace.json"
+		if request.ID != "" {
+			if len(request.ID) != 20 || strings.Trim(request.ID, "0123456789") != "" {
+				http.Error(w, "设备编号无效", http.StatusBadRequest)
+				return
+			}
+			path += "?device_id=" + request.ID
+		}
 	} else {
 		id, err := hex.DecodeString(request.ID)
 		if err != nil || len(id) != 16 {

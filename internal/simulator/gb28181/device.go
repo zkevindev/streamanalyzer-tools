@@ -16,31 +16,42 @@ import (
 )
 
 type device struct {
-	cfg      Config
-	ctx      context.Context
-	cancel   context.CancelFunc
-	done     chan struct{}
-	mu       sync.Mutex
-	status   Status
-	platform netip.AddrPort
-	callID   string
-	fromTag  string
-	seq      uint32 // REGISTER is serialized in run.
-	xmlSN    atomic.Uint32
-	media    *mediaSession
-	evidence []*sessionEvidence
-	file     *localMedia
-	workers  sync.WaitGroup // New workers are admitted under mu while the device is registered.
+	cfg           Config
+	ctx           context.Context
+	cancel        context.CancelFunc
+	done          chan struct{}
+	mu            sync.Mutex
+	status        Status
+	platform      netip.AddrPort
+	callID        string
+	fromTag       string
+	seq           uint32 // REGISTER is serialized in run.
+	xmlSN         atomic.Uint32
+	channels      []string
+	media         map[string]*mediaSession
+	channelStatus map[string]*MediaStatus
+	fleet         *fleet
+	evidence      []*sessionEvidence
+	file          *localMedia
+	workers       sync.WaitGroup // New workers are admitted under mu while the device is registered.
 }
 
 const defaultExpires = 3600
 
-func (d *device) run() {
+func (d *device) run(delay time.Duration) {
 	defer close(d.done)
 	defer d.cancel()
-	if d.file != nil {
-		defer d.file.remove()
+	if delay > 0 {
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+		case <-d.ctx.Done():
+			d.state("stopped", "")
+			return
+		}
 	}
+	d.state("registering", "")
 	if err := d.serve(); err != nil && d.ctx.Err() == nil {
 		d.log("system", err.Error(), "")
 		d.state("failed", err.Error())

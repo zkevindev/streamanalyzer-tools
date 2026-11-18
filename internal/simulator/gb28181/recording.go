@@ -68,7 +68,7 @@ func (d *device) recordInfo(query simulatorQuery) ([]byte, error) {
 		if (from.IsZero() || from.Before(record.End)) && (to.IsZero() || to.After(record.Start)) {
 			count = 1
 			item = fmt.Sprintf("<Item><DeviceID>%s</DeviceID><Name>Local Recording</Name><StartTime>%s</StartTime><EndTime>%s</EndTime><Secrecy>0</Secrecy><Type>time</Type><RecorderID>%s</RecorderID></Item>",
-				d.cfg.ChannelID, record.Start.In(time.Local).Format(recordTimeLayout), record.End.In(time.Local).Format(recordTimeLayout), d.cfg.DeviceID)
+				d.channelFor(query.DeviceID), record.Start.In(time.Local).Format(recordTimeLayout), record.End.In(time.Local).Format(recordTimeLayout), d.cfg.DeviceID)
 		}
 	}
 	return []byte(fmt.Sprintf("%s<Response><CmdType>RecordInfo</CmdType><SN>%d</SN><DeviceID>%s</DeviceID><Name>Test Camera</Name><SumNum>%d</SumNum><RecordList Num=\"%d\">%s</RecordList></Response>",
