@@ -167,7 +167,19 @@ func importedStallEvidence(dir string, report *Report, entries map[string]*zip.F
 		} else if item.Status == "complete" || item.Status == "partial" || len(item.Media.Assets) > 0 || !emptyStallCorrelation(item.Correlation) || item.ModelState == "complete" {
 			return fmt.Errorf("%w: 卡顿补查缺少关联证据", ErrInvalid)
 		}
-		if item.Explanation != nil && (!validExplanation(*item.Explanation, item.Correlation.Findings) || len(item.Explanation.Provider) > 128 || len(item.Explanation.Model) > 256) {
+		caseFindings := append([]Finding(nil), item.Correlation.Findings...)
+		if item.Assessment != nil {
+			if len(item.Correlation.Findings) == 0 {
+				return fmt.Errorf("%w: 排查分层缺少关联证据", ErrInvalid)
+			}
+			expected, _ := json.Marshal(assessStall(item))
+			provided, _ := json.Marshal(item.Assessment)
+			if !bytes.Equal(expected, provided) {
+				return fmt.Errorf("%w: 排查分层与关联证据不一致", ErrInvalid)
+			}
+			caseFindings = append(caseFindings, item.Assessment.Findings...)
+		}
+		if item.Explanation != nil && (!validExplanation(*item.Explanation, caseFindings) || len(item.Explanation.Provider) > 128 || len(item.Explanation.Model) > 256) {
 			return fmt.Errorf("%w: 卡顿模型建议的证据引用无效", ErrInvalid)
 		}
 		if item.ModelState == "complete" && item.Explanation == nil {

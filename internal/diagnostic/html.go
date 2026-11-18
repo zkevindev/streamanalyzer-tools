@@ -47,6 +47,9 @@ var reportPage = template.Must(template.New("report").Funcs(template.FuncMap{
 	"videoMS":                playerVideoObservedTime,
 	"videoRatio":             playerVideoDroppedRatio,
 	"videoSampleState":       playerVideoSampleState,
+	"assessmentState":        stallDirectionStateLabel,
+	"caseEvidenceKnown":      stallAssessmentEvidenceKnown,
+	"assessmentFindings":     stallAssessmentExtraFindings,
 }).Parse(`{{define "codecRows"}}
 {{with .VideoCodecs}}<dt>视频编码</dt><dd>{{join . " / "}}</dd>{{end}}
 {{with .AudioCodecs}}<dt>音频编码</dt><dd>{{join . " / "}}</dd>{{end}}
@@ -63,6 +66,21 @@ var reportPage = template.Must(template.New("report").Funcs(template.FuncMap{
 <dt>视频样本数量</dt><dd>{{.SampleCount}}</dd>
 </dl><p class="timing-note">帧增量按连续前台播放样本的差值汇总，暂停、跳转、后台和采样结束后的记录不计入。呈帧与回调间隔来自视频帧回调，低帧率内容和页面调度也会影响间隔，需结合缓冲、收流和媒体帧率一起判断。</p>
 {{else}}<p class="timing-note">该记录未采集视频呈帧与丢帧数据。</p>{{end}}
+</section>
+{{end}}{{define "stallAssessment"}}{{$case := .}}
+<section class="stall-assessment"><h3>分层排查方向</h3>
+{{with .Assessment}}
+{{with .Conclusion}}<p class="stall-assessment-conclusion">{{.}}</p>{{end}}
+<p class="timing-note">以下方向根据已保存的证据整理，用于安排验证步骤。</p>
+{{range .Directions}}<section class="stall-direction" data-state="{{.Status}}"><h4>{{if .Title}}{{.Title}}{{else}}待核对方向{{end}} <span class="direction-state">{{assessmentState .Status}}</span></h4>
+{{with .Message}}<p>{{.}}</p>{{end}}
+{{if .EvidenceIDs}}<p>关联证据 {{range .EvidenceIDs}}{{if caseEvidenceKnown $case .}}<a href="#case-{{.}}">{{.}}</a>{{else}}{{.}}（未找到记录）{{end}} {{end}}</p>{{end}}
+{{if .NextChecks}}<p class="timing-note">建议验证</p><ul>{{range .NextChecks}}<li>{{.}}</li>{{end}}</ul>{{end}}
+</section>{{else}}<p class="timing-note">当前证据尚未形成排查方向。</p>{{end}}
+{{if .Limitations}}<h4>证据限制</h4><ul>{{range .Limitations}}<li>{{.}}</li>{{end}}</ul>{{end}}
+{{with .Version}}<p class="timing-note">排查规则 {{.}}</p>{{end}}
+{{with assessmentFindings $case}}<h4>分层判断证据</h4>{{range .}}<section id="case-{{.ID}}"><h4>{{.ID}} · {{.Message}}</h4><p class="timing-note">{{.StartMS}}–{{.EndMS}} ms</p>{{with .NextCheck}}<p>{{.}}</p>{{end}}</section>{{end}}{{end}}
+{{else}}<p class="timing-note">{{if or (eq .Status "queued") (eq .Status "running")}}补查完成后展示分层排查方向。{{else}}该记录尚未生成排查分层。重新生成建议可补充排查分层，可在工作台点击“生成排查与模型建议”。{{end}}</p>{{end}}
 </section>
 {{end}}<!doctype html>
 <html lang="zh-CN">
@@ -114,6 +132,14 @@ thead{color:#52657e;background:#f7f9fc}
 .stall-images figure{margin:0;border:1px solid #d5deea;padding:.45rem;border-radius:.375rem}
 .stall-images img{display:block;width:100%;height:auto;background:#101d2d}
 .stall-images figcaption{font-size:.8rem;overflow-wrap:anywhere}
+.stall-assessment{border:1px solid #d5deea;border-radius:.375rem;padding:.2rem .75rem;margin-block:.8rem;background:#f7f9fc}
+.stall-assessment-conclusion{font-weight:620}
+.stall-assessment a,.stall-assessment p,.stall-assessment li{overflow-wrap:anywhere}
+.stall-direction{padding-bottom:.3rem;margin-block:.65rem;border-bottom:1px solid #d5deea}
+.stall-direction:last-of-type{border-bottom:0}
+.direction-state{display:inline-block;font:.75rem system-ui,sans-serif;font-weight:650;padding:.12rem .42rem;border-radius:.25rem;color:#465b73;background:#ecf1f7}
+.stall-direction[data-state="observed"] .direction-state{color:#216247;background:#e5f3eb}
+.stall-direction[data-state="candidate"] .direction-state{color:#774705;background:#fff2d7}
 @media print{body{background:#fff}article{break-inside:avoid}.request-timing th,.request-timing td{white-space:normal}.http-header-block:not([open])>:not(summary){display:block}}
 </style>
 </head>
@@ -230,6 +256,7 @@ thead{color:#52657e;background:#f7f9fc}
 <dt>数据来源</dt><dd>{{playerSource .Correlation.Source}}</dd></dl>
 {{if eq .Correlation.Source "independent_pull"}}<p class="timing-note">播放器与采样使用独立连接，关联结果供对照。</p>{{end}}
 {{range .Correlation.Notes}}<p class="timing-note">{{.}}</p>{{end}}
+{{template "stallAssessment" .StallInvestigation}}
 {{with .Chart}}
 <figure class="player-buffer-chart"><figcaption>补查窗口可播放缓冲 · 阴影为卡顿区间</figcaption>
 <svg viewBox="0 0 615 152" role="img" aria-label="卡顿补查缓冲曲线">
@@ -789,6 +816,53 @@ func investigationHTMLItems(items []StallInvestigation, backURL string, assets m
 		result = append(result, view)
 	}
 	return result
+}
+
+func stallDirectionStateLabel(status string) string {
+	switch status {
+	case "observed":
+		return "已观测"
+	case "candidate":
+		return "待验证"
+	case "insufficient":
+		return "证据不足"
+	default:
+		return "待核对"
+	}
+}
+
+func stallAssessmentEvidenceKnown(item StallInvestigation, id string) bool {
+	for _, finding := range item.Correlation.Findings {
+		if finding.ID == id {
+			return true
+		}
+	}
+	if item.Assessment != nil {
+		for _, finding := range item.Assessment.Findings {
+			if finding.ID == id {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func stallAssessmentExtraFindings(item StallInvestigation) []Finding {
+	if item.Assessment == nil {
+		return nil
+	}
+	seen := make(map[string]bool)
+	for _, finding := range item.Correlation.Findings {
+		seen[finding.ID] = true
+	}
+	var findings []Finding
+	for _, finding := range item.Assessment.Findings {
+		if !seen[finding.ID] {
+			findings = append(findings, finding)
+			seen[finding.ID] = true
+		}
+	}
+	return findings
 }
 
 func investigationAssetHTMLHref(name, backURL string) string {

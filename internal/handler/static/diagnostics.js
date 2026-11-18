@@ -698,6 +698,55 @@ function renderInvestigationMedia(item) {
     return block;
 }
 
+const stallDirectionStates = { observed: '已观测', candidate: '待验证', insufficient: '证据不足' };
+
+function renderStallAssessment(item) {
+    const block = element('section', '', 'stall-assessment');
+    block.append(element('h5', '分层排查方向'));
+    const assessment = item.assessment;
+    if (!assessment) {
+        block.append(element('p', ['queued', 'running'].includes(item.status) ? '补查完成后展示分层排查方向。' : '该记录尚未生成排查分层。重新生成建议可补充排查分层。', 'timing-note muted'));
+        return block;
+    }
+    if (assessment.conclusion) block.append(element('p', assessment.conclusion, 'stall-assessment-conclusion'));
+    block.append(element('p', '以下方向根据已保存的证据整理，用于安排验证步骤。', 'timing-note muted'));
+    const evidenceIDs = new Set([...(item.correlation?.findings || []), ...(assessment.findings || [])].map((finding) => finding.id));
+    if (!assessment.directions?.length) block.append(element('p', '当前证据尚未形成排查方向。', 'timing-note muted'));
+    for (const direction of assessment.directions || []) {
+        const section = element('section', '', 'stall-direction');
+        section.dataset.state = direction.status;
+        const title = element('h6', direction.title || '待核对方向');
+        title.append(element('span', stallDirectionStates[direction.status] || '待核对', 'status direction-state'));
+        section.append(title);
+        if (direction.message) section.append(element('p', direction.message));
+        if (direction.evidence_ids?.length) {
+            const evidence = element('p', '关联证据 ', 'stall-direction-evidence');
+            for (const id of direction.evidence_ids) {
+                if (evidenceIDs.has(id)) {
+                    const link = element('a', id);
+                    link.href = '#case-' + encodeURIComponent(id);
+                    link.addEventListener('click', (event) => { event.preventDefault(); showFinding('case-' + id); });
+                    evidence.append(link, document.createTextNode(' '));
+                } else evidence.append(document.createTextNode(`${id}（未找到记录） `));
+            }
+            section.append(evidence);
+        }
+        if (direction.next_checks?.length) {
+            const checks = element('ul', '', 'stall-next-checks');
+            for (const check of direction.next_checks) checks.append(element('li', check));
+            section.append(element('p', '建议验证', 'timing-note muted'), checks);
+        }
+        block.append(section);
+    }
+    if (assessment.limitations?.length) {
+        const limitations = element('ul', '', 'stall-assessment-limitations');
+        for (const limitation of assessment.limitations) limitations.append(element('li', limitation));
+        block.append(element('h6', '证据限制'), limitations);
+    }
+    if (assessment.version) block.append(element('p', `排查规则 ${assessment.version}`, 'timing-note muted'));
+    return block;
+}
+
 function renderInvestigationModel(item) {
     const block = element('section', '', 'stall-model');
     block.append(element('h5', '模型建议（时序证据）'), element('p', '模型依据关联的接收间隔、缓冲与关键帧记录提出待验证建议，源流片段和截图供复核。', 'timing-note muted'));
@@ -720,7 +769,7 @@ function renderInvestigationModel(item) {
     } else block.append(element('p', investigationModelStates[item.model_state] || '等待模型建议。', 'timing-note muted'));
     if (item.model_error) block.append(element('p', item.model_error, 'timing-note muted'));
     if (item.status !== 'queued' && item.status !== 'running') {
-        const button = element('button', item.explanation ? '用当前模型重新生成建议' : '生成模型建议', 'secondary');
+        const button = element('button', !item.assessment ? '生成排查与模型建议' : item.explanation ? '用当前模型重新生成建议' : '生成模型建议', 'secondary');
         button.type = 'button';
         button.dataset.stallExplain = item.id;
         button.disabled = pendingStallExplanations.has(`${currentID}/${item.id}`);
@@ -770,6 +819,7 @@ function renderInvestigation(item) {
     card.append(element('p', `卡顿 ${time(item.stall.start_ms)}–${time(item.stall.end_ms)} · ${time(item.stall.duration_ms)}；补查窗口 ${time(c.window_start_ms)}–${time(c.window_end_ms)}`, 'timing-note muted'));
     card.append(element('p', `来源 ${playerSources[c.source] || c.source || '未记录'}${c.source === 'independent_pull' ? '，采样连接与播放器连接独立，关联结果供对照。' : ''}`, 'timing-note muted'));
     for (const note of c.notes || []) card.append(element('p', note, 'timing-note muted'));
+    card.append(renderStallAssessment(item));
     if (c.buffer_samples?.length) card.append(renderBufferChart(c.buffer_samples, [item.stall], c.window_end_ms, c.window_start_ms));
     const videoSamples = renderVideoWindowSamples(c.buffer_samples);
     if (videoSamples) card.append(videoSamples);
@@ -789,6 +839,21 @@ function renderInvestigation(item) {
         if (finding.next_check) evidence.append(element('p', finding.next_check));
         if (finding.evidence?.length) evidence.append(renderEvidence(currentReport.manifest.protocol, finding.evidence));
         card.append(evidence);
+    }
+    if (item.assessment?.findings?.length) {
+        card.append(element('h5', '分层判断证据'));
+        const correlationIDs = new Set((c.findings || []).map((finding) => finding.id));
+        for (const finding of item.assessment.findings) {
+            if (correlationIDs.has(finding.id)) continue;
+            correlationIDs.add(finding.id);
+            const evidence = element('details', '', 'finding assessment-finding');
+            evidence.id = 'case-' + finding.id;
+            evidence.append(element('summary', `${finding.id} · ${finding.message}`),
+                element('p', `${time(finding.start_ms)}–${time(finding.end_ms)}`, 'timing-note muted'));
+            if (finding.next_check) evidence.append(element('p', finding.next_check));
+            if (finding.evidence?.length) evidence.append(renderEvidence(currentReport.manifest.protocol, finding.evidence));
+            card.append(evidence);
+        }
     }
     card.append(renderInvestigationMedia(item), renderInvestigationModel(item));
     return card;

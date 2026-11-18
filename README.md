@@ -45,6 +45,10 @@ HTTP-FLV、HTTP MPEG-TS 和 HLS 的每次请求可以展开查看请求头、响
 
 已配置大模型时，补查会自动请求带证据引用的排查建议。当前模型接收关联时序、媒体产物状态和证据 ID，不接收截图像素或视频文件，页面标注为「模型建议（时序证据）」。未配置、连接失败或切换模型时，可以保留结果并稍后重新解读。
 
+补查还会在本地生成「分层排查方向」，区分已观测、待验证和证据不足，并关联证据 ID 与下一步检查。缓冲接近耗尽且同次采样的接收间隔重合时，优先核对源端与传输供给；连续缓冲充足但呈帧回调延后时，优先核对本机播放与调度；丢帧增量作为独立观测保留。规则只使用选中卡顿内的前台样本，跳过暂停、跳转、后台及稀疏样本之间的计数差，累计最大回调间隔不作为该次卡顿的证明。HLS 独立采样不用于断定实际播放连接中断。这些方向需要现场验证，模型也会接收相同限制。
+
+分层结果会随 HTML/JSON 报告和证据包保存，导入时从已验证的关联证据重新计算并比对，不需模型在线。旧补查记录可点击「生成排查与模型建议」补充分层结果，未配置模型时也能生成本地排查方向。
+
 补查记录保存为 `stall-evidence.json`，派生文件位于证据包的 `stalls/S001/` 等目录，均记录 SHA-256。HTML 报告内嵌截图，片段可单独下载或从证据包打开。导入会校验派生文件并从原始流重新计算关联证据，不需 FFmpeg、源站或模型在线。导入未完成的任务会标为已停止，可以重新补查。旧版证据包仍可导入。
 
 HLS 主清单选取带宽最高的常规变体及其默认独立音频 rendition。直播从清单末尾最多三个完整分片开始采样，随后跟踪新分片，点播按清单顺序下载。加密分片保存原始密文，媒体识别限于能够检查的明文分片。原始产物可能包含签名 URL 或业务元数据。停止、读流失败或达到 128 MiB 的原始产物上限时，工作台保留已收集的数据和可用报告。
@@ -61,7 +65,7 @@ JSON 报告及 SQLite 任务索引位于数据目录下的 `diagnostics/`。基�
 | `POST /api/diagnostics/runs/:id/stop` | 停止采样并保存已获取的数据 |
 | `POST /api/diagnostics/runs/:id/player` | 用会话授权头 `X-StreamAnalyzer-Player` 保存追加的播放器事件和缓冲样本；`complete` 后记录不可更改 |
 | `POST /api/diagnostics/runs/:id/stalls` | 用 `{"stall_index":1}` 补查第 1 次卡顿；无媒体产物的终态任务可加 `"retry":true` 重试 |
-| `POST /api/diagnostics/runs/:id/stalls/:caseID/explain` | 使用当前模型重新生成该次卡顿的时序证据建议 |
+| `POST /api/diagnostics/runs/:id/stalls/:caseID/explain` | 补全旧记录的本地分层方向，并使用当前模型重新生成该次卡顿的时序证据建议 |
 | `POST /api/diagnostics/runs/:id/stalls/:caseID/stop` | 停止正在进行的补查 |
 | `GET /api/diagnostics/runs/:id/stall-assets/:caseID/:filename` | 访问报告中声明的 MP4 或 JPEG 产物，支持片段 Range 播放 |
 | `GET /api/diagnostics/runs/:id/{dump,report.html,report.json,evidence.zip}` | 查看或下载产物。原 HTTP-FLV `stream.flv` 路径仍可用 |

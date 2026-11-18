@@ -103,6 +103,16 @@ button:disabled { opacity: .55; cursor: wait; }
 .stall-investigation a { color: var(--accent); }
 .stall-model { border-top: 1px solid var(--border); margin-top: .8rem; padding-top: .1rem; }
 .stall-model li { margin-block: .45rem; }
+.stall-assessment { border: 1px solid var(--border); border-radius: .375rem; padding: .15rem .7rem .4rem; margin-block: .75rem; background: var(--surface-inset); }
+.stall-assessment h6 { display: flex; align-items: center; flex-wrap: wrap; gap: .45rem; margin: .75rem 0 .35rem; font-size: .875rem; }
+.stall-assessment-conclusion { font-weight: 620; }
+.stall-direction { margin-block: .5rem; padding-bottom: .2rem; border-bottom: 1px solid var(--border); }
+.stall-direction:last-of-type { border-bottom: 0; }
+.stall-direction[data-state="observed"] .direction-state { color: #216247; background: #e5f3eb; }
+.stall-direction[data-state="candidate"] .direction-state { color: #774705; background: #fff2d7; }
+.stall-direction[data-state="insufficient"] .direction-state { color: #465b73; background: #ecf1f7; }
+.stall-assessment a, .stall-assessment li, .stall-assessment p { overflow-wrap: anywhere; }
+.stall-next-checks, .stall-assessment-limitations { padding-left: 1.2rem; }
 #report { margin-top: .9rem; }
 .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr)); gap: .55rem; margin: 0 0 .85rem; }
 .metrics div { padding: .65rem .7rem; min-width: 0; border: 1px solid var(--border); border-radius: .375rem; background: var(--surface-inset); }
