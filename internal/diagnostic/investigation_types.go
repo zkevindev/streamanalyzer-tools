@@ -67,6 +67,7 @@ type StallInvestigation struct {
 	ModelState     string             `json:"model_state"` // pending, complete, unconfigured, failed, changed
 	ModelError     string             `json:"model_error,omitempty"`
 	Explanation    *Explanation       `json:"explanation,omitempty"`
+	Assessment     *StallAssessment   `json:"assessment,omitempty"`
 }
 
 type investigationLedger struct {

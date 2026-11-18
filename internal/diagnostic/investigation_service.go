@@ -143,6 +143,10 @@ func (s *Service) runStallInvestigation(ctx context.Context, runID string, item 
 		return
 	}
 	item.Correlation = correlation
+	item.Assessment = assessStall(item)
+	if err := s.saveStallItem(runID, item); err != nil {
+		return
+	}
 	if ctx.Err() == nil {
 		item.Media = extractStallMedia(ctx, s.runDir(runID), report, item)
 	}
@@ -225,6 +229,9 @@ func (s *Service) explainStall(ctx context.Context, runID, caseID string) (Expla
 	defer func() { cancel(); s.modelMu.Lock(); model.cancel = nil; s.modelMu.Unlock() }()
 	scoped := *detail.Report
 	scoped.Findings = append([]Finding(nil), item.Correlation.Findings...)
+	if item.Assessment != nil {
+		scoped.Findings = append(scoped.Findings, item.Assessment.Findings...)
+	}
 	scoped.StallInvestigations = []StallInvestigation{*item}
 	player := *scoped.Player
 	player.Stalls = []PlayerStall{item.Stall}
@@ -300,6 +307,16 @@ func (s *Service) ExplainStall(ctx context.Context, runID, caseID string) (Stall
 		return StallInvestigation{}, ErrNotFound
 	}
 	item := *previous
+	if len(item.Correlation.Findings) == 0 {
+		return StallInvestigation{}, ErrPending
+	}
+	if item.Assessment == nil {
+		item.Assessment = assessStall(item)
+	}
+	item.Status, item.ModelState, item.ModelError, item.Explanation = "running", "pending", "", nil
+	if err := s.saveStallItem(runID, item); err != nil {
+		return StallInvestigation{}, err
+	}
 	explanation, selection, modelErr := s.explainStall(ctx, runID, caseID)
 	return s.finishStallModel(ctx, runID, item, explanation, selection, modelErr)
 }
@@ -385,9 +402,14 @@ func writeImmutableEvidence(dir, name string, data []byte) error {
 }
 
 func mergeStallFindings(report *Report) {
-	report.Findings = slices.DeleteFunc(report.Findings, func(f Finding) bool { return strings.HasPrefix(f.ID, "S") && strings.Contains(f.ID, "-E") })
+	report.Findings = slices.DeleteFunc(report.Findings, func(f Finding) bool {
+		return strings.HasPrefix(f.ID, "S") && (strings.Contains(f.ID, "-E") || strings.Contains(f.ID, "-A"))
+	})
 	for _, item := range report.StallInvestigations {
 		report.Findings = append(report.Findings, item.Correlation.Findings...)
+		if item.Assessment != nil {
+			report.Findings = append(report.Findings, item.Assessment.Findings...)
+		}
 	}
 }
 

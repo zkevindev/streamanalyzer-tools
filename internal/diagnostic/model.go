@@ -58,6 +58,7 @@ const explanationPrompt = "你是流媒体排障助手。请用中文，仅返�
 	"播放器首屏是从提交采样到视频呈现的观测，loadeddata_estimate 表示估算。" +
 	"卡顿排除启动等待、暂停、跳转和后台时段。source 为 independent_pull 时播放器与采样使用独立连接，不能把两条连接的时间相关性当作根因。" +
 	"stall_investigations 为选定卡顿的补查时序证据。截图和片段像素未提供给你，不得声称已看见画面、黑屏或解码结果。请引用真实证据 ID，明确观测和待验证假设。" +
+	"assessment 为基于观测的分层排查方向，不是根因判定。请遵循其限制，将候选方向写成待验证假设。" +
 	"没有足够证据时，给出简洁摘要并返回空 hypotheses。"
 
 type modelClient struct {
@@ -214,6 +215,7 @@ type modelStallInvestigation struct {
 	ClipCount           int                  `json:"clip_count"`
 	ScreenshotCount     int                  `json:"screenshot_count"`
 	ImagePixelsProvided bool                 `json:"image_pixels_provided"`
+	Assessment          *StallAssessment     `json:"assessment,omitempty"`
 }
 
 func modelRequestTimings(requests []HTTPRequestTiming) []modelHTTPRequest {
@@ -275,7 +277,7 @@ func modelInput(report Report) ([]byte, error) {
 			WindowStartMS: item.Correlation.WindowStartMS, WindowEndMS: item.Correlation.WindowEndMS,
 			Gaps: item.Correlation.Gaps, BufferSamples: item.Correlation.BufferSamples, Keyframes: item.Correlation.Keyframes,
 			Requests: modelRequestTimings(item.Correlation.Requests), Notes: item.Correlation.Notes,
-			MediaStatus: item.Media.Status, MediaAlignment: item.Media.Alignment}
+			MediaStatus: item.Media.Status, MediaAlignment: item.Media.Alignment, Assessment: item.Assessment}
 		for _, asset := range item.Media.Assets {
 			if asset.Kind == "clip" {
 				entry.ClipCount++

@@ -171,7 +171,7 @@ func correlateStall(dir string, report Report, id string, stallIndex int) (Stall
 	}
 	for _, finding := range report.Findings {
 		if strings.HasPrefix(finding.Code, "player_") ||
-			(strings.HasPrefix(finding.ID, "S") && strings.Contains(finding.ID, "-E")) ||
+			(strings.HasPrefix(finding.ID, "S") && (strings.Contains(finding.ID, "-E") || strings.Contains(finding.ID, "-A"))) ||
 			finding.EndMS < result.WindowStartMS || finding.StartMS > result.WindowEndMS {
 			continue
 		}
