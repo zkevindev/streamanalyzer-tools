@@ -118,6 +118,9 @@ func sample(ctx context.Context, client *http.Client, dir string, target *url.UR
 	defer cancel()
 
 	events, writeErr := capture(ctx, client, target, start, &observation, stream, timeline)
+	if player := capturePlayer(ctx); player != nil {
+		player.EndMedia()
+	}
 	observation.ElapsedMS = time.Since(start).Milliseconds()
 	if err := errors.Join(writeErr, stream.close(), timeline.close()); err != nil {
 		return Report{}, err
@@ -163,7 +166,11 @@ func capture(ctx context.Context, client *http.Client, target *url.URL, start ti
 	}()
 
 	body := io.LimitReader(resp.Body, maxStreamBytes)
-	tapped := io.TeeReader(bufio.NewReaderSize(body, 64<<10), payloadWriter{stream, observation, start})
+	var output io.Writer = stream
+	if player := capturePlayer(ctx); player != nil {
+		output = playerMediaWriter{output, player}
+	}
+	tapped := io.TeeReader(bufio.NewReaderSize(body, 64<<10), payloadWriter{output, observation, start})
 	parser, err := openFLV(tapped)
 	if err != nil {
 		observation.EndReason = bodyEnd(ctx, stream.bytes, err)

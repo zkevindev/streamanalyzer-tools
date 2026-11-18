@@ -36,6 +36,12 @@ const mediaArrivalLabels = {
     segment: ['首个视频分片完成', '首个音频分片完成'],
     pes: ['首个视频 PES 起始', '首个音频 PES 起始'],
 };
+const playerSources = { same_capture: '同一采样流', independent_pull: '独立 HLS 拉流' };
+const playerStates = {
+    awaiting: '等待播放器数据', recording: '采集中', complete: '采集完成',
+    unsupported: '当前环境不支持该播放格式', autoplay_blocked: '自动播放受限', error: '播放失败',
+};
+const playbackErrors = { media_error: '播放器媒体解码失败', network_error: '播放器网络请求失败', no_stream: '播放器未收到媒体流' };
 const modelProviderLabels = {
     'openai-compatible': 'OpenAI 兼容接口',
     deepseek: 'DeepSeek',
@@ -48,6 +54,7 @@ const tagLabels = {
     video: '视频', audio: '音频', invalid_audio: '音频标签异常', invalid_video: '视频标签异常', invalid_tag_size: '标签长度异常',
     hls_playlist: '播放列表', hls_init: '初始化段', hls_segment: '媒体分片', hls_gap: '标记缺失的分片',
     ts_packet: 'TS 包', ts_sync_loss: 'TS 同步丢失', rtp_datagram: 'RTP 数据报',
+    player_stall: '播放器卡顿',
 };
 const renditionLabels = { main: '主路', audio: '独立音频' };
 let desktop = false;
@@ -58,6 +65,158 @@ let runs = [];
 let currentModel = null;
 let currentExplanation;
 let modelConfigRequest = 0;
+let detailRequest = 0;
+let activePlayer;
+const finalizingPlayers = new Set();
+
+function playerSnapshotBody(recording) {
+    // Keep the first 10 seconds at native resolution and use about one sample per second after that.
+    // This stable selection preserves the uploaded prefix when a later snapshot appends samples.
+    const samples = recording.samples.filter((sample, index) => sample.at_ms <= 10_000 || index % 4 === 0 ||
+        (recording.complete && index === recording.samples.length - 1));
+    return JSON.stringify({ ...recording, samples });
+}
+
+function playerRequest(player, body, options = {}) {
+    return fetch(apiRoot + runPath(player.id) + '/player', {
+        ...options,
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-StreamAnalyzer-Player': player.token },
+        body,
+    });
+}
+
+async function uploadPlayerSnapshot(player, body) {
+    const abort = new AbortController();
+    player.uploadAbort = abort;
+    const deadline = setTimeout(() => abort.abort(), 5000);
+    try {
+        return (await playerRequest(player, body, { signal: abort.signal })).status;
+    } catch {
+        return 0;
+    } finally {
+        clearTimeout(deadline);
+        if (player.uploadAbort === abort) player.uploadAbort = null;
+    }
+}
+
+async function drainPlayerUploads(player) {
+    let saved = false;
+    try {
+        while (player.nextRecording && !player.unloading) {
+            const recording = player.nextRecording;
+            player.nextRecording = null;
+            const body = playerSnapshotBody(recording);
+            let status = await uploadPlayerSnapshot(player, body);
+            if (recording.complete && !player.unloading && (status === 0 || status >= 500)) {
+                status = await uploadPlayerSnapshot(player, body);
+            }
+            saved = status >= 200 && status < 300;
+        }
+        return saved;
+    } finally {
+        player.upload = null;
+    }
+}
+
+function queuePlayerSnapshot(player, recording) {
+    if (player.unloading) return;
+    player.nextRecording = recording;
+    player.upload ||= drainPlayerUploads(player);
+    return player.upload;
+}
+
+function sendClosingRecording(player, recording) {
+    player.nextRecording = null;
+    player.uploadAbort?.abort();
+    const body = playerSnapshotBody(recording);
+    void playerRequest(player, body, { keepalive: body.length <= 60_000 }).catch(() => {});
+}
+
+function finishPlayer(player, recording) {
+    if (player.finalized) return;
+    player.finalized = true;
+    clearInterval(player.heartbeat);
+    clearTimeout(player.deadline);
+    if (activePlayer === player) {
+        activePlayer = null;
+        node('player-preview').hidden = true;
+        node('play-player').hidden = true;
+    }
+    if (player.unloading) {
+        sendClosingRecording(player, recording);
+        return;
+    }
+    player.finalRecording = recording;
+    finalizingPlayers.add(player);
+    void queuePlayerSnapshot(player, recording).then((saved) => {
+        finalizingPlayers.delete(player);
+        if (player.unloading) return;
+        const selected = currentID === player.id;
+        if (!saved) message(selected ? '播放器体验记录上传失败。' : '上一条采样的播放器体验记录上传失败。', true);
+        else if (selected) void refreshDetail(player.id);
+    });
+}
+
+function stopPlayback(player, unloading = false) {
+    if (!player) return;
+    player.unloading = unloading;
+    finishPlayer(player, player.collector.finish());
+}
+
+function completePlayback(player, reason) {
+    if (reason !== 'eof' && reason !== 'duration_limit') {
+        stopPlayback(player);
+        return;
+    }
+    if (player.draining) return;
+    player.draining = true;
+    player.collector.cutoff();
+    clearTimeout(player.deadline);
+    player.deadline = setTimeout(() => stopPlayback(player), 800);
+}
+
+function startPlayback(run, startedAt, startedAtPerformanceMS, seconds) {
+    const grant = run.player;
+    if (!grant) return;
+    const player = { id: run.id, token: grant.token };
+    const source = playerSources[grant.source] || grant.source;
+    const status = node('player-status');
+    const preview = node('player-preview');
+    const video = node('sample-player');
+    preview.dataset.runId = run.id;
+    preview.hidden = false;
+    node('play-player').hidden = true;
+    if (typeof PlayerDiagnostics === 'undefined') {
+        status.textContent = '播放器模块加载失败。';
+        video.hidden = true;
+        return;
+    }
+    video.hidden = false;
+    status.textContent = `正在加载播放器… · ${source}`;
+    const statuses = {
+        playing: '播放中', waiting: '缓冲中…', pause: '已暂停', ended: '播放结束',
+        autoplay_blocked: playerStates.autoplay_blocked, unsupported: playerStates.unsupported, error: playerStates.error,
+    };
+    player.collector = new PlayerDiagnostics(video, grant, {
+        startedAt, startedAtPerformanceMS,
+        onChange(event) {
+            if (activePlayer !== player || !statuses[event.kind]) return;
+            if (['autoplay_blocked', 'unsupported', 'error'].includes(player.status) &&
+                ['waiting', 'pause', 'ended'].includes(event.kind)) return;
+            player.status = event.kind;
+            const label = playbackErrors[event.code] || statuses[event.kind];
+            status.textContent = `${label} · ${source}`;
+            node('play-player').hidden = event.kind !== 'autoplay_blocked';
+        },
+        onFinish: (recording) => finishPlayer(player, recording),
+    });
+    activePlayer = player;
+    player.heartbeat = setInterval(() => queuePlayerSnapshot(player, player.collector.snapshot()), 2000);
+    player.deadline = setTimeout(() => stopPlayback(player), seconds * 1000 + 5000);
+    player.collector.start();
+    if (!player.finalized) queuePlayerSnapshot(player, player.collector.snapshot());
+}
 
 async function api(path, options) {
     const response = await fetch(apiRoot + path, options);
@@ -146,6 +305,10 @@ function hexLabel(value, width) {
 
 function renderEvidence(protocol, events) {
     const kind = (event) => tagLabels[event.kind] || event.kind;
+    if (events[0]?.artifact === 'player.json') {
+        return renderTable(['对象', '开始偏移 (ms)', '结束偏移 (ms)', '耗时 (ms)', '原始记录'],
+            events.map((event) => [kind(event), event.arrival_ms, event.arrival_ms + (event.duration_ms ?? 0), event.duration_ms, event.artifact]));
+    }
     if (protocol === 'hls') {
         return renderTable(['对象', '流', '分片序号', '到达 (ms)', 'HTTP', '请求耗时 (ms)', '原始包条目', '长度（字节）'],
             events.map((event) => [kind(event), renditionLabels[event.rendition], event.sequence, event.arrival_ms, event.http_status || '—',
@@ -301,6 +464,68 @@ function renderTransport(protocol, ts) {
     node('pid-table').replaceChildren(table);
 }
 
+function renderBufferChart(samples, stalls, elapsed) {
+    const figure = element('figure', '', 'player-buffer-chart');
+    figure.append(element('figcaption', stalls.length ? '可播放缓冲 · 阴影为卡顿区间' : '可播放缓冲'));
+    const svgElement = (tag, attributes, text) => {
+        const part = document.createElementNS('http://www.w3.org/2000/svg', tag);
+        for (const [name, value] of Object.entries(attributes)) part.setAttribute(name, value);
+        if (text != null) part.textContent = text;
+        return part;
+    };
+    const duration = Math.max(1, elapsed, ...samples.map((sample) => sample.offset_ms), ...stalls.map((stall) => stall.end_ms));
+    const maximum = Math.max(1000, Math.ceil(Math.max(...samples.map((sample) => sample.buffer_ms)) / 1000) * 1000);
+    const x = (ms) => 45 + 540 * Math.max(ms, 0) / duration;
+    const y = (ms) => 112 - 94 * ms / maximum;
+    const svg = svgElement('svg', { viewBox: '0 0 615 152', role: 'img', 'aria-label': '可播放缓冲，横轴是距采样开始的秒数' });
+    for (const value of [0, maximum / 2, maximum]) {
+        svg.append(svgElement('line', { x1: 45, y1: y(value), x2: 585, y2: y(value), class: 'grid' }),
+            svgElement('text', { x: 40, y: y(value) + 4, 'text-anchor': 'end' }, `${value / 1000}s`));
+    }
+    for (const stall of stalls) {
+        svg.append(svgElement('rect', { x: x(stall.start_ms), y: 18, width: Math.max(0, x(stall.end_ms) - x(stall.start_ms)), height: 94, class: 'stall' }));
+    }
+    svg.append(svgElement('polyline', { points: samples.map((sample) => `${x(sample.offset_ms).toFixed(1)},${y(sample.buffer_ms).toFixed(1)}`).join(' '), class: 'line' }));
+    if (samples.length === 1) {
+        svg.append(svgElement('circle', { cx: x(samples[0].offset_ms), cy: y(samples[0].buffer_ms), r: 3, class: 'point' }));
+    }
+    for (const value of [0, duration / 2, duration]) {
+        svg.append(svgElement('text', { x: x(value), y: 131, 'text-anchor': 'middle' }, `${(value / 1000).toFixed(value ? 1 : 0)}s`));
+    }
+    svg.append(svgElement('text', { x: 315, y: 149, 'text-anchor': 'middle' }, '距采样开始'));
+    figure.append(svg);
+    return figure;
+}
+
+function renderPlayerReport(player, elapsed) {
+    node('player-report').hidden = !player;
+    if (!player) return;
+    const lastError = (player.events || []).filter((event) => event.kind === 'error').at(-1);
+    const state = player.state === 'error' ? playbackErrors[lastError?.code] || playerStates.error : playerStates[player.state] || player.state;
+    const played = player.first_playing_ms != null;
+    const screen = player.first_screen_method === 'loadeddata_estimate' ? '首屏（加载首帧估算）' : '首屏';
+    const stallCount = player.stall_threshold_ms > 0 ? `卡顿次数（≥ ${player.stall_threshold_ms} ms）` : '卡顿次数';
+    const values = [
+        ['状态', player.state === 'complete' && !played ? '采集结束，未开始播放' : state],
+        ['来源', playerSources[player.source] || player.source],
+        [screen, player.first_screen_ms == null ? '未观测' : time(player.first_screen_ms)],
+        ['开始播放', played ? time(player.first_playing_ms) : '未观测'],
+        [stallCount, played ? player.stall_count : '未观测'],
+        ['累计卡顿', played ? time(player.total_stall_ms) : '未观测'],
+        ['最长卡顿', played ? time(player.max_stall_ms) : '未观测'],
+        ['播放观察时长', played ? time(player.active_ms) : '未观测'],
+    ];
+    if (player.min_buffer_ms != null) values.push(['最小可播放缓冲', time(player.min_buffer_ms)]);
+    renderMetrics('player-metrics', values);
+    const threshold = player.stall_threshold_ms > 0 ? `至少 ${player.stall_threshold_ms} ms 的` : '';
+    node('player-method').textContent = `卡顿统计从开始播放到采样结束，计入${threshold}等待。暂停、跳转和后台期间停止计时。正常结束后可短暂补记首屏。`;
+    const stalls = player.stalls || [];
+    const samples = player.buffer_samples || [];
+    node('player-buffer').replaceChildren(...(samples.length ? [renderBufferChart(samples, stalls, elapsed)] : []));
+    const stallRows = stalls.map((stall) => [time(stall.start_ms), time(stall.end_ms), time(stall.duration_ms)]);
+    node('player-stalls').replaceChildren(...(stallRows.length ? [element('h4', '卡顿区间'), renderTable(['开始偏移', '结束偏移', '耗时'], stallRows)] : []));
+}
+
 function renderReport(report) {
     const observed = report.manifest.observation;
     const protocol = report.manifest.protocol;
@@ -336,6 +561,7 @@ function renderReport(report) {
     values.push([protocols[protocol]?.dump || '原始流', bytes(report.manifest.stream.bytes)]);
     renderMetrics('metrics', values);
     renderSamplingTiming(report, requests);
+    renderPlayerReport(report.player, observed.elapsed_ms);
     renderTransport(protocol, report.mpegts);
     renderTrace(report.findings, observed.elapsed_ms);
     const findings = report.findings.map((finding) => {
@@ -442,23 +668,29 @@ function renderDetail(detail) {
 }
 
 async function refreshDetail(id) {
+    const request = ++detailRequest;
+    clearTimeout(activePoll);
     try {
         const detail = await api(runPath(id));
-        if (id !== currentID) return;
+        if (id !== currentID || request !== detailRequest) return;
         const previousStatus = currentStatus;
         renderDetail(detail);
         if (detail.status === 'running') {
             activePoll = setTimeout(() => refreshDetail(id), 850);
-        } else if (previousStatus === 'running') {
-            await refreshHistory();
+        } else {
+            if (activePlayer?.id === id) completePlayback(activePlayer, detail.report?.manifest.observation.end_reason);
+            if (previousStatus === 'running') await refreshHistory();
         }
     } catch (err) {
-        if (id === currentID) message(err.message, true);
+        if (id !== currentID || request !== detailRequest) return;
+        message(err.message, true);
+        if (activePlayer?.id === id) activePoll = setTimeout(() => refreshDetail(id), 1000);
     }
 }
 
 function selectRun(id) {
-    clearTimeout(activePoll);
+    if (activePlayer && activePlayer.id !== id) stopPlayback(activePlayer);
+    if (node('player-preview').dataset.runId !== id) node('player-preview').hidden = true;
     currentID = id;
     currentStatus = '';
     history.replaceState(null, '', '#' + id);
@@ -477,8 +709,8 @@ function bindForm(id, submit) {
         try {
             const run = await submit();
             message('');
-            await refreshHistory();
             await selectRun(run.id);
+            await refreshHistory();
         } catch (err) {
             message(err.message, true);
         } finally {
@@ -496,10 +728,19 @@ node('protocol').addEventListener('change', () => {
     hint.hidden = !selected.receive;
     hint.textContent = selected.receive ? `填写本机 IPv4 和端口。组播示例 ${protocol.split('-')[0]}://239.1.1.1:5000?interface=en0` : '';
 });
-bindForm('sample', () => api('/runs', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ protocol: node('protocol').value, url: node('url').value.trim(), seconds: node('seconds').valueAsNumber }),
-}));
+bindForm('sample', async () => {
+    const startedAt = Date.now();
+    const startedAtPerformanceMS = performance.now();
+    const seconds = node('seconds').valueAsNumber;
+    const playback = node('analyze-playback').checked;
+    const run = await api('/runs', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ protocol: node('protocol').value, url: node('url').value.trim(), seconds, playback }),
+    });
+    stopPlayback(activePlayer);
+    startPlayback(run, startedAt, startedAtPerformanceMS, seconds);
+    return run;
+});
 bindForm('import', () => {
     message('正在上传证据包并重跑规则…');
     return api('/import', {
@@ -509,6 +750,7 @@ bindForm('import', () => {
 node('stop').addEventListener('click', async () => {
     const id = currentID;
     node('stop').disabled = true;
+    if (activePlayer?.id === id) stopPlayback(activePlayer);
     try {
         await api(runPath(id) + '/stop', { method: 'POST' });
         if (id === currentID) message('已请求停止，正在保存采样结果。');
@@ -516,6 +758,14 @@ node('stop').addEventListener('click', async () => {
         message(err.message, true);
     } finally {
         node('stop').disabled = false;
+    }
+});
+node('play-player').addEventListener('click', () => { void activePlayer?.collector.play(); });
+window.addEventListener('pagehide', () => {
+    stopPlayback(activePlayer, true);
+    for (const player of finalizingPlayers) {
+        player.unloading = true;
+        sendClosingRecording(player, player.finalRecording);
     }
 });
 node('explain').addEventListener('click', async () => {

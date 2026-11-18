@@ -6,6 +6,9 @@
     <title>排障工作台 · Stream Analyzer</title>
     <link rel="stylesheet" href="/static/workbench-theme.css">
     <link rel="stylesheet" href="/static/diagnostics.css">
+    <script src="/static/mpegts.js" defer></script>
+    <script src="/static/hls.min.js" defer></script>
+    <script src="/static/player-diagnostics.js" defer></script>
     <script src="/static/diagnostics.js" defer></script>
 </head>
 <body>
@@ -55,6 +58,7 @@
                     </div>
                     <button type="submit">采样并保存原始流</button>
                 </div>
+                <label class="playback-option"><input id="analyze-playback" type="checkbox"> 同时分析播放器体验</label>
             </form>
         </section>
         <section class="panel" aria-labelledby="import-heading">
@@ -81,6 +85,12 @@
             </div>
             <div class="panel-body">
                 <p id="summary" class="muted" role="status">选择一条记录查看报告。</p>
+                <section id="player-preview" class="player-preview" aria-labelledby="player-preview-title" hidden>
+                    <h3 id="player-preview-title">播放器预览</h3>
+                    <video id="sample-player" controls muted playsinline preload="none" aria-label="采样流播放器"></video>
+                    <p id="player-status" class="muted" role="status"></p>
+                    <button id="play-player" class="secondary" type="button" hidden>开始播放</button>
+                </section>
                 <div id="report" hidden>
                     <dl id="metrics" class="metrics"></dl>
                     <div class="tool-row">
@@ -100,6 +110,14 @@
                             <p id="request-timing-truncated" class="timing-note muted" hidden></p>
                         </section>
                         <div id="timing-table"></div>
+                    </section>
+                    <section id="player-report" aria-labelledby="player-report-title" hidden>
+                        <h3 id="player-report-title" class="report-title">播放器体验</h3>
+                        <p class="timing-note muted">首屏与开始播放从提交采样计时。缓冲曲线和卡顿区间从后端采样开始计时。</p>
+                        <dl id="player-metrics" class="metrics"></dl>
+                        <p id="player-method" class="timing-note muted"></p>
+                        <div id="player-buffer"></div>
+                        <div id="player-stalls"></div>
                     </section>
                     <section id="transport" aria-labelledby="transport-title" hidden>
                         <h3 id="transport-title" class="report-title">MPEG-TS 传输指标</h3>

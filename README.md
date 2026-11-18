@@ -25,7 +25,13 @@ UDP 与 RTP 使用 IPv4 接收地址，例如 `udp://0.0.0.0:5000` 或 `rtp://12
 
 连接报告逐次记录 HTTP 请求及跳转响应，分别展示 302、200 等状态、单次请求耗时和首字节时间，并提供可观测的 DNS、TCP、TLS、发送请求、等待首字节和接收响应头的阶段耗时。HLS 的播放列表、初始化段及媒体分片请求也保留这些时序信息。RTMP 单独展示 TCP、TLS、协议握手、应用连接、创建流和播放协商阶段。
 
-首包、首个视频数据、首个音频数据和首个关键帧按采样起点展示到达时间。FLV/RTMP 使用解析到的媒体帧，MPEG-TS 使用已识别媒体 PID 上的 PES 起始，HLS 使用已解析媒体类型的分片。首屏渲染、播放器缓冲和解码耗时需要结合客户端日志或埋点。已有报告还会展示音视频接收间隔、时间戳和关键帧异常、重复异常次数及后续检查建议。
+首包、首个视频数据、首个音频数据和首个关键帧按采样起点展示到达时间。FLV/RTMP 使用解析到的媒体帧，MPEG-TS 使用已识别媒体 PID 上的 PES 起始，HLS 使用已解析媒体类型的分片。已有报告还会展示音视频接收间隔、时间戳和关键帧异常、重复异常次数及后续检查建议。
+
+采样时勾选「同时分析播放器体验」，工作台会播放并记录首屏、首次开始播放、可播放缓冲变化、卡顿次数、累计及最长卡顿时长。首屏从提交采样开始计时，优先使用浏览器实际呈现视频帧的回调，缺少该能力时明确标为首帧加载估算。缓冲曲线和卡顿区间对齐后端采样时间轴，与 DNS、TCP、HTTP 跳转及首音视频等阶段耗时放在同一份报告中。播放器音视频解码能力取决于当前系统和浏览器；不支持的编码或播放失败会留下具体状态，拉流采样及 dump 仍可继续。
+
+卡顿从首次开始播放后统计，持续等待至少 500 ms 计为一次。启动等待、手动暂停、跳转和页面隐藏期间排除，正常采样结束造成的断流会截断计时。HTTP-FLV、RTMP 和 TS 播放使用本次采样转发的数据，HLS 使用独立连接播放同一地址，报告会标注来源。播放器结果反映本机播放环境，分析客户现场问题时还需对照客户的播放器埋点。
+
+播放器原始事件和缓冲样本写入证据包的 `player.json` 并校验 SHA-256，导入后离线重算播放器指标和卡顿区间，无需重新播放源流。HTML/JSON 报告包含相同结果；模型解读按需接收播放器指标、卡顿区间及对应证据。页面退出或网络中断前已保存的部分记录会保留，并标明采集状态。
 
 HLS 主清单选取带宽最高的常规变体及其默认独立音频 rendition。直播从清单末尾最多三个完整分片开始采样，随后跟踪新分片，点播按清单顺序下载。加密分片保存原始密文，媒体识别限于能够检查的明文分片。原始产物可能包含签名 URL 或业务元数据。停止、读流失败或达到 128 MiB 的原始产物上限时，工作台保留已收集的数据和可用报告。
 
@@ -35,10 +41,11 @@ JSON 报告及 SQLite 任务索引位于数据目录下的 `diagnostics/`。基�
 
 | 方法与路径 | 用途 |
 | --- | --- |
-| `POST /api/diagnostics/runs` | 用 `{"protocol":"hls","url":"https://live.example.com/index.m3u8","seconds":60}` 发起采样。协议可选 `http-flv`、`rtmp`、`hls`、`http-ts`、`udp-ts`、`rtp-ts`，省略时默认 `http-flv` |
+| `POST /api/diagnostics/runs` | 用 `{"protocol":"hls","url":"https://live.example.com/index.m3u8","seconds":60,"playback":true}` 发起采样。协议可选 `http-flv`、`rtmp`、`hls`、`http-ts`、`udp-ts`、`rtp-ts`，省略时默认 `http-flv`。`playback` 可选，启用时响应返回本机播放器会话授权 |
 | `GET /api/diagnostics/runs` | 查看最近的采样和复盘记录 |
 | `GET /api/diagnostics/runs/:id` | 查询状态、规则报告和已生成的模型解读 |
 | `POST /api/diagnostics/runs/:id/stop` | 停止采样并保存已获取的数据 |
+| `POST /api/diagnostics/runs/:id/player` | 用会话授权头 `X-StreamAnalyzer-Player` 保存追加的播放器事件和缓冲样本；`complete` 后记录不可更改 |
 | `GET /api/diagnostics/runs/:id/{dump,report.html,report.json,evidence.zip}` | 查看或下载产物。原 HTTP-FLV `stream.flv` 路径仍可用 |
 | `POST /api/diagnostics/import` | 请求体传 ZIP 原始字节，类型为 `application/zip` |
 | `POST /api/diagnostics/runs/:id/explain` | 请求模型解读报告 |

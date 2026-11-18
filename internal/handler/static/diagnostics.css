@@ -39,6 +39,8 @@ input::file-selector-button { color: var(--text); background: #e7eef7; border: 0
 .field-hint { margin-top: .35rem; font-size: .8rem; overflow-wrap: anywhere; }
 .sample-options { display: flex; align-items: end; gap: .8rem; flex-wrap: wrap; margin-top: .65rem; }
 .sample-options input { width: 6rem; }
+.playback-option { display: inline-flex; align-items: center; gap: .5rem; min-height: 2.75rem; margin: .45rem 0 0; cursor: pointer; }
+.playback-option input { width: 1rem; min-height: 1rem; margin: 0; accent-color: var(--accent); }
 button, .button { display: inline-flex; align-items: center; justify-content: center; min-height: 2.75rem; border: 1px solid var(--accent); background: var(--accent); color: white; padding: .45rem .85rem; border-radius: .375rem; font-size: .875rem; font-weight: 630; text-decoration: none; text-align: center; cursor: pointer; }
 button:hover, .button:hover { background: var(--accent-hover); }
 button:disabled { opacity: .55; cursor: wait; }
@@ -62,6 +64,20 @@ button:disabled { opacity: .55; cursor: wait; }
 .status[data-status="failed"], .severity[data-severity="error"] { color: #962d35; background: #fae8eb; }
 #empty-history { padding: 1rem; }
 #summary { overflow-wrap: anywhere; margin: 0; }
+.player-preview { display: grid; gap: .5rem; margin-block: .9rem; }
+.player-preview video { display: block; width: min(100%, 33rem); aspect-ratio: 16 / 9; border-radius: .375rem; background: #101d2d; }
+.player-preview p { font-size: .875rem; }
+.player-preview button { justify-self: start; }
+#player-report { margin-bottom: 1rem; }
+.player-buffer-chart { margin: .65rem 0 .85rem; padding: .5rem .65rem; border: 1px solid var(--border); border-radius: .375rem; background: var(--surface-inset); }
+.player-buffer-chart figcaption { color: var(--muted); font-size: .825rem; }
+.player-buffer-chart svg { display: block; width: 100%; height: auto; min-height: 7rem; overflow: visible; }
+.player-buffer-chart text { fill: var(--muted); font: 12px var(--font-data); }
+.player-buffer-chart .grid { stroke: #d4dfec; stroke-width: 1; }
+.player-buffer-chart .line { fill: none; stroke: var(--accent); stroke-width: 2; }
+.player-buffer-chart .point { fill: var(--accent); }
+.player-buffer-chart .stall { fill: #ecc781; opacity: .55; }
+#player-stalls h4 { margin: .65rem 0 .4rem; font-size: .92rem; }
 #report { margin-top: .9rem; }
 .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr)); gap: .55rem; margin: 0 0 .85rem; }
 .metrics div { padding: .65rem .7rem; min-width: 0; border: 1px solid var(--border); border-radius: .375rem; background: var(--surface-inset); }

@@ -8,12 +8,13 @@ import (
 const (
 	legacyFLVSchemaVersion     = 1
 	multiProtocolSchemaVersion = 2
+	playerSchemaVersion        = 3
 	defaultSeconds             = 60
 	maxSeconds                 = 300
 	maxStreamBytes             = 128 << 20
 	maxTimeline                = 32 << 20
 	maxTags                    = 100_000
-	MaxBundleBytes             = maxStreamBytes + maxTimeline + 2<<20
+	MaxBundleBytes             = maxStreamBytes + maxTimeline + 3<<20
 )
 
 const (
@@ -36,6 +37,7 @@ const (
 	manifestName   = "manifest.json"
 	reportName     = "report.json"
 	htmlName       = "report.html"
+	playerName     = "player.json"
 )
 
 var (
@@ -51,17 +53,19 @@ type SampleRequest struct {
 	URL      string `json:"url"`
 	Seconds  int    `json:"seconds"`
 	Protocol string `json:"protocol,omitempty"`
+	Playback bool   `json:"playback,omitempty"`
 }
 
 type Run struct {
-	ID          string    `json:"id"`
-	Mode        string    `json:"mode"`
-	Protocol    string    `json:"protocol"`
-	Status      string    `json:"status"`
-	Origin      string    `json:"origin,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
-	Error       string    `json:"error,omitempty"`
-	ReportReady bool      `json:"report_ready"`
+	ID          string       `json:"id"`
+	Mode        string       `json:"mode"`
+	Protocol    string       `json:"protocol"`
+	Status      string       `json:"status"`
+	Origin      string       `json:"origin,omitempty"`
+	CreatedAt   time.Time    `json:"created_at"`
+	Error       string       `json:"error,omitempty"`
+	ReportReady bool         `json:"report_ready"`
+	Player      *PlayerStart `json:"player,omitempty"`
 }
 
 type Artifact struct {
@@ -113,6 +117,7 @@ type Manifest struct {
 	Observation Observation `json:"observation"`
 	Stream      Artifact    `json:"stream"`
 	Timeline    Artifact    `json:"timeline"`
+	Player      *Artifact   `json:"player,omitempty"`
 }
 
 // Event locates protocol evidence in the dump. RTMP and FLV events use byte
@@ -172,6 +177,7 @@ type Report struct {
 	HLS               *HLSMetrics         `json:"hls,omitempty"`
 	MPEGTS            *MPEGTSMetrics      `json:"mpegts,omitempty"`
 	Findings          []Finding           `json:"findings"`
+	Player            *PlayerReport       `json:"player,omitempty"`
 }
 
 type Detail struct {
