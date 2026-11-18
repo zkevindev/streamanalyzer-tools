@@ -23,20 +23,21 @@ var (
 )
 
 type Config struct {
-	PlatformHost string `json:"platform_host"`
-	PlatformPort int    `json:"platform_port"`
-	SIPTransport string `json:"sip_transport,omitempty"`
-	PlatformID   string `json:"platform_id"`
-	Domain       string `json:"domain"`
-	DeviceID     string `json:"device_id"`
-	ChannelID    string `json:"channel_id"`
-	Username     string `json:"username"`
-	Password     string `json:"password"`
-	LocalIP      string `json:"local_ip"`
-	LocalPort    int    `json:"local_port"`
-	Heartbeat    int    `json:"heartbeat_seconds"`
-	CaptureRTP   bool   `json:"capture_rtp,omitempty"`
-	AudioCodec   string `json:"audio_codec,omitempty"`
+	PlatformHost string       `json:"platform_host"`
+	PlatformPort int          `json:"platform_port"`
+	SIPTransport string       `json:"sip_transport,omitempty"`
+	PlatformID   string       `json:"platform_id"`
+	Domain       string       `json:"domain"`
+	DeviceID     string       `json:"device_id"`
+	ChannelID    string       `json:"channel_id"`
+	Username     string       `json:"username"`
+	Password     string       `json:"password"`
+	LocalIP      string       `json:"local_ip"`
+	LocalPort    int          `json:"local_port"`
+	Heartbeat    int          `json:"heartbeat_seconds"`
+	Faults       *FaultConfig `json:"faults,omitempty"`
+	CaptureRTP   bool         `json:"capture_rtp,omitempty"`
+	AudioCodec   string       `json:"audio_codec,omitempty"`
 }
 
 func (c *Config) validate() error {
@@ -81,6 +82,13 @@ func (c *Config) validate() error {
 	}
 	if len(c.Username) > 128 || strings.ContainsAny(c.Username, "\r\n\x00") || len(c.Password) > 1024 {
 		return errors.New("SIP 鉴权用户名或密码格式无效")
+	}
+	if c.Faults != nil {
+		faults := *c.Faults
+		c.Faults = &faults
+		if err := c.Faults.validate(); err != nil {
+			return err
+		}
 	}
 	if c.Heartbeat == 0 {
 		c.Heartbeat = 60

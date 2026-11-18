@@ -78,7 +78,20 @@
                 <div><label for="heartbeat">心跳间隔（秒）</label><input id="heartbeat" name="heartbeat_seconds" type="number" min="5" max="300" value="60"></div>
               </div>
             </details>
-          <label class="sim-check"><input id="capture-rtp" type="checkbox"> 采样已发送的 RTP（每次点播最多 4 MiB）</label>
+          <details class="sim-advanced">
+              <summary>故障场景</summary>
+              <div class="sim-fields">
+                <div><label for="fault-delay">起播延迟（ms）</label><input id="fault-delay" type="number" min="0" max="30000" value="0"></div>
+                <div><label for="fault-start">媒体开始后（ms）</label><input id="fault-start" type="number" min="0" max="600000" value="0"></div>
+                <div><label for="fault-window">故障持续（ms）</label><input id="fault-window" type="number" min="1" max="60000" value="5000"></div>
+                <div><label for="fault-jump">时间戳跳变（ms）</label><input id="fault-jump" type="number" min="-30000" max="30000" value="0"></div>
+                <div><label for="fault-drop">每 N 个 UDP RTP 包丢 1 个</label><input id="fault-drop" type="number" min="0" max="10000" value="0"></div>
+                <div><label for="fault-reorder">每 N 个 UDP RTP 包交换相邻包</label><input id="fault-reorder" type="number" min="0" max="10000" value="0"></div>
+              </div>
+              <label class="sim-check"><input id="fault-mute" type="checkbox"> 故障期间中断音频</label>
+              <p class="muted field-hint">0 表示关闭相应故障。包交换在同一个 PS 单元内发生。时间戳跳变触发一次，偏移持续到会话结束。</p>
+            </details>
+            <label class="sim-check"><input id="capture-rtp" type="checkbox"> 采样已发送的 RTP（每次点播最多 4 MiB）</label>
           </fieldset>
           <div class="sim-controls">
             <button id="start" type="submit" disabled>启动模拟设备</button>

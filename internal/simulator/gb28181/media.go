@@ -273,6 +273,38 @@ func (d *device) stream(session *mediaSession) {
 	muxer := newProgramMuxer(audioCodec)
 	seq := uint16(rand.Uint32())
 	rtpBase := rand.Uint32()
+	faults := mediaFaults{config: d.cfg.Faults}
+	mark := func(stage, detail string) {
+		d.mu.Lock()
+		defer d.mu.Unlock()
+		if d.media == session {
+			session.evidence.mark(stage, detail, time.Now(), true)
+		}
+	}
+	var stats FaultStats
+	if faults.config != nil {
+		if session.offer.transport == mediaUDP {
+			faults.packets.dropEvery = uint64(faults.config.DropEvery)
+			faults.packets.reorderEvery = uint64(faults.config.ReorderEvery)
+		} else if faults.config.DropEvery != 0 || faults.config.ReorderEvery != 0 {
+			mark("fault_udp_only", "当前媒体为 TCP")
+		}
+		if faults.config.FirstDelayMS != 0 {
+			d.mu.Lock()
+			if d.media == session {
+				d.status.MediaState = "delaying"
+			}
+			d.mu.Unlock()
+			if err := faults.delay(ctx, mark); err != nil {
+				return
+			}
+			d.mu.Lock()
+			if d.media == session {
+				d.status.MediaState = phase
+			}
+			d.mu.Unlock()
+		}
+	}
 	firstPacket, firstKey := true, true
 	capture := func(packet []byte) {
 		if !firstPacket && !session.evidence.CaptureEnabled {
@@ -289,12 +321,41 @@ func (d *device) stream(session *mediaSession) {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		inside, mute := faults.apply(&unit, mark)
+		if mute {
+			stats.MutedAudio++
+			mark("fault_mute", "")
+			d.mu.Lock()
+			if d.media == session {
+				snapshot := stats
+				session.evidence.FaultStats = &snapshot
+			}
+			d.mu.Unlock()
+			return nil
+		}
+		var rules *packetFaults
+		if inside && (faults.packets.dropEvery != 0 || faults.packets.reorderEvery != 0) {
+			rules = &faults.packets
+		}
 		ps := muxer.pack(unit)
-		packets, err := sendRTP(conn, session.offer, ps, rtpBase+uint32(unit.dts), &seq, capture)
+		dropped := faults.packets.dropped
+		packets, err := sendRTP(conn, session.offer, ps, rtpBase+uint32(unit.dts), &seq, capture, rules)
+		if faults.packets.dropped != stats.DroppedRTP {
+			stats.DroppedRTP = faults.packets.dropped
+			mark("fault_loss", "")
+		}
+		if faults.packets.reordered != stats.ReorderedRTP {
+			stats.ReorderedRTP = faults.packets.reordered
+			mark("fault_reorder", "")
+		}
 		d.mu.Lock()
 		if d.media == session {
 			d.status.RTPPackets += packets
-			if err == nil {
+			if faults.config != nil {
+				snapshot := stats
+				session.evidence.FaultStats = &snapshot
+			}
+			if err == nil && dropped == faults.packets.dropped {
 				if unit.stream == videoStreamID {
 					d.status.VideoFrames++
 					if unit.key && firstKey {
@@ -344,7 +405,7 @@ func playTestPattern(ctx context.Context, send func(mediaUnit) error) error {
 	}
 }
 
-func sendRTP(conn net.Conn, offer mediaOffer, ps []byte, stamp uint32, seq *uint16, observe func([]byte)) (uint64, error) {
+func sendRTP(conn net.Conn, offer mediaOffer, ps []byte, stamp uint32, seq *uint16, observe func([]byte), faults *packetFaults) (uint64, error) {
 	const maxPayload = 1200
 	if err := conn.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil {
 		return 0, err
@@ -355,6 +416,15 @@ func sendRTP(conn net.Conn, offer mediaOffer, ps []byte, stamp uint32, seq *uint
 	binary.BigEndian.PutUint32(datagram[4:8], stamp)
 	binary.BigEndian.PutUint32(datagram[8:12], offer.ssrc)
 	var sent uint64
+	var held []byte
+	write := func(packet, raw []byte) error {
+		if _, err := conn.Write(packet); err != nil {
+			return err
+		}
+		observe(raw)
+		sent++
+		return nil
+	}
 	for len(ps) > 0 {
 		size := min(maxPayload, len(ps))
 		datagram[1] = offer.payload
@@ -368,13 +438,34 @@ func sendRTP(conn net.Conn, offer mediaOffer, ps []byte, stamp uint32, seq *uint
 			binary.BigEndian.PutUint16(buffer[:2], uint16(len(packet)))
 			packet = buffer[:2+len(packet)]
 		}
-		if _, err := conn.Write(packet); err != nil {
-			return sent, err
-		}
-		observe(datagram[:12+size])
 		*seq = *seq + 1
 		ps = ps[size:]
-		sent++
+		if faults != nil {
+			faults.index++
+			if faults.dropEvery != 0 && faults.index%faults.dropEvery == 0 {
+				faults.dropped++
+				continue
+			}
+			if held == nil && len(ps) > 0 && faults.reorderEvery != 0 && faults.index%faults.reorderEvery == 0 {
+				held = bytes.Clone(packet)
+				continue
+			}
+		}
+		if err := write(packet, datagram[:12+size]); err != nil {
+			return sent, err
+		}
+		if held != nil {
+			if err := write(held, held); err != nil {
+				return sent, err
+			}
+			faults.reordered += 2
+			held = nil
+		}
+	}
+	if held != nil {
+		if err := write(held, held); err != nil {
+			return sent, err
+		}
 	}
 	return sent, nil
 }

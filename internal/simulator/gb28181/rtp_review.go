@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"errors"
+	"slices"
 )
 
 type RTPReview struct {
@@ -24,9 +25,7 @@ func reviewRTP(data []byte) (RTPReview, error) {
 	var result RTPReview
 	var firstTime, lastTime uint64
 	var highest, lowest int
-	var stamp uint32
-	var ps []byte
-	seen := make(map[int]bool)
+	seen := make(map[int][]byte)
 	for len(data) > 0 {
 		if len(data) < 10 {
 			return result, errors.New("RTP 采样索引不完整")
@@ -42,21 +41,33 @@ func reviewRTP(data []byte) (RTPReview, error) {
 			return result, errors.New("RTP 采样包含无法解析的包头")
 		}
 		seq := binary.BigEndian.Uint16(packet[2:4])
-		clock := binary.BigEndian.Uint32(packet[4:8])
 		if result.Packets == 0 {
 			firstTime = at
-			highest, lowest, stamp = int(seq), int(seq), clock
+			highest, lowest = int(seq), int(seq)
 		}
 		extended := highest + int(int16(seq-uint16(highest)))
-		if seen[extended] {
+		if _, duplicate := seen[extended]; duplicate {
 			result.Duplicates++
-		} else if extended < highest {
-			result.OutOfOrder++
+		} else {
+			if extended < highest {
+				result.OutOfOrder++
+			}
+			seen[extended] = packet
 		}
-		seen[extended] = true
 		highest, lowest = max(highest, extended), min(lowest, extended)
 		result.Packets++
 		lastTime = at
+	}
+	keys := make([]int, 0, len(seen))
+	for key := range seen {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	var stamp uint32
+	var ps []byte
+	for _, key := range keys {
+		packet := seen[key]
+		clock := binary.BigEndian.Uint32(packet[4:8])
 		if stamp != clock && len(ps) != 0 {
 			result.PartialUnits++
 			ps = ps[:0]
