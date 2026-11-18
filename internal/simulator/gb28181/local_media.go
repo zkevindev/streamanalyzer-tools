@@ -37,6 +37,8 @@ type localMedia struct {
 	ffmpeg     string
 	videoIndex int
 	audioIndex int
+	duration   time.Duration
+	recording  *RecordingInfo
 }
 
 func prepareLocalMedia(ctx context.Context, name, audio string, input io.Reader) (*localMedia, error) {
@@ -116,7 +118,7 @@ func (m *localMedia) probe(parent context.Context, ffprobe, audio string) error 
 	defer cancel()
 	output, err := exec.CommandContext(ctx, ffprobe, "-v", "error",
 		"-protocol_whitelist", "file", "-format_whitelist", localVideoFormats,
-		"-show_entries", "stream=index,codec_name,codec_type:stream_disposition=attached_pic", "-of", "json", m.path).Output()
+		"-show_entries", "stream=index,codec_name,codec_type:stream_disposition=attached_pic:format=duration", "-of", "json", m.path).Output()
 	if err != nil {
 		if ctx.Err() != nil {
 			return fmt.Errorf("识别视频文件失败：%w", ctx.Err())
@@ -128,6 +130,9 @@ func (m *localMedia) probe(parent context.Context, ffprobe, audio string) error 
 		return fmt.Errorf("启动 ffprobe 失败：%w", err)
 	}
 	var file struct {
+		Format struct {
+			Duration string `json:"duration"`
+		} `json:"format"`
 		Streams []struct {
 			Index int    `json:"index"`
 			Codec string `json:"codec_name"`
@@ -139,6 +144,9 @@ func (m *localMedia) probe(parent context.Context, ffprobe, audio string) error 
 	}
 	if err := json.Unmarshal(output, &file); err != nil {
 		return fmt.Errorf("无法读取视频轨道信息：%w", err)
+	}
+	if seconds, err := strconv.ParseFloat(file.Format.Duration, 64); err == nil && seconds > 0 && seconds < float64((1<<63-1)/int64(time.Second)) {
+		m.duration = time.Duration(seconds * float64(time.Second))
 	}
 	for _, stream := range file.Streams {
 		switch {
@@ -161,12 +169,28 @@ func (m *localMedia) cleanError(s string) string {
 	return truncate(strings.TrimSpace(strings.ReplaceAll(s, m.path, m.info.Filename)), 700)
 }
 
-func (m *localMedia) play(parent context.Context, send func(mediaUnit) error) error {
+func (m *localMedia) play(ctx context.Context, send func(mediaUnit) error) error {
+	if err := m.read(ctx, nil, paceMedia(ctx, 1, send)); !errors.Is(err, io.EOF) {
+		return err
+	}
+	return errors.New("本地视频循环提前结束")
+}
+
+func (m *localMedia) read(parent context.Context, span *fileRange, send func(mediaUnit) error) error {
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
 	args := []string{"-nostdin", "-hide_banner", "-loglevel", "error",
 		"-protocol_whitelist", "file", "-format_whitelist", localVideoFormats,
-		"-stream_loop", "-1", "-i", m.path, "-map", "0:" + strconv.Itoa(m.videoIndex)}
+	}
+	if span == nil {
+		args = append(args, "-stream_loop", "-1")
+	} else if span.start > 0 {
+		args = append(args, "-ss", secondsArg(span.start))
+	}
+	args = append(args, "-i", m.path, "-map", "0:"+strconv.Itoa(m.videoIndex))
+	if span != nil {
+		args = append(args, "-t", secondsArg(span.end-span.start))
+	}
 	if m.info.VideoMode == "copy" {
 		args = append(args, "-c:v", "copy")
 	} else {
@@ -196,13 +220,16 @@ func (m *localMedia) play(parent context.Context, send func(mediaUnit) error) er
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("启动 FFmpeg 失败：%w", err)
 	}
-	readErr := readMediaTS(ctx, bufio.NewReaderSize(stdout, 32<<10), m.info.OutputCodec, m.audioIndex >= 0, paceMedia(ctx, 1, send))
+	readErr := readMediaTS(ctx, bufio.NewReaderSize(stdout, 32<<10), m.info.OutputCodec, m.audioIndex >= 0, send)
 	if !errors.Is(readErr, io.EOF) {
 		cancel()
 	}
 	waitErr := cmd.Wait()
 	if err := parent.Err(); err != nil {
 		return err
+	}
+	if errors.Is(readErr, errPlaybackSeek) || errors.Is(readErr, errPlaybackStop) {
+		return readErr
 	}
 	if detail := m.cleanError(stderr.String()); detail != "" && waitErr != nil {
 		return fmt.Errorf("FFmpeg 处理本地视频失败：%s", detail)
@@ -213,7 +240,7 @@ func (m *localMedia) play(parent context.Context, send func(mediaUnit) error) er
 	if waitErr != nil {
 		return fmt.Errorf("FFmpeg 停止推流：%w", waitErr)
 	}
-	return errors.New("本地视频循环提前结束")
+	return io.EOF
 }
 
 // Keep stderr draining without accumulating repeated decode errors over a long session.

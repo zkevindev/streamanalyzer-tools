@@ -69,6 +69,11 @@
                 </select>
               </div>
             </div>
+            <div class="recording-config" id="recording-config" hidden>
+              <label for="recording-start">录像开始时间</label>
+              <input id="recording-start" type="datetime-local" step="1" aria-describedby="recording-hint">
+              <p class="muted field-hint" id="recording-hint">留空时，录像结束时间取设备启动时间。</p>
+            </div>
             <p id="source-hint" class="muted field-hint">留空使用内置测试画面。本地文件最大 512 MiB，需要 FFmpeg 和 ffprobe。</p>
             <details class="sim-advanced">
               <summary>本机信令与保活</summary>
@@ -115,6 +120,7 @@
             </dl>
             <p class="muted field-hint" id="device-info" hidden></p>
             <p class="muted field-hint" id="media-source" hidden></p>
+            <p class="muted field-hint" id="recording-window" hidden></p>
             <p class="muted field-hint" id="media-route" hidden></p>
             <p class="muted field-hint" id="media-units" hidden></p>
             <p class="sim-error" id="media-error" role="status" hidden></p>

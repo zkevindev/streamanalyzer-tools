@@ -32,6 +32,7 @@ type SessionReport struct {
 	ID               string         `json:"id"`
 	CallID           string         `json:"call_id"`
 	Start            time.Time      `json:"start"`
+	Mode             string         `json:"mode,omitempty"`
 	Transport        mediaTransport `json:"transport,omitempty"`
 	Source           SourceInfo     `json:"source"`
 	Timeline         []SessionMark  `json:"timeline"`

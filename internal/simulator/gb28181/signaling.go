@@ -24,6 +24,7 @@ func (d *device) routes(server *sipgo.Server, flow *sipFlow) {
 	server.OnInvite(func(req *sip.Request, tx sip.ServerTransaction) {
 		d.onInvite(flow, req, tx)
 	})
+	server.OnRequest(sip.INFO, d.onPlaybackInfo)
 	server.OnAck(d.onAck)
 	server.OnBye(d.onBye)
 	server.OnNoRoute(func(req *sip.Request, tx sip.ServerTransaction) {
@@ -62,13 +63,18 @@ func (d *device) keepalive() []byte {
 		xml.Header, d.xmlSN.Add(1), d.cfg.DeviceID))
 }
 
+type simulatorQuery struct {
+	XMLName   xml.Name
+	Command   string `xml:"CmdType"`
+	SN        uint32
+	DeviceID  string
+	StartTime string
+	EndTime   string
+	Type      string
+}
+
 func (d *device) onMessage(flow *sipFlow, req *sip.Request, tx sip.ServerTransaction) {
-	var query struct {
-		XMLName  xml.Name
-		Command  string `xml:"CmdType"`
-		SN       uint32
-		DeviceID string
-	}
+	var query simulatorQuery
 	decoder := xml.NewDecoder(bytes.NewReader(req.Body()))
 	decoder.CharsetReader = charset.NewReaderLabel
 	if err := decoder.Decode(&query); err != nil {
@@ -83,7 +89,17 @@ func (d *device) onMessage(flow *sipFlow, req *sip.Request, tx sip.ServerTransac
 		d.respond(req, tx, 404, "Not Found")
 		return
 	}
-	reply := d.queryReply(query.Command, query.SN, query.DeviceID)
+	var reply []byte
+	if query.Command == "RecordInfo" {
+		var err error
+		reply, err = d.recordInfo(query)
+		if err != nil {
+			d.respond(req, tx, 400, "Bad Request")
+			return
+		}
+	} else {
+		reply = d.queryReply(query.Command, query.SN, query.DeviceID)
+	}
 	if reply == nil {
 		d.respond(req, tx, 501, "Not Implemented")
 		return
