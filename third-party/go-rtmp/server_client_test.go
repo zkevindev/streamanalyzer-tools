@@ -104,7 +104,7 @@ func TestServerCanAcceptCreateStream(t *testing.T) {
 				StreamID: 0,
 			},
 		}, err)
-		defer s1.Close()
+		require.Nil(t, s1)
 	})
 }
 

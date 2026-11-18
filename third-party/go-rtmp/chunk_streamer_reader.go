@@ -13,19 +13,19 @@ import (
 
 type ChunkStreamerReader struct {
 	reader            io.Reader
-	totalReadBytes    uint32 // TODO: Check overflow
+	totalReadBytes    uint64
 	fragmentReadBytes uint32
 }
 
 func (r *ChunkStreamerReader) Read(b []byte) (int, error) {
 	n, err := r.reader.Read(b)
-	r.totalReadBytes += uint32(n)
+	r.totalReadBytes += uint64(n)
 	r.fragmentReadBytes += uint32(n)
 	return n, err
 }
 
 func (r *ChunkStreamerReader) TotalReadBytes() uint32 {
-	return r.totalReadBytes
+	return uint32(r.totalReadBytes)
 }
 
 func (r *ChunkStreamerReader) FragmentReadBytes() uint32 {

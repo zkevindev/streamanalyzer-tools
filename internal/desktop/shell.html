@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="settings-token" content="{{.SettingsToken}}">
+  <title>Stream Analyzer</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --ink: #17273b;
+      --muted: #52657e;
+      --border: #d5deea;
+      --surface-inset: #f7f9fc;
+      --accent: #164d92;
+      --accent-hover: #123e77;
+      --error: #982a31;
+    }
+    * { box-sizing: border-box; }
+    html, body, iframe { width: 100%; height: 100%; margin: 0; border: 0; }
+    body { overflow: hidden; color: var(--ink); background: #f8fafc; font: 15px/1.55 system-ui, sans-serif; }
+    [hidden], dialog:not([open]) { display: none !important; }
+    #settings-backdrop { position: fixed; z-index: 1; inset: 0; background: rgb(20 38 62 / .52); }
+    dialog {
+      position: fixed; z-index: 2; inset: 0; width: min(31rem, calc(100% - 2rem));
+      max-width: none; max-height: calc(100% - 2rem); margin: auto; padding: 0;
+      border: 1px solid var(--border); border-radius: .75rem; color: var(--ink); background: white;
+      box-shadow: 0 18px 50px rgb(20 38 62 / .24);
+    }
+    dialog::backdrop { background: rgb(20 38 62 / .52); }
+    .settings-header { padding: 1rem 1.15rem .8rem; border-bottom: 1px solid var(--border); }
+    .settings-header h1 { margin: 0; font-size: 1.2rem; line-height: 1.3; }
+    fieldset { display: grid; gap: .78rem; min-inline-size: 0; margin: 0; padding: 1rem 1.15rem; border: 0; }
+    .field label { display: block; margin-bottom: .25rem; font-weight: 600; }
+    .field input, .field select {
+      width: 100%; min-width: 0; min-height: 2.75rem; padding: .5rem .65rem;
+      border: 1px solid #bccadd; border-radius: .375rem; color: var(--ink);
+      background: var(--surface-inset); font: inherit;
+    }
+    #settings-endpoint, #settings-model, #settings-key { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+    .hint { margin: .3rem 0 0; color: var(--muted); font-size: .83rem; }
+    .clear-key { display: flex; align-items: center; gap: .45rem; min-height: 2.75rem; font-size: .88rem; }
+    .clear-key input { flex: none; width: 1rem; height: 1rem; margin: 0; accent-color: var(--accent); }
+    .settings-status { margin: 0 1.15rem .85rem; min-height: 1.35em; color: var(--muted); overflow-wrap: anywhere; }
+    .settings-status.error { color: var(--error); }
+    .settings-actions {
+      display: flex; flex-wrap: wrap; gap: .6rem; justify-content: flex-end; padding: .75rem 1.15rem;
+      border-top: 1px solid var(--border); background: var(--surface-inset);
+    }
+    #test-settings { margin-right: auto; }
+    button {
+      min-height: 2.75rem; padding: .45rem .9rem; border: 1px solid var(--accent); border-radius: .375rem;
+      background: var(--accent); color: white; font: inherit; font-weight: 600; cursor: pointer;
+    }
+    button:hover { background: var(--accent-hover); }
+    button.secondary { color: var(--accent); border-color: #bdcde2; background: white; }
+    button.secondary:hover { background: #e9f1fc; }
+    button:disabled { cursor: wait; opacity: .6; }
+    button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid #2471c7; outline-offset: 2px; }
+  </style>
+</head>
+<body>
+  <iframe id="workbench" src="{{.WorkbenchURL}}" title="Stream Analyzer"></iframe>
+  <div id="settings-backdrop" hidden></div>
+  <dialog id="settings-dialog" aria-modal="true" aria-labelledby="settings-title">
+    <form id="settings-form" autocomplete="off">
+      <header class="settings-header"><h1 id="settings-title">模型设置</h1></header>
+      <fieldset id="settings-fields" disabled>
+        <div class="field">
+          <label for="settings-provider">厂商</label>
+          <select id="settings-provider" required>
+            <option value="">请选择厂商</option>
+            <option value="deepseek">DeepSeek</option>
+            <option value="anthropic">Anthropic Claude</option>
+            <option value="gemini">Google Gemini</option>
+            <option value="openai-compatible">OpenAI 兼容接口</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="settings-endpoint">Base URL</label>
+          <input id="settings-endpoint" type="url" autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="endpoint-hint">
+          <p class="hint" id="endpoint-hint"></p>
+        </div>
+        <div class="field">
+          <label for="settings-model">模型名</label>
+          <input id="settings-model" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+        </div>
+        <div class="field">
+          <label for="settings-key">API Key</label>
+          <input id="settings-key" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="key-hint">
+          <p class="hint" id="key-hint">API Key 保存在系统凭据库。</p>
+          <label id="clear-key-option" class="clear-key" for="clear-key" hidden>
+            <input id="clear-key" type="checkbox"> 清除已配置的 API Key
+          </label>
+        </div>
+      </fieldset>
+      <p id="settings-status" class="settings-status" role="status"></p>
+      <footer class="settings-actions">
+        <button id="test-settings" type="button" class="secondary" disabled>测试连接</button>
+        <button id="close-settings" type="button" class="secondary">取消</button>
+        <button id="save-settings" type="submit" disabled>保存并生效</button>
+      </footer>
+    </form>
+  </dialog>
+  <script>
+    'use strict';
+
+    const el = (id) => document.getElementById(id);
+    const frame = el('workbench');
+    const localOrigin = new URL(frame.src).origin;
+    const settingsToken = document.querySelector('meta[name="settings-token"]').content;
+    const dialog = el('settings-dialog');
+    const form = el('settings-form');
+    const provider = el('settings-provider');
+    const endpoint = el('settings-endpoint');
+    const model = el('settings-model');
+    const key = el('settings-key');
+    const clearKey = el('clear-key');
+    const testButton = el('test-settings');
+    const closeButton = el('close-settings');
+    const saveButton = el('save-settings');
+    const nativeDialog = typeof dialog.showModal === 'function';
+    const defaults = {
+      deepseek: { url: 'https://api.deepseek.com', model: 'deepseek-flash' },
+      anthropic: { url: 'https://api.anthropic.com/v1' },
+      gemini: { url: 'https://generativelanguage.googleapis.com/v1beta' },
+    };
+    let currentSettings = {};
+    let loadingSettings;
+    let testingSettings;
+    let testResultVisible = false;
+    let savingSettings = false;
+
+    function postToWorkbench(data) {
+      frame.contentWindow.postMessage(data, localOrigin);
+    }
+
+    function sendDesktopInfo() {
+      postToWorkbench({ kind: 'desktop-shell', modelSettings: Boolean(settingsToken) });
+    }
+
+    function setStatus(text, error = false) {
+      const status = el('settings-status');
+      status.textContent = text;
+      status.classList.toggle('error', error);
+    }
+
+    function setFieldsDisabled(disabled) {
+      el('settings-fields').disabled = disabled;
+      testButton.disabled = disabled;
+      saveButton.disabled = disabled;
+    }
+
+    function resolvedURL(name, value) {
+      return (value.trim() || defaults[name]?.url || '').replace(/\/+$/, '');
+    }
+
+    function updateFieldHints() {
+      const vendor = provider.value;
+      const preset = defaults[vendor];
+      const compatible = vendor === 'openai-compatible';
+      const canKeepKey = currentSettings.has_api_key && vendor === currentSettings.provider &&
+        resolvedURL(vendor, endpoint.value) === resolvedURL(vendor, currentSettings.base_url || '');
+
+      endpoint.required = compatible;
+      endpoint.placeholder = preset?.url || 'https://gateway.example.com/v1';
+      model.placeholder = preset?.model || '厂商提供的模型名';
+      el('endpoint-hint').textContent = preset
+        ? '留空使用厂商默认地址。'
+        : '填写接口的基础地址，例如 https://gateway.example.com/v1。';
+
+      const clearOption = el('clear-key-option');
+      clearOption.hidden = !compatible || !canKeepKey;
+      if (clearOption.hidden) clearKey.checked = false;
+      key.disabled = clearKey.checked;
+      key.required = Boolean(vendor && !compatible && !canKeepKey);
+      key.placeholder = canKeepKey ? '留空沿用当前密钥' : '';
+      el('key-hint').textContent = canKeepKey
+        ? '当前密钥已配置。填写新密钥可替换。'
+        : compatible
+          ? '兼容服务无需鉴权时可留空。'
+          : 'API Key 保存在系统凭据库。';
+    }
+
+    async function settingsRequest(path, options) {
+      const response = await fetch(path, {
+        ...options,
+        cache: 'no-store',
+        headers: { ...options.headers, 'X-StreamAnalyzer-Settings': settingsToken },
+      });
+      const result = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(result.error || '模型设置请求失败。');
+      return result;
+    }
+
+    function postSettings(path, signal) {
+      return settingsRequest(path, {
+        method: 'POST',
+        signal,
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          provider: provider.value, base_url: endpoint.value.trim(), model: model.value.trim(),
+          api_key: key.value.trim(), clear_api_key: clearKey.checked,
+        }),
+      });
+    }
+
+    async function openSettings() {
+      if (!settingsToken || dialog.hasAttribute('open')) return;
+      setFieldsDisabled(true);
+      setStatus('正在读取模型设置…');
+      if (nativeDialog) {
+        dialog.showModal();
+      } else {
+        el('settings-backdrop').hidden = false;
+        frame.setAttribute('aria-hidden', 'true');
+        frame.tabIndex = -1;
+        dialog.setAttribute('open', '');
+        closeButton.focus();
+      }
+      const load = new AbortController();
+      loadingSettings = load;
+      try {
+        const result = await settingsRequest('/model-settings', { signal: load.signal });
+        if (loadingSettings !== load) return;
+        currentSettings = result;
+        provider.value = result.provider || '';
+        endpoint.value = result.base_url || '';
+        model.value = result.model || '';
+        updateFieldHints();
+        setFieldsDisabled(false);
+        setStatus(result.warning || '', Boolean(result.warning));
+        provider.focus();
+      } catch (error) {
+        if (loadingSettings === load) setStatus(error.message, true);
+      } finally {
+        if (loadingSettings === load) loadingSettings = undefined;
+      }
+    }
+
+    function closeSettings() {
+      if (savingSettings) return;
+      loadingSettings?.abort();
+      loadingSettings = undefined;
+      testingSettings?.abort();
+      testingSettings = undefined;
+      testButton.textContent = '测试连接';
+      testResultVisible = false;
+      setStatus('');
+      form.reset();
+      if (nativeDialog) {
+        dialog.close();
+      } else {
+        dialog.removeAttribute('open');
+        el('settings-backdrop').hidden = true;
+        frame.removeAttribute('aria-hidden');
+        frame.removeAttribute('tabindex');
+      }
+      postToWorkbench({ kind: 'model-settings-closed' });
+    }
+
+    provider.addEventListener('change', () => {
+      endpoint.value = defaults[provider.value]?.url || '';
+      model.value = '';
+      key.value = '';
+      clearKey.checked = false;
+      updateFieldHints();
+    });
+    endpoint.addEventListener('input', updateFieldHints);
+    clearKey.addEventListener('change', () => {
+      if (clearKey.checked) key.value = '';
+      updateFieldHints();
+    });
+    function clearTestResult() {
+      if (!testResultVisible) return;
+      testResultVisible = false;
+      setStatus('');
+    }
+    form.addEventListener('input', clearTestResult);
+    form.addEventListener('change', clearTestResult);
+    closeButton.addEventListener('click', closeSettings);
+    dialog.addEventListener('cancel', (event) => {
+      event.preventDefault();
+      closeSettings();
+    });
+    dialog.addEventListener('keydown', (event) => {
+      if (nativeDialog) return;
+      if (event.key === 'Escape') closeSettings();
+      if (event.key !== 'Tab') return;
+      const controls = [...dialog.querySelectorAll('button, input, select')]
+        .filter((control) => !control.matches(':disabled, [hidden] *'));
+      const first = controls[0];
+      const last = controls[controls.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first?.focus();
+      }
+    });
+    testButton.addEventListener('click', async () => {
+      if (testButton.disabled || !form.reportValidity()) return;
+      const test = new AbortController();
+      testingSettings = test;
+      testResultVisible = false;
+      setFieldsDisabled(true);
+      testButton.textContent = '正在测试…';
+      setStatus('正在连接模型服务…');
+      try {
+        const result = await postSettings('/model-settings/test', test.signal);
+        if (testingSettings === test) setStatus(`连接成功 · ${result.elapsed_ms} ms`);
+      } catch (error) {
+        if (testingSettings === test) setStatus(error.message, true);
+      } finally {
+        if (testingSettings === test) {
+          testingSettings = undefined;
+          testResultVisible = true;
+          testButton.textContent = '测试连接';
+          setFieldsDisabled(false);
+        }
+      }
+    });
+    form.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      if (saveButton.disabled) return;
+      savingSettings = true;
+      testResultVisible = false;
+      setFieldsDisabled(true);
+      closeButton.disabled = true;
+      saveButton.textContent = '正在保存…';
+      setStatus('正在保存模型设置…');
+      try {
+        await postSettings('/model-settings');
+      } catch (error) {
+        setStatus(error.message, true);
+        return;
+      } finally {
+        savingSettings = false;
+        setFieldsDisabled(false);
+        closeButton.disabled = false;
+        saveButton.textContent = '保存并生效';
+      }
+      closeSettings();
+      postToWorkbench({ kind: 'model-settings-updated' });
+    });
+
+    frame.addEventListener('load', sendDesktopInfo);
+    window.addEventListener('message', async (event) => {
+      if (event.source !== frame.contentWindow || event.origin !== localOrigin) return;
+      const data = event.data;
+      if (data?.kind === 'workbench-ready') sendDesktopInfo();
+      if (data?.kind === 'open-model-settings') await openSettings();
+      if (data?.kind !== 'save-artifact') return;
+      let status = '保存失败';
+      try {
+        const response = await fetch('/save-artifact', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ id: data.id, name: data.name }),
+        });
+        status = response.status === 204 ? '' : response.ok ? '产物已保存。' : (await response.text()).trim();
+        event.source.postMessage({ kind: 'artifact-result', status, error: !response.ok }, localOrigin);
+      } catch {
+        event.source.postMessage({ kind: 'artifact-result', status, error: true }, localOrigin);
+      }
+    });
+  </script>
+</body>
+</html>

@@ -2,6 +2,65 @@
 
 音视频流分析工具：支持 **RTMP / HTTP-FLV / HLS（m3u8 + MPEG-TS 切片）** 拉流的实时分析，以及离线文件解析（raw / pcap / FLV / MPEG-TS / **MP4**）。离线结果会持久化到磁盘并在网页端可查看/下载。兼容 Legacy FLV 与 Enhanced RTMP/FLV（E-RTMP）头部解析。
 
+## 排障工作台
+
+启动 Web 服务后打开 [本机排障工作台](http://127.0.0.1:8087/diagnostics)。桌面版启动后直接打开同一个工作台。工作台和对应 API 仅接受本机连接，同一数据目录由一个服务实例使用。
+
+1. 选择 HTTP-FLV、RTMP 或 HLS，输入播放地址，指定 1–300 秒的采样时长，默认 60 秒。RTMP 同时接受 `rtmp://` 和 `rtmps://`。
+2. 查看音频和视频编码、采样时序及异常。HTTP-FLV 和 RTMP 的报告可定位媒体帧的 PTS/DTS 及原始流字节范围。HLS 的报告可定位播放列表、初始化段和媒体分片，并展示原始请求耗时与 HTTP 状态。
+3. 下载原始流、HTML/JSON 报告或证据 ZIP。导入时校验清单中的 SHA-256，重新解析原始数据并按采样时记录的时间线运行规则。源流可以已经下线。规则报告独立于模型，原有 HTTP-FLV v1 证据包也可导入。
+
+| 协议 | 原始产物 |
+| --- | --- |
+| HTTP-FLV | `stream.flv`，采样期间读取的 HTTP 响应体 |
+| RTMP / RTMPS | `stream.rtmp`，从服务端握手开始的原始接收字节。RTMPS 保存 TLS 解密后的 RTMP 协议数据 |
+| HLS | `stream.hls.zip`，原始 m3u8 快照、初始化段和 MPEG-TS、fMP4 或独立音频分片 |
+
+HLS 主清单选取带宽最高的常规变体及其默认独立音频 rendition。直播从清单末尾最多三个完整分片开始采样，随后跟踪新分片，点播按清单顺序下载。加密分片保存原始密文，媒体识别限于能够检查的明文分片。原始产物可能包含签名 URL 或业务元数据。停止、读流失败或达到 128 MiB 的原始产物上限时，工作台保留已收集的数据和可用报告。
+
+编码名称取自采样数据，例如 H.264、H.265、AV1、VP9 以及 AAC、Opus、MP3、AC-3、E-AC-3。识别范围取决于协议与封装，工具保留原始数据用于复盘。
+
+JSON 报告及 SQLite 任务索引位于数据目录下的 `diagnostics/`。基础接口包括：
+
+| 方法与路径 | 用途 |
+| --- | --- |
+| `POST /api/diagnostics/runs` | 用 `{"protocol":"hls","url":"https://live.example.com/index.m3u8","seconds":60}` 发起采样。协议可选 `http-flv`、`rtmp`、`hls`，省略时默认 `http-flv` |
+| `GET /api/diagnostics/runs` | 查看最近的采样和复盘记录 |
+| `GET /api/diagnostics/runs/:id` | 查询状态、规则报告和已生成的模型解读 |
+| `POST /api/diagnostics/runs/:id/stop` | 停止采样并保存已获取的数据 |
+| `GET /api/diagnostics/runs/:id/{dump,report.html,report.json,evidence.zip}` | 查看或下载产物。原 HTTP-FLV `stream.flv` 路径仍可用 |
+| `POST /api/diagnostics/import` | 请求体传 ZIP 原始字节，类型为 `application/zip` |
+| `POST /api/diagnostics/runs/:id/explain` | 请求模型解读报告 |
+
+### 配置大模型厂商
+
+桌面端打开「模型设置」，选择厂商并填写 Base URL、模型名及 API Key。保存前可点击「测试连接」，用当前填写的配置发起一条简短的模型请求，查看耗时或具体失败原因。测试只发送固定提示词，测试结果独立于保存操作。保存后，当前工作台中的新解读请求立即采用新配置。已有解读可使用「用当前模型重新解读」更新。
+
+桌面设置按数据目录保存在系统凭据库中，macOS 使用钥匙串，Windows 使用凭据管理器，Linux 使用系统 Secret Service。编辑同一厂商和地址时留空密钥会沿用已配置的密钥。切换厂商或地址时，使用该厂商或网关自己的密钥。桌面端保存的配置优先于环境变量。
+
+| 厂商配置 | API | 默认 Base URL |
+| --- | --- | --- |
+| `deepseek` | DeepSeek Chat Completions | `https://api.deepseek.com` |
+| `anthropic` | Anthropic Messages | `https://api.anthropic.com/v1` |
+| `gemini` | Gemini Developer API | `https://generativelanguage.googleapis.com/v1beta` |
+| `openai-compatible` | Chat Completions | 需要填写服务地址，例如 `https://gateway.example.com/v1` |
+
+DeepSeek 在桌面端可直接选择。Base URL 使用 `https://api.deepseek.com`，示例模型名为 `deepseek-flash`。也可以填写账号可用的型号，例如 `deepseek-v4-pro`。[DeepSeek API 文档](https://api-docs.deepseek.com/)
+
+独立 Web 服务从环境变量读取模型配置。以下是其 DeepSeek 示例。
+
+```bash
+export STREAMANALYZER_MODEL_PROVIDER='deepseek'
+export STREAMANALYZER_MODEL_BASE_URL='https://api.deepseek.com'
+export STREAMANALYZER_MODEL_NAME='deepseek-flash'
+export STREAMANALYZER_MODEL_API_KEY='your-deepseek-api-key'
+go run ./cmd/server -config config.yaml
+```
+
+本地 Chat Completions 兼容服务可按需省略 API Key。原有 `STREAMANALYZER_OPENAI_BASE_URL`、`STREAMANALYZER_OPENAI_MODEL`、`STREAMANALYZER_OPENAI_API_KEY` 在未设置任何新环境变量时仍可使用。工作台及 HTML 报告会标注实际解读来源。
+
+模型解读按需发送数值指标、异常区间与证据 ID。原始流和播放地址保留在本地。模型假设中的证据引用必须存在于规则报告。
+
 ## 功能特性
 
 - 支持 `http-flv`、`rtmp` 与 **`hls`** 三种实时任务类型（HLS 为 **TS 切片维度**，与 FLV/RTMP 的帧级秒级图表不同）
@@ -81,6 +140,8 @@
 
 ## 安装与运行
 
+需要 Go 1.26 或更高版本。macOS 和 Linux 构建需要 CGO 与 libpcap 开发环境。
+
 ```bash
 go mod tidy
 go build -o bin/server ./cmd/server
@@ -92,48 +153,31 @@ go build -o bin/server ./cmd/server
 - [http://localhost:8087](http://localhost:8087)
 
 路由说明：
-- `GET /`：入口页（浏览器标题 **Stream Analyzer · 首页**；选择实时或离线分析）
+- `GET /`：入口页
+- `GET /diagnostics`：排障工作台
 - `GET /realtime`：实时拉流分析（标题 **实时拉流分析 · Stream Analyzer**）
 - `GET /offline`：离线文件解析（标题 **离线文件解析 · Stream Analyzer**；支持 raw/pcap/flv/ts/mp4 等）
 - `GET /history`：历史记录（标题 **历史记录 · Stream Analyzer**）
 - `GET /hls-stats`：HLS 分析（标题 **HLS 分析 · Stream Analyzer**）
 
-## 桌面 GUI（Wails）
+## 桌面 GUI（Wails v3）
 
-项目已支持 Wails 桌面入口。桌面版会在本机随机端口启动内置 Stream Analyzer 服务，并在 Wails 窗口中加载现有 Web UI；实时接口、离线分析、下载和 WebSocket 预览沿用同一套后端能力。
-
-首次使用先安装 Wails CLI：
+桌面版使用 Wails v3.1.0 和同一套 Web UI。采样默认保存在系统应用数据目录下的 `Stream Analyzer` 文件夹。开发运行：
 
 ```bash
-go install github.com/wailsapp/wails/v2/cmd/wails@v2.12.0
-wails doctor
+go run ./cmd/desktop
 ```
 
-开发/调试：
+Linux 使用 GTK3 与 WebKitGTK 4.1 时，运行 `go run -tags gtk3 ./cmd/desktop`。也可以传入 `-data-dir /path/to/data` 直接使用指定目录。
+
+在目标平台打包时，安装固定版本的 CLI，然后执行：
 
 ```bash
-wails dev
+go install github.com/wailsapp/wails/v3/cmd/wails3@v3.1.0
+wails3 build
 ```
 
-打包当前平台应用：
-
-```bash
-wails build
-```
-
-macOS 构建产物位于：
-
-```text
-build/bin/streamanalyzer.app
-```
-
-也可以不经过 Wails 打包、直接编译桌面入口做快速验证：
-
-```bash
-go build ./cmd/desktop
-```
-
-分发给别人时建议在目标平台本机打包：macOS 生成 `.app`，Windows 可配合 `wails build -nsis` 生成安装包，Linux 可再封装为 deb/rpm/AppImage。macOS 正式外发通常还需要开发者签名和 notarization。
+macOS 运行 `wails3 task package:darwin` 生成 `build/bin/streamanalyzer.app` 和对应的 DMG。Windows 和 Linux 的可执行文件也位于 `build/bin/`。
 
 ### 多平台桌面产物
 
@@ -148,7 +192,7 @@ go build ./cmd/desktop
 
 推送 `v*` 标签时，上述文件还会自动附加到对应的 GitHub Release；如果该 Release 尚不存在，workflow 会自动创建。
 
-这些是未签名产物。对外正式发布时，Windows 建议增加代码签名，macOS 需要 Developer ID 签名及 notarization；Linux 用户还需安装 GTK3 和 WebKitGTK 运行库，或继续封装为 deb/rpm/AppImage。
+macOS 本地包使用临时签名。正式对外分发时需要 Developer ID 签名和公证。Linux 运行时需要 GTK3 和 WebKitGTK 4.1。
 
 ## API
 

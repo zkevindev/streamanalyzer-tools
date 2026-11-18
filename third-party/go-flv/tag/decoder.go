@@ -197,6 +197,16 @@ func DecodeAACAudioData(r io.Reader, aacAudioData *AACAudioData) error {
 }
 
 func DecodeVideoData(r io.Reader, videoData *VideoData) error {
+	return decodeVideoData(r, videoData, false)
+}
+
+// DecodeVideoDataLegacyCTS reproduces diagnostics recorded by older versions
+// that interpreted the first three bytes of every enhanced coded frame as CTS.
+func DecodeVideoDataLegacyCTS(r io.Reader, videoData *VideoData) error {
+	return decodeVideoData(r, videoData, true)
+}
+
+func decodeVideoData(r io.Reader, videoData *VideoData, legacyCTS bool) error {
 	buf := make([]byte, 1)
 	if _, err := io.ReadAtLeast(r, buf, 1); err != nil {
 		return err
@@ -204,7 +214,7 @@ func DecodeVideoData(r io.Reader, videoData *VideoData) error {
 
 	isExVideoHeader := (buf[0] & 0x80) != 0
 	if isExVideoHeader {
-		return DecodeEnhancedVideoData(r, videoData, buf[0])
+		return decodeEnhancedVideoData(r, videoData, buf[0], legacyCTS)
 	}
 
 	frameType := FrameType(buf[0] & 0xf0 >> 4) // 0b11110000
@@ -231,6 +241,10 @@ func DecodeVideoData(r io.Reader, videoData *VideoData) error {
 }
 
 func DecodeEnhancedVideoData(r io.Reader, videoData *VideoData, headerByte byte) error {
+	return decodeEnhancedVideoData(r, videoData, headerByte, false)
+}
+
+func decodeEnhancedVideoData(r io.Reader, videoData *VideoData, headerByte byte, legacyCTS bool) error {
 	frameType := FrameType((headerByte & 0x70) >> 4) // UB[3]
 	videoPacketType := VideoPacketType(headerByte & 0x0f)
 	videoData.IsExHeader = true
@@ -301,8 +315,10 @@ func DecodeEnhancedVideoData(r io.Reader, videoData *VideoData, headerByte byte)
 		videoData.VideoTrackID = trackID[0]
 	}
 
-	// For AVC/HEVC-style coded frames, composition offset is present.
-	if videoPacketType == VideoPacketTypeCodedFrames {
+	// Enhanced AVC, HEVC and VVC carry composition offsets in CodedFrames.
+	// VP8, VP9 and AV1 put the codec payload directly after the FourCC.
+	if videoPacketType == VideoPacketTypeCodedFrames && (legacyCTS ||
+		videoData.VideoFourCC == FourCCVideoAVC || videoData.VideoFourCC == FourCCVideoHEVC || videoData.VideoFourCC == FourCCVideoVVC) {
 		var ctBuf [3]byte
 		if _, err := io.ReadAtLeast(r, ctBuf[:], 3); err != nil {
 			return err

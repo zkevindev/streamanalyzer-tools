@@ -114,6 +114,9 @@ func (s *StreamControlState) ChunkSize() uint32 {
 }
 
 func (s *StreamControlState) SetChunkSize(chunkSize uint32) error {
+	if chunkSize == 0 {
+		return errors.New("RTMP chunk size must be positive")
+	}
 	if chunkSize > MaxChunkSize {
 		chunkSize = MaxChunkSize
 	}

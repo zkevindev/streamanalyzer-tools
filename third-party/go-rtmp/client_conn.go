@@ -23,6 +23,7 @@ import (
 // ClientConn A wrapper of a connection. It prorives client-side specific features.
 type ClientConn struct {
 	conn    *Conn
+	done    chan struct{}
 	lastErr error
 	m       sync.RWMutex
 }
@@ -48,6 +49,7 @@ func newClientConnWithSetup(c net.Conn, config *ConnConfig) (*ClientConn, error)
 
 	cc := &ClientConn{
 		conn: conn,
+		done: make(chan struct{}),
 	}
 	go cc.startHandleMessageLoop()
 
@@ -56,6 +58,11 @@ func newClientConnWithSetup(c net.Conn, config *ConnConfig) (*ClientConn, error)
 
 func (cc *ClientConn) Close() error {
 	return cc.conn.Close()
+}
+
+// Done closes after the connection's receive loop stops.
+func (cc *ClientConn) Done() <-chan struct{} {
+	return cc.done
 }
 
 func (cc *ClientConn) LastError() error {
@@ -152,6 +159,7 @@ func (cc *ClientConn) DeleteStream(body *message.NetStreamDeleteStream) error {
 }
 
 func (cc *ClientConn) startHandleMessageLoop() {
+	defer close(cc.done)
 	if err := cc.conn.handleMessageLoop(); err != nil {
 		err = normalizeConnectionError(err)
 		cc.setLastError(err)

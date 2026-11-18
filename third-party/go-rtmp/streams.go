@@ -85,6 +85,9 @@ func (ss *streams) Delete(streamID uint32) error {
 }
 
 func (ss *streams) At(streamID uint32) (*Stream, error) {
+	ss.m.Lock()
+	defer ss.m.Unlock()
+
 	stream, ok := ss.streams[streamID]
 	if !ok {
 		return nil, errors.Errorf("Stream is not found: StreamID = %d", streamID)

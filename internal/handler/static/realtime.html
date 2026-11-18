@@ -4,9 +4,6 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>实时拉流分析 · Stream Analyzer</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
     <script src="/static/mpegts.js"></script>
     <style>
@@ -125,11 +122,12 @@
         @media(max-width:768px){.form-grid{grid-template-columns:1fr}}
         @media(max-width:640px){body{padding:1rem}.stats-grid{grid-template-columns:repeat(3,1fr)}}
     </style>
+  <link rel="stylesheet" href="/static/workbench-theme.css">
 </head>
 <body>
     <div class="container">
         <nav class="nav-bar">
-            <a href="/" class="nav-item">入口</a>
+            <a href="/diagnostics" class="nav-item">排障工作台</a>
             <a href="/realtime" class="nav-item active">实时分析</a>
             <a href="/hls-stats" class="nav-item">HLS 分析</a>
             <a href="/offline" class="nav-item">离线分析</a>
@@ -337,6 +335,11 @@
             } catch (e) {
                 document.getElementById('previewStatus').textContent = '初始化失败: ' + e.message;
             }
+        }
+
+        const requestedProtocol = new URLSearchParams(location.search).get('protocol');
+        if (['rtmp', 'http-flv', 'hls'].includes(requestedProtocol)) {
+            document.getElementById('streamType').value = requestedProtocol;
         }
 
         async function startTask() {

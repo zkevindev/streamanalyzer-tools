@@ -2,10 +2,13 @@ package rtmp
 
 import (
 	"context"
+	"crypto/tls"
 	"fmt"
 	"io"
+	"net"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/pkg/errors"
 	"github.com/sirupsen/logrus"
@@ -53,9 +56,9 @@ func ParsePlayURL(rawURL string) (*PlayTarget, error) {
 	host := u.Host
 	if u.Port() == "" {
 		if protocol == "rtmps" {
-			host = u.Hostname() + ":443"
+			host = net.JoinHostPort(u.Hostname(), "443")
 		} else {
-			host = u.Hostname() + ":1935"
+			host = net.JoinHostPort(u.Hostname(), "1935")
 		}
 	}
 
@@ -83,6 +86,9 @@ func ParsePlayURL(rawURL string) (*PlayTarget, error) {
 }
 
 func DialAndPlay(ctx context.Context, rawURL string, handler Handler, opts *PlayOptions) (*ClientConn, *Stream, *PlayTarget, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	target, err := ParsePlayURL(rawURL)
 	if err != nil {
 		return nil, nil, nil, err
@@ -101,20 +107,43 @@ func DialAndPlay(ctx context.Context, rawURL string, handler Handler, opts *Play
 		connConfig.Logger = opts.Logger
 	}
 
-	var cc *ClientConn
+	var socket net.Conn
+	dialer := &net.Dialer{}
 	if target.Protocol == "rtmps" {
-		cc, err = TLSDial(target.Protocol, target.Host, connConfig, nil)
+		secureDialer := &tls.Dialer{NetDialer: dialer}
+		socket, err = secureDialer.DialContext(ctx, "tcp", target.Host)
 	} else {
-		cc, err = Dial(target.Protocol, target.Host, connConfig)
+		socket, err = dialer.DialContext(ctx, "tcp", target.Host)
 	}
 	if err != nil {
 		return nil, nil, nil, errors.Wrap(err, "failed to dial")
 	}
 
+	// Close the socket directly to interrupt a blocked handshake or write.
+	// Conn.Close waits for queued writers before closing the transport.
+	stopWatching := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = socket.SetDeadline(time.Now())
+			_ = socket.Close()
+		case <-stopWatching:
+		}
+	}()
+
+	cc, err := newClientConnWithSetup(socket, connConfig)
+	if err != nil {
+		close(stopWatching)
+		return nil, nil, nil, err
+	}
 	cleanup := true
 	defer func() {
 		if cleanup {
+			close(stopWatching)
+			_ = socket.SetDeadline(time.Now())
+			_ = socket.Close()
 			_ = cc.Close()
+			<-cc.Done()
 		}
 	}()
 
@@ -151,26 +180,22 @@ func DialAndPlay(ctx context.Context, rawURL string, handler Handler, opts *Play
 		StreamName: target.StreamName,
 		Start:      start,
 	}); err != nil {
-		_ = stream.Close()
 		return nil, nil, nil, errors.Wrap(err, "failed to send play command")
 	}
 
-	waitCtx := ctx
-	if waitCtx == nil {
-		waitCtx = context.Background()
-	}
-	if err := stream.waitPlayResult(waitCtx); err != nil {
-		_ = stream.Close()
+	if err := stream.waitPlayResult(ctx); err != nil {
 		return nil, nil, nil, errors.Wrap(err, "failed to start play")
 	}
 
-	if ctx != nil {
-		go func() {
-			<-ctx.Done()
-			_ = stream.Close()
-			_ = cc.Close()
-		}()
-	}
+	go func() {
+		defer close(stopWatching)
+		select {
+		case <-ctx.Done():
+		case <-cc.Done():
+		}
+		_ = cc.Close()
+		stream.assumeClosed()
+	}()
 
 	cleanup = false
 	return cc, stream, target, nil

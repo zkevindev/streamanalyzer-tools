@@ -34,15 +34,18 @@ type Variant struct {
 	Codecs           string
 	FrameRate        float64
 	Name             string
+	AudioGroup       string
 	IFrame           bool
 }
 
 // Rendition 是 EXT-X-MEDIA 里的音频或字幕。
 type Rendition struct {
-	Type    string
-	GroupID string
-	Name    string
-	URI     string
+	Type       string
+	GroupID    string
+	Name       string
+	URI        string
+	Default    bool
+	AutoSelect bool
 }
 
 // Segment 是媒体播放列表里的一个分片。
@@ -138,10 +141,12 @@ func Parse(text string) (*Playlist, error) {
 			case strings.HasPrefix(line, "#EXT-X-MEDIA:"):
 				attrs := parseAttributes(line[len("#EXT-X-MEDIA:"):])
 				pl.Renditions = append(pl.Renditions, Rendition{
-					Type:    attrs["TYPE"],
-					GroupID: attrs["GROUP-ID"],
-					Name:    attrs["NAME"],
-					URI:     attrs["URI"],
+					Type:       attrs["TYPE"],
+					GroupID:    attrs["GROUP-ID"],
+					Name:       attrs["NAME"],
+					URI:        attrs["URI"],
+					Default:    attrs["DEFAULT"] == "YES",
+					AutoSelect: attrs["AUTOSELECT"] == "YES",
 				})
 			case strings.HasPrefix(line, "#EXT-X-MAP:"):
 				m, err := parseMap(parseAttributes(line[len("#EXT-X-MAP:"):]))
@@ -256,6 +261,7 @@ func parseVariant(attrs map[string]string) Variant {
 		Codecs:           attrs["CODECS"],
 		FrameRate:        fr,
 		Name:             attrs["NAME"],
+		AudioGroup:       attrs["AUDIO"],
 	}
 }
 

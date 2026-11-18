@@ -13,8 +13,9 @@ build/bin/
 # Output of the go coverage tool
 *.out
 
-# Wails generated frontend bindings
+# Wails-generated resources
 frontend/wailsjs/
+cmd/desktop/resource_windows_*.syso
 
 # Data directory
 data/

@@ -20,6 +20,10 @@ type ChunkStreamReader struct {
 	messageLength   uint32 // max, 24bits
 	messageTypeID   byte
 	messageStreamID uint32
+	firstOffset     uint64
+	extendedValue   uint32
+	extended        bool
+	initialized     bool
 
 	buf       bytes.Buffer
 	completed bool
