@@ -168,7 +168,7 @@ el('import-evidence').addEventListener('change', async event => {
 
 function renderSource(status) {
   const source = status.media_source || {};
-  const output = source.video_mode === 'copy' ? 'H.264 直拷'
+  const output = source.video_mode === 'copy' ? (source.output_codec === 'hevc' ? 'H.265 直拷' : 'H.264 直拷')
     : source.video_mode === 'transcode' ? `${source.video_codec?.toUpperCase() || '源视频'} 转 H.264` : 'H.264';
   const filename = source.filename || '内置测试画面';
   el('media-source').hidden = !source.video_mode;

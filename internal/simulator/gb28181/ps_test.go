@@ -7,7 +7,7 @@ import (
 )
 
 func TestProgramMuxerSplitsLargeAccessUnit(t *testing.T) {
-	mux := newProgramMuxer("g711a")
+	mux := newProgramMuxer("h264", "g711a")
 	frame := bytes.Repeat([]byte{0x73}, 140000)
 	ps := mux.pack(mediaUnit{stream: videoStreamID, data: frame, key: true, pts: 3600})
 	var result []byte

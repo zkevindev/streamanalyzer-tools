@@ -25,7 +25,7 @@ type programMuxer struct {
 	buffer []byte
 }
 
-func newProgramMuxer(audio string) *programMuxer {
+func newProgramMuxer(video, audio string) *programMuxer {
 	var audioType byte
 	switch audio {
 	case "g711a":
@@ -33,11 +33,15 @@ func newProgramMuxer(audio string) *programMuxer {
 	case "g711u":
 		audioType = 0x91
 	}
-	return &programMuxer{header: buildProgramHeader(audioType), first: true}
+	videoType := byte(0x1b)
+	if video == "hevc" {
+		videoType = 0x24
+	}
+	return &programMuxer{header: buildProgramHeader(videoType, audioType), first: true}
 }
 
-func buildProgramHeader(audioType byte) []byte {
-	entries := []byte{0x1b, videoStreamID, 0, 0} // H.264
+func buildProgramHeader(videoType, audioType byte) []byte {
+	entries := []byte{videoType, videoStreamID, 0, 0}
 	bounds := []byte{videoStreamID, 0xe2, 0x00}
 	var audioBound byte
 	if audioType != 0 {

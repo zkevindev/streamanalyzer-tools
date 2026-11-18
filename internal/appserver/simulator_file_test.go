@@ -43,6 +43,12 @@ func TestGB28181LocalFilePlayback(t *testing.T) {
 		t.Fatalf("generate video-only fixture: %v: %s", err, output)
 	}
 
+	hevcFile := filepath.Join(fixtures, "hevc.mp4")
+	hevcFixture, hevcErr := exec.CommandContext(t.Context(), ffmpeg, "-v", "error",
+		"-f", "lavfi", "-i", "testsrc2=size=160x96:rate=30000/1001",
+		"-f", "lavfi", "-i", "sine=frequency=700:sample_rate=48000", "-t", "0.8",
+		"-c:v", "libx265", "-x265-params", "log-level=error:bframes=2:keyint=10", "-c:a", "aac", hevcFile).CombinedOutput()
+
 	staging := t.TempDir()
 	t.Setenv("TMPDIR", staging)
 	t.Setenv("TMP", staging)
@@ -111,8 +117,19 @@ func TestGB28181LocalFilePlayback(t *testing.T) {
 		{"alaw", h264File, "", "g711a", "copy", "h264", 0x90},
 		{"mulaw", h264File, "g711u", "g711u", "copy", "h264", 0x91},
 		{"video-only", videoOnlyFile, "g711a", "none", "transcode", "mpeg4", 0},
+		{"hevc-ntsc", hevcFile, "g711u", "g711u", "copy", "hevc", 0x91},
 	} {
 		t.Run(test.id, func(t *testing.T) {
+			expectedVideo := byte(0x1b)
+			if test.codec == "hevc" {
+				expectedVideo = 0x24
+				if hevcErr != nil {
+					if bytes.Contains(hevcFixture, []byte("Unknown encoder")) {
+						t.Skip("FFmpeg lacks libx265")
+					}
+					t.Fatalf("generate HEVC fixture: %v: %s", hevcErr, hevcFixture)
+				}
+			}
 			file, err := os.Open(test.file)
 			if err != nil {
 				t.Fatal(err)
@@ -143,7 +160,10 @@ func TestGB28181LocalFilePlayback(t *testing.T) {
 			sendSimulatorRequest(t, platform, device, from, "ACK", channel, answer.headers["to"], test.id, test.id+"-ack", "", "", 1)
 
 			media.SetReadDeadline(time.Now().Add(5 * time.Second))
-			clocks := collectLocalSimulatorMedia(t, media, test.audioPSM)
+			clocks := collectLocalSimulatorMedia(t, media, expectedVideo, test.audioPSM)
+			if test.codec == "hevc" && !clocks.exactNTSC {
+				t.Fatal("HEVC lost exact 3003-tick frame interval")
+			}
 			if test.mode == "copy" && !clocks.reordered {
 				t.Fatal("copied video lost distinct PTS and DTS")
 			}
@@ -170,9 +190,10 @@ func TestGB28181LocalFilePlayback(t *testing.T) {
 type simulatorFileClocks struct {
 	reordered bool
 	audio20ms bool
+	exactNTSC bool
 }
 
-func collectLocalSimulatorMedia(t *testing.T, receiver *net.UDPConn, audioType byte) simulatorFileClocks {
+func collectLocalSimulatorMedia(t *testing.T, receiver *net.UDPConn, videoType, audioType byte) simulatorFileClocks {
 	t.Helper()
 	var clocks simulatorFileClocks
 	packet := make([]byte, 1500)
@@ -213,7 +234,7 @@ func collectLocalSimulatorMedia(t *testing.T, receiver *net.UDPConn, audioType b
 				esSize := int(binary.BigEndian.Uint16(part[4+info : 6+info]))
 				for es := part[6+info : 6+info+esSize]; len(es) >= 4; {
 					if es[1] == 0xe0 {
-						mappedVideo = es[0] == 0x1b
+						mappedVideo = es[0] == videoType
 					}
 					if es[1] == 0xc0 {
 						mappedAudio = es[0]
@@ -234,6 +255,9 @@ func collectLocalSimulatorMedia(t *testing.T, receiver *net.UDPConn, audioType b
 				if frames > 0 && dts <= videoTime {
 					t.Fatalf("video DTS regressed across the loop: %d after %d", dts, videoTime)
 				}
+				if frames > 0 && dts-videoTime == 3003 {
+					clocks.exactNTSC = true
+				}
 				videoTime, frames = dts, frames+1
 			case 0xc0:
 				pts := decodeSimulatorPTS(part[3:8])
@@ -251,7 +275,7 @@ func collectLocalSimulatorMedia(t *testing.T, receiver *net.UDPConn, audioType b
 		ps = ps[:0]
 	}
 	if !mappedVideo || mappedAudio != audioType || (audioType != 0) != (audioPackets > 0) {
-		t.Fatalf("unexpected PS streams: H.264 %v audio type 0x%02x and %d packets", mappedVideo, mappedAudio, audioPackets)
+		t.Fatalf("unexpected PS streams: expected video %v audio type 0x%02x and %d packets", mappedVideo, mappedAudio, audioPackets)
 	}
 	return clocks
 }
