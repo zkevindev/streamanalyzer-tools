@@ -28,6 +28,7 @@ type device struct {
 	seq      uint32 // REGISTER is serialized in run.
 	xmlSN    atomic.Uint32
 	media    *mediaSession
+	evidence []*sessionEvidence
 	file     *localMedia
 	workers  sync.WaitGroup // New workers are admitted under mu while the device is registered.
 }

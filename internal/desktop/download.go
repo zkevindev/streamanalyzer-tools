@@ -33,6 +33,8 @@ func (s Shell) download(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		switch request.Name {
+		case "gb28181-evidence.zip":
+			path = "/api/simulators/gb28181/sessions/" + request.ID + "/evidence.zip"
 		case "evidence.zip", "report.json", "dump", "stream.flv":
 			path = "/api/diagnostics/runs/" + request.ID + "/" + request.Name
 		default:

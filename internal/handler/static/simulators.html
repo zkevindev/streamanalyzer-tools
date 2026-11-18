@@ -78,6 +78,7 @@
                 <div><label for="heartbeat">心跳间隔（秒）</label><input id="heartbeat" name="heartbeat_seconds" type="number" min="5" max="300" value="60"></div>
               </div>
             </details>
+          <label class="sim-check"><input id="capture-rtp" type="checkbox"> 采样已发送的 RTP（每次点播最多 4 MiB）</label>
           </fieldset>
           <div class="sim-controls">
             <button id="start" type="submit" disabled>启动模拟设备</button>
@@ -105,6 +106,21 @@
             <p class="muted field-hint" id="media-units" hidden></p>
             <p class="sim-error" id="media-error" role="status" hidden></p>
             <p class="sim-error" id="state-error" role="status" hidden></p>
+          </div>
+        </section>
+        <section class="panel" aria-labelledby="session-title">
+          <div class="panel-heading"><h2 id="session-title">点播时间线</h2></div>
+          <div class="panel-body session-panel">
+            <label for="sessions">点播会话</label>
+            <select id="sessions" disabled><option value="">等待点播</option></select>
+            <p id="session-capture" class="muted field-hint" hidden></p>
+            <ol id="session-timeline" class="session-timeline" hidden></ol>
+            <a id="export-evidence" class="button secondary" download hidden>导出证据 ZIP</a>
+            <label for="import-evidence">导入 GB28181 证据</label>
+            <input id="import-evidence" type="file" accept=".zip,application/zip">
+            <p id="evidence-review" class="field-hint" role="status" hidden></p>
+            <ol id="review-timeline" class="session-timeline" hidden></ol>
+            <details id="review-signaling" hidden><summary>证据包 SIP 信令</summary><pre id="review-packets" class="event-packet"></pre></details>
           </div>
         </section>
         <section class="panel" aria-labelledby="log-title">

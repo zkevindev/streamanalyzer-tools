@@ -27,6 +27,7 @@ var (
 
 type mediaSession struct {
 	offer     mediaOffer
+	evidence  *sessionEvidence
 	localIP   net.IP
 	conn      net.Conn
 	listener  *net.TCPListener
@@ -55,6 +56,7 @@ func (d *device) onInvite(flow *sipFlow, req *sip.Request, tx sip.ServerTransact
 		reason := "点播协商失败：" + err.Error()
 		d.mu.Lock()
 		if d.status.State == "registered" && flow.ctx.Err() == nil && d.media == nil {
+			d.newEvidence(req.CallID().Value(), "").mark("failed", reason, time.Now(), true)
 			d.status.MediaState, d.status.MediaError = "failed", reason
 			d.status.MediaTransport, d.status.MediaLocal, d.status.MediaTarget, d.status.RTPPackets = "", "", "", 0
 			d.status.VideoFrames, d.status.AudioPackets = 0, 0
@@ -84,7 +86,7 @@ func (d *device) onInvite(flow *sipFlow, req *sip.Request, tx sip.ServerTransact
 		return
 	}
 
-	session := &mediaSession{offer: offer, localIP: flow.local.Addr().AsSlice(), callID: callID, remoteTag: remoteTag,
+	session := &mediaSession{offer: offer, evidence: d.newEvidence(callID, offer.transport), localIP: flow.local.Addr().AsSlice(), callID: callID, remoteTag: remoteTag,
 		cseq: req.CSeq().SeqNo, acked: make(chan struct{})}
 	d.status.MediaTransport = offer.transport
 	d.status.VideoFrames, d.status.AudioPackets = 0, 0
@@ -95,6 +97,7 @@ func (d *device) onInvite(flow *sipFlow, req *sip.Request, tx sip.ServerTransact
 	port, err := session.prepare(session.localIP)
 	if err != nil {
 		reason := "无法绑定本机媒体端口：" + err.Error()
+		session.evidence.mark("failed", reason, time.Now(), true)
 		d.status.MediaState, d.status.MediaError = "failed", reason
 		d.mu.Unlock()
 		d.log("system", reason, "")
@@ -168,6 +171,7 @@ func (d *device) failMedia(session *mediaSession, phase, reason string) {
 	d.mu.Lock()
 	failed := d.media == session && d.status.MediaState == phase && session.ctx.Err() == nil
 	if failed {
+		session.evidence.mark("failed", reason, time.Now(), true)
 		d.closeMediaLocked()
 		d.status.MediaState, d.status.MediaError = "failed", reason
 	}
@@ -228,6 +232,7 @@ func (d *device) closeMedia() {
 
 func (d *device) closeMediaLocked() {
 	if s := d.media; s != nil {
+		s.evidence.mark("ended", "", time.Now(), true)
 		s.close()
 		d.media = nil
 		d.status.MediaState = "idle"
@@ -249,6 +254,7 @@ func (d *device) stream(session *mediaSession) {
 		return
 	}
 	session.conn = conn
+	session.evidence.mark("media_connected", conn.LocalAddr().String()+" → "+conn.RemoteAddr().String(), time.Now(), true)
 	phase := "streaming"
 	if d.file != nil {
 		phase = "starting_source"
@@ -267,18 +273,34 @@ func (d *device) stream(session *mediaSession) {
 	muxer := newProgramMuxer(audioCodec)
 	seq := uint16(rand.Uint32())
 	rtpBase := rand.Uint32()
+	firstPacket, firstKey := true, true
+	capture := func(packet []byte) {
+		if !firstPacket && !session.evidence.CaptureEnabled {
+			return
+		}
+		d.mu.Lock()
+		if d.media == session {
+			session.evidence.capture(packet, firstPacket)
+		}
+		d.mu.Unlock()
+		firstPacket = false
+	}
 	send := func(unit mediaUnit) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		ps := muxer.pack(unit)
-		packets, err := sendRTP(conn, session.offer, ps, rtpBase+uint32(unit.dts), &seq)
+		packets, err := sendRTP(conn, session.offer, ps, rtpBase+uint32(unit.dts), &seq, capture)
 		d.mu.Lock()
 		if d.media == session {
 			d.status.RTPPackets += packets
 			if err == nil {
 				if unit.stream == videoStreamID {
 					d.status.VideoFrames++
+					if unit.key && firstKey {
+						session.evidence.mark("first_keyframe", fmt.Sprintf("PTS=%d, DTS=%d (90 kHz)", unit.pts, unit.dts), time.Now(), true)
+						firstKey = false
+					}
 				} else {
 					d.status.AudioPackets++
 				}
@@ -322,7 +344,7 @@ func playTestPattern(ctx context.Context, send func(mediaUnit) error) error {
 	}
 }
 
-func sendRTP(conn net.Conn, offer mediaOffer, ps []byte, stamp uint32, seq *uint16) (uint64, error) {
+func sendRTP(conn net.Conn, offer mediaOffer, ps []byte, stamp uint32, seq *uint16, observe func([]byte)) (uint64, error) {
 	const maxPayload = 1200
 	if err := conn.SetWriteDeadline(time.Now().Add(2 * time.Second)); err != nil {
 		return 0, err
@@ -349,6 +371,7 @@ func sendRTP(conn net.Conn, offer mediaOffer, ps []byte, stamp uint32, seq *uint
 		if _, err := conn.Write(packet); err != nil {
 			return sent, err
 		}
+		observe(datagram[:12+size])
 		*seq = *seq + 1
 		ps = ps[size:]
 		sent++

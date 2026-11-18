@@ -35,7 +35,7 @@ func TestGB28181SimulatorWorkflow(t *testing.T) {
 	diagnosticRequest(t, server, http.MethodGet, api+"/trace.json", http.StatusNotFound, nil)
 	body, err := json.Marshal(gb28181.Config{
 		PlatformHost: "127.0.0.1", PlatformPort: platform.LocalAddr().(*net.UDPAddr).Port,
-		PlatformID: platformID, DeviceID: user, ChannelID: channel, Password: password, Heartbeat: 5,
+		PlatformID: platformID, DeviceID: user, ChannelID: channel, Password: password, Heartbeat: 5, CaptureRTP: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -147,6 +147,29 @@ func TestGB28181SimulatorWorkflow(t *testing.T) {
 	}
 	sendSimulatorSIP(t, platform, deviceAddr, unregister.response("200 OK", ""))
 	status = waitSimulator(t, server, api, "stopped")
+	if len(status.Sessions) != 1 || status.Sessions[0].CaptureBytes == 0 {
+		t.Fatalf("missing SIP session evidence: %+v", status.Sessions)
+	}
+	session := status.Sessions[0]
+	for _, stage := range []string{"invite", "invite_ok", "ack", "media_connected", "first_rtp", "first_keyframe", "bye", "ended"} {
+		found := false
+		for _, mark := range session.Timeline {
+			if mark.Stage == stage {
+				found = true
+			}
+		}
+		if !found {
+			t.Fatalf("missing %s in %+v", stage, session.Timeline)
+		}
+	}
+	archive := diagnosticRequest(t, server, http.MethodGet, api+"/sessions/"+session.ID+"/evidence.zip", http.StatusOK, nil)
+	review := decodeDiagnostic[gb28181.EvidenceReview](t, diagnosticRequest(t, server, http.MethodPost, api+"/evidence/import", http.StatusOK, archive))
+	if review.Session.CallID != session.CallID || review.RTP == nil || review.RTP.VideoUnits == 0 ||
+		review.RTP.VideoType != 0x1b || review.RTP.SequenceGaps != 0 {
+		t.Fatalf("unexpected offline GB28181 review: %+v", review)
+	}
+	diagnosticRequest(t, server, http.MethodPost, api+"/evidence/import", http.StatusBadRequest, []byte("invalid zip"))
+
 	trace := diagnosticRequest(t, server, http.MethodGet, api+"/trace.json", http.StatusOK, nil)
 	export := decodeDiagnostic[gb28181.Status](t, trace)
 	if status.Active || export.State != "stopped" || len(export.Events) != len(status.Events) ||

@@ -40,3 +40,11 @@ details[open] > summary .event-summary::before { content: "▾ "; }
   .host-fields { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .host-fields > :first-child { grid-column: 1 / -1; }
 }
+
+.sim-check { display:flex; align-items:center; gap:.55rem; }
+.sim-check input { width:1rem; min-height:1rem; }
+.session-panel { display:grid; gap:.45rem; }
+.session-panel > .button { justify-self:start; }
+.session-timeline { margin:.25rem 0; padding:0; list-style:none; }
+.session-timeline li { display:grid; grid-template-columns:6.5rem minmax(0,1fr); align-items:baseline; gap:.6rem; padding:.4rem 0; border-bottom:1px solid var(--border); overflow-wrap:anywhere; }
+.session-timeline time { color:var(--muted); font: .8rem var(--font-data); }
