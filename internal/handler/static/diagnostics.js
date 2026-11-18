@@ -11,11 +11,19 @@ const endLabels = {
     http_status: 'HTTP 状态异常', request_error: '请求失败',
     invalid_flv: 'FLV 头部异常', truncated_tag: 'FLV 标签提前结束', body_error: '读取响应体中断',
     rtmp_error: 'RTMP 连接或读取失败', hls_error: 'HLS 播放列表不可用',
+    udp_bind_error: '无法监听 UDP 地址', udp_read_error: '读取 UDP 数据报失败', timeline_limit: '达到证据时间线上限',
 };
 const protocols = {
     'http-flv': { label: 'HTTP-FLV', example: 'https://live.example.com/app/stream.flv', dump: '原始 FLV' },
     rtmp: { label: 'RTMP', example: 'rtmp://live.example.com/app/stream', dump: '原始 RTMP' },
     hls: { label: 'HLS', example: 'https://live.example.com/app/playlist.m3u8', dump: '原始 HLS ZIP' },
+    'http-ts': { label: 'HTTP MPEG-TS', example: 'https://live.example.com/app/stream.ts', dump: '原始 TS', mpegTS: true },
+    'udp-ts': { label: 'UDP MPEG-TS', example: 'udp://127.0.0.1:5000', dump: '原始 UDP 载荷', mpegTS: true, receive: true },
+    'rtp-ts': { label: 'RTP MPEG-TS', example: 'rtp://127.0.0.1:5000', dump: '原始 RTP 数据报', mpegTS: true, receive: true },
+};
+const stageLabels = {
+    dns: 'DNS 解析', connect: '建立连接', tls: 'TLS 握手', response_headers: 'HTTP 响应头',
+    listen: '建立监听', receive: '接收数据', handshake: 'RTMP 握手', play: 'RTMP 建连与播放协商',
 };
 const modelProviderLabels = {
     'openai-compatible': 'OpenAI 兼容接口',
@@ -28,6 +36,7 @@ const severityLabels = { error: '错误', warn: '警告', info: '提示' };
 const tagLabels = {
     video: '视频', audio: '音频', invalid_audio: '音频标签异常', invalid_video: '视频标签异常', invalid_tag_size: '标签长度异常',
     hls_playlist: '播放列表', hls_init: '初始化段', hls_segment: '媒体分片', hls_gap: '标记缺失的分片',
+    ts_packet: 'TS 包', ts_sync_loss: 'TS 同步丢失', rtp_datagram: 'RTP 数据报',
 };
 const renditionLabels = { main: '主路', audio: '独立音频' };
 let desktop = false;
@@ -82,7 +91,7 @@ function renderHistory() {
         button.type = 'button';
         if (run.id === currentID) button.setAttribute('aria-current', 'true');
         const when = new Date(run.created_at).toLocaleString();
-        const mode = run.mode === 'replay' ? '导入复盘' : '拉流';
+        const mode = run.mode === 'replay' ? '导入复盘' : (protocols[run.protocol]?.receive ? '收包' : '拉流');
         const meta = element('span', '', 'run-meta');
         const status = element('span', statusLabels[run.status] || run.status, 'status');
         status.dataset.status = run.status;
@@ -100,30 +109,44 @@ async function refreshHistory() {
     renderHistory();
 }
 
-function renderEvidence(protocol, events) {
+function renderTable(columns, rows) {
     const wrap = element('div', '', 'scroll');
     const table = document.createElement('table');
     const header = table.createTHead().insertRow();
-    const columns = protocol === 'hls' ? ['对象', '流', '分片序号', '到达 ms', 'HTTP', '请求耗时 ms', '原始包条目', '长度（字节）'] :
-        [protocol === 'rtmp' ? '消息' : '标签', '到达 ms', 'DTS ms', 'PTS ms', '偏移（字节）', protocol === 'rtmp' ? '消息跨度（字节）' : '长度（字节）'];
     for (const title of columns) {
         const cell = element('th', title);
         cell.scope = 'col';
         header.append(cell);
     }
     const body = table.createTBody();
-    for (const event of events) {
+    for (const values of rows) {
         const row = body.insertRow();
-        const kind = tagLabels[event.kind] || event.kind;
-        const values = protocol === 'hls' ? [kind, renditionLabels[event.rendition] || '—', event.sequence ?? '—', event.arrival_ms, event.http_status || '—',
-            event.duration_ms ?? (event.http_status ? 0 : '—'), event.artifact || '—', event.artifact ? event.size : '—'] :
-            [kind, event.arrival_ms, event.dts_ms, event.pts_ms, event.offset, event.size];
         for (const value of values) {
-            row.insertCell().textContent = value;
+            row.insertCell().textContent = value ?? '—';
         }
     }
     wrap.append(table);
     return wrap;
+}
+
+function hexLabel(value, width) {
+    return value == null ? '—' : `0x${value.toString(16).toUpperCase().padStart(width, '0')}`;
+}
+
+function renderEvidence(protocol, events) {
+    const kind = (event) => tagLabels[event.kind] || event.kind;
+    if (protocol === 'hls') {
+        return renderTable(['对象', '流', '分片序号', '到达 (ms)', 'HTTP', '请求耗时 (ms)', '原始包条目', '长度（字节）'],
+            events.map((event) => [kind(event), renditionLabels[event.rendition], event.sequence, event.arrival_ms, event.http_status || '—',
+                event.duration_ms ?? (event.http_status ? 0 : '—'), event.artifact || '—', event.artifact ? event.size : '—']));
+    }
+    if (protocols[protocol]?.mpegTS) {
+        const rtp = protocol === 'rtp-ts';
+        return renderTable(['对象', '到达 (ms)', 'PID', ...(rtp ? ['RTP 序号'] : []), '偏移（字节）', '长度（字节）'],
+            events.map((event) => [kind(event), event.arrival_ms, hexLabel(event.pid, 4), ...(rtp ? [event.rtp_sequence] : []), event.offset, event.size]));
+    }
+    return renderTable([protocol === 'rtmp' ? '消息' : '标签', '到达 (ms)', 'DTS (ms)', 'PTS (ms)', '偏移（字节）', protocol === 'rtmp' ? '消息跨度（字节）' : '长度（字节）'],
+        events.map((event) => [kind(event), event.arrival_ms, event.dts_ms, event.pts_ms, event.offset, event.size]));
 }
 
 function showFinding(id) {
@@ -163,12 +186,71 @@ function renderTrace(findings, elapsed) {
     trace.replaceChildren(scale, ...rows);
 }
 
+const time = (ms) => ms == null ? '—' : `${ms} ms`;
+const bytes = (size) => `${size.toLocaleString()} 字节`;
+
+function renderMetrics(id, values) {
+    const list = node(id);
+    list.hidden = values.length === 0;
+    list.replaceChildren(...values.map(([label, value]) => {
+        const item = element('div', '');
+        item.append(element('dt', label), element('dd', value ?? '—'));
+        return item;
+    }));
+}
+
+function renderSamplingTiming(observation) {
+    const stages = observation.stages || [];
+    const values = [];
+    if (observation.first_payload_ms != null) values.push(['首个载荷到达', time(observation.first_payload_ms)]);
+    if (observation.failure_stage) values.push(['故障阶段', stageLabels[observation.failure_stage] || observation.failure_stage]);
+    if (observation.failure_code) values.push(['故障代码', observation.failure_code]);
+    node('sampling-timing').hidden = stages.length === 0 && values.length === 0;
+    renderMetrics('timing-metrics', values);
+    const rows = stages.map((stage) => [stageLabels[stage.name] || stage.name, stage.start_ms, stage.end_ms, stage.end_ms - stage.start_ms]);
+    node('timing-table').replaceChildren(...(rows.length ? [renderTable(['阶段', '开始偏移 (ms)', '结束偏移 (ms)', '耗时 (ms)'], rows)] : []));
+}
+
+function renderTransport(protocol, ts) {
+    node('transport').hidden = !ts;
+    if (!ts) return;
+    const values = [
+        ['TS 包数', ts.packets], ['TS 包大小', ts.packet_size ? bytes(ts.packet_size) : '—'],
+        ['连续计数错误', ts.continuity_errors], ['传输错误标记 (TEI)', ts.transport_errors],
+        ['重复 TS 包', ts.duplicates], ['格式错误 TS 包', ts.malformed_packets],
+        ['同步丢失', bytes(ts.sync_loss_bytes ?? 0)],
+        ['PAT / PMT 段数', `${ts.pat_sections ?? 0} / ${ts.pmt_sections ?? 0}`], ['PCR PID 数', ts.pcr_pids],
+        ['PSI 解析错误', ts.psi_errors ?? 0],
+    ];
+    if (ts.trailing_bytes) values.push(['尾部不完整数据', bytes(ts.trailing_bytes)]);
+    if (ts.max_pcr_gap_ms) values.push(['最大 PCR 间隔', time(ts.max_pcr_gap_ms)]);
+    if (protocol === 'rtp-ts') {
+        values.push(['RTP 数据报', ts.rtp_datagrams ?? 0], ['估计缺失 RTP 包', ts.rtp_missing ?? 0],
+            ['乱序 RTP 包', ts.rtp_out_of_order ?? 0], ['重复 RTP 包', ts.rtp_duplicates ?? 0],
+            ['格式错误 RTP 数据报', ts.rtp_invalid ?? 0]);
+    }
+    renderMetrics('transport-metrics', values);
+    const pids = ts.pids || [];
+    node('ts-pids').hidden = pids.length === 0;
+    if (!pids.length) {
+        node('pid-table').replaceChildren();
+        return;
+    }
+    node('pid-summary').textContent = ts.pid_count > pids.length ? `PID 明细（显示 ${pids.length} / ${ts.pid_count}）` : 'PID 明细';
+    const table = renderTable(['PID', '编码', '流类型', 'TS 包数', 'TEI', '连续计数错误', '重复包', 'PES 起始数', 'PCR / PTS / DTS 计数'],
+        pids.map((pid) => [hexLabel(pid.pid, 4), pid.codec || '—', hexLabel(pid.stream_type, 2), pid.packets,
+            pid.transport_errors, pid.continuity_errors, pid.duplicates, pid.pes_starts,
+            `${pid.pcr_count ?? 0} / ${pid.pts_count ?? 0} / ${pid.dts_count ?? 0}`]));
+    table.tabIndex = 0;
+    table.setAttribute('role', 'region');
+    table.setAttribute('aria-label', 'PID 明细');
+    node('pid-table').replaceChildren(table);
+}
+
 function renderReport(report) {
     const observed = report.manifest.observation;
     const protocol = report.manifest.protocol;
     const m = report.metrics;
-    const time = (ms) => ms == null ? '—' : `${ms} ms`;
-    const bytes = (size) => `${size.toLocaleString()} 字节`;
     const values = [];
     if (protocol === 'hls') {
         const hls = report.hls || {};
@@ -183,25 +265,26 @@ function renderReport(report) {
             ['采样变体带宽', bandwidth],
             ['媒体数据', bytes(hls.media_bytes ?? 0)],
         );
-    } else {
+    } else if (!protocols[protocol]?.mpegTS) {
         values.push(
             ['首个视频帧', time(m.first_video_ms)],
             ['视频帧 / 音频帧', `${m.video_frames} / ${m.audio_frames}`],
             ['视频最大到达间隔', time(m.video_frames > 1 ? m.max_video_gap_ms : null)],
             ['最大关键帧间隔', time(m.max_gop_ms || null)],
         );
+        if (m.first_audio_ms != null) values.push(['首个音频帧', time(m.first_audio_ms)]);
+        if (m.first_keyframe_ms != null) values.push(['首个关键帧', time(m.first_keyframe_ms)]);
+        if (m.max_audio_gap_ms > 0) values.push(['音频最大到达间隔', time(m.max_audio_gap_ms)]);
     }
-    if (protocol !== 'rtmp' || observed.ttfb_ms != null) {
+    if (observed.ttfb_ms != null) {
         values.push([protocol === 'rtmp' ? 'RTMP 首字节' : '响应首字节', time(observed.ttfb_ms)]);
     }
     if (m.video_codecs?.length) values.push(['视频编码', m.video_codecs.join(' / ')]);
     if (m.audio_codecs?.length) values.push(['音频编码', m.audio_codecs.join(' / ')]);
-    values.push([protocol === 'hls' ? '原始 HLS ZIP' : '原始流', bytes(report.manifest.stream.bytes)]);
-    node('metrics').replaceChildren(...values.map(([label, value]) => {
-        const item = element('div', '');
-        item.append(element('dt', label), element('dd', value));
-        return item;
-    }));
+    values.push([protocols[protocol]?.dump || '原始流', bytes(report.manifest.stream.bytes)]);
+    renderMetrics('metrics', values);
+    renderSamplingTiming(observed);
+    renderTransport(protocol, report.mpegts);
     renderTrace(report.findings, observed.elapsed_ms);
     const findings = report.findings.map((finding) => {
         const item = element('details', '', 'finding');
@@ -210,7 +293,13 @@ function renderReport(report) {
         const severity = element('span', severityLabels[finding.severity] || finding.severity, 'severity');
         severity.dataset.severity = finding.severity;
         summary.append(severity, finding.message);
-        item.append(summary, element('p', `${(finding.start_ms / 1000).toFixed(3)}–${(finding.end_ms / 1000).toFixed(3)} 秒 · 从开始采样计时`, 'muted'));
+        const occurrence = finding.occurrences > 0 ? ` · 共 ${finding.occurrences} 次` : '';
+        item.append(summary, element('p', `${(finding.start_ms / 1000).toFixed(3)}–${(finding.end_ms / 1000).toFixed(3)} 秒 · 从开始采样计时${occurrence}`, 'muted'));
+        if (finding.next_check) {
+            const nextCheck = element('p', '');
+            nextCheck.append(element('strong', '建议检查 '), finding.next_check);
+            item.append(nextCheck);
+        }
         if (finding.evidence?.length) item.append(renderEvidence(protocol, finding.evidence));
         return item;
     });
@@ -347,7 +436,13 @@ function bindForm(id, submit) {
 }
 
 node('protocol').addEventListener('change', () => {
-    node('url').placeholder = protocols[node('protocol').value].example;
+    const protocol = node('protocol').value;
+    const selected = protocols[protocol];
+    node('url').placeholder = selected.example;
+    node('url-label').textContent = selected.receive ? '监听地址' : '播放地址';
+    const hint = node('url-hint');
+    hint.hidden = !selected.receive;
+    hint.textContent = selected.receive ? `填写本机 IPv4 和端口。组播示例 ${protocol.split('-')[0]}://239.1.1.1:5000?interface=en0` : '';
 });
 bindForm('sample', () => api('/runs', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },

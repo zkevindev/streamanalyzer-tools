@@ -50,12 +50,13 @@ type hlsRecord struct {
 }
 
 type hlsCapture struct {
-	client    *http.Client
-	start     time.Time
-	archive   *zip.Writer
-	ledger    *json.Encoder
-	count     int
-	remaining int64
+	client      *http.Client
+	start       time.Time
+	archive     *zip.Writer
+	ledger      *json.Encoder
+	count       int
+	remaining   int64
+	observation *Observation
 }
 
 func sampleHLS(ctx context.Context, client *http.Client, dir string, target *url.URL, seconds int) (Report, error) {
@@ -74,7 +75,8 @@ func sampleHLS(ctx context.Context, client *http.Client, dir string, target *url
 	defer cancel()
 	capture := hlsCapture{
 		client: client, start: start, archive: zip.NewWriter(stream), ledger: json.NewEncoder(timeline),
-		remaining: maxStreamBytes - hlsZipOverhead,
+		remaining:   maxStreamBytes - hlsZipOverhead,
+		observation: &obs,
 	}
 	reason, err := capture.run(ctx, target, &obs)
 	obs.EndReason = reason
@@ -365,6 +367,10 @@ func (c *hlsCapture) fetch(ctx context.Context, target *url.URL, row hlsRecord, 
 	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
+	finishAttempt := func(error) {}
+	if c.count == 0 && c.observation != nil {
+		ctx, finishAttempt = recordHTTPAttempt(ctx, c.observation, c.start)
+	}
 	var firstByte atomic.Int64
 	firstByte.Store(-1)
 	trace := &httptrace.ClientTrace{GotFirstResponseByte: func() {
@@ -372,6 +378,7 @@ func (c *hlsCapture) fetch(ctx context.Context, target *url.URL, row hlsRecord, 
 	}}
 	req, err := http.NewRequestWithContext(httptrace.WithClientTrace(ctx, trace), http.MethodGet, target.String(), nil)
 	if err != nil {
+		finishAttempt(err)
 		return result, nil, nil
 	}
 	req.Header.Set("User-Agent", "StreamAnalyzer-Diagnostic/1.0")
@@ -390,6 +397,7 @@ func (c *hlsCapture) fetch(ctx context.Context, target *url.URL, row hlsRecord, 
 		req.Header.Set("Range", fmt.Sprintf("bytes=%d-%d", rangeStart, rangeEnd))
 	}
 	resp, err := c.client.Do(req)
+	finishAttempt(err)
 	if ms := firstByte.Load(); ms >= 0 {
 		result.TTFBMS = &ms
 	}
@@ -401,6 +409,9 @@ func (c *hlsCapture) fetch(ctx context.Context, target *url.URL, row hlsRecord, 
 
 	if resp.StatusCode != http.StatusOK && (byteRange == nil || resp.StatusCode != http.StatusPartialContent) {
 		result.Result = "http_status"
+		if c.count == 0 && c.observation != nil {
+			c.observation.FailureStage, c.observation.FailureCode = "response_headers", "http_status"
+		}
 		return result, nil, resp.Request.URL
 	}
 	if byteRange != nil && !matchesHLSRange(resp, rangeStart, rangeEnd) {
@@ -409,7 +420,11 @@ func (c *hlsCapture) fetch(ctx context.Context, target *url.URL, row hlsRecord, 
 	}
 
 	limit := min(c.remaining, hlsObjectLimit(row.Kind))
-	body, err = io.ReadAll(io.LimitReader(resp.Body, limit+1))
+	var payload io.Reader = resp.Body
+	if c.count == 0 && c.observation != nil {
+		payload = io.TeeReader(resp.Body, payloadWriter{io.Discard, c.observation, c.start})
+	}
+	body, err = io.ReadAll(io.LimitReader(payload, limit+1))
 	switch {
 	case int64(len(body)) > limit:
 		body, result.Result = body[:limit], "size_limit"

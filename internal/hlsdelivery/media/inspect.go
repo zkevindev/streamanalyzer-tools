@@ -142,7 +142,7 @@ func inspectTS(data []byte) Info {
 		if videoPID < 0 && pmtPID >= 0 && pid == pmtPID && pusi {
 			var videoType byte
 			videoPID, pcrPID, videoType = parsePMT(payload)
-			info.Codec, _ = tsStreamCodecs(videoType, nil)
+			info.Codec, _ = TSStreamCodecs(videoType, nil)
 		}
 		if pcrPID >= 0 && pid == pcrPID && hasPCR {
 			pcrs = append(pcrs, pcr)

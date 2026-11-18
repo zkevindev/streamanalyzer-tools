@@ -150,34 +150,44 @@ func (c modelClient) parse(content string, report Report) (Explanation, error) {
 }
 
 type modelFinding struct {
-	ID       string `json:"id"`
-	Code     string `json:"code"`
-	Severity string `json:"severity"`
-	Message  string `json:"message"`
-	StartMS  int64  `json:"start_ms"`
-	EndMS    int64  `json:"end_ms"`
+	ID          string `json:"id"`
+	Code        string `json:"code"`
+	Severity    string `json:"severity"`
+	Message     string `json:"message"`
+	StartMS     int64  `json:"start_ms"`
+	EndMS       int64  `json:"end_ms"`
+	Occurrences int    `json:"occurrences,omitempty"`
+	NextCheck   string `json:"next_check,omitempty"`
 }
 
 // Only tool-generated findings and numeric measurements leave the process.
 func modelInput(report Report) ([]byte, error) {
 	obs := report.Manifest.Observation
 	input := struct {
-		Protocol   string         `json:"protocol"`
-		ElapsedMS  int64          `json:"elapsed_ms"`
-		HTTPStatus int            `json:"http_status"`
-		TTFBMS     *int64         `json:"ttfb_ms,omitempty"`
-		EndReason  string         `json:"end_reason"`
-		Metrics    Metrics        `json:"metrics"`
-		HLS        *HLSMetrics    `json:"hls,omitempty"`
-		Findings   []modelFinding `json:"findings"`
+		Protocol       string         `json:"protocol"`
+		ElapsedMS      int64          `json:"elapsed_ms"`
+		HTTPStatus     int            `json:"http_status"`
+		TTFBMS         *int64         `json:"ttfb_ms,omitempty"`
+		EndReason      string         `json:"end_reason"`
+		Metrics        Metrics        `json:"metrics"`
+		HLS            *HLSMetrics    `json:"hls,omitempty"`
+		MPEGTS         *MPEGTSMetrics `json:"mpegts,omitempty"`
+		FirstPayloadMS *int64         `json:"first_payload_ms,omitempty"`
+		Stages         []CaptureStage `json:"stages,omitempty"`
+		FailureStage   string         `json:"failure_stage,omitempty"`
+		FailureCode    string         `json:"failure_code,omitempty"`
+		Findings       []modelFinding `json:"findings"`
 	}{
 		Protocol: report.Manifest.Protocol, ElapsedMS: obs.ElapsedMS, HTTPStatus: obs.HTTPStatus, TTFBMS: obs.TTFBMS,
-		EndReason: obs.EndReason, Metrics: report.Metrics, HLS: report.HLS, Findings: []modelFinding{},
+		EndReason: obs.EndReason, Metrics: report.Metrics, HLS: report.HLS, MPEGTS: report.MPEGTS,
+		FirstPayloadMS: obs.FirstPayloadMS, Stages: obs.Stages, FailureStage: obs.FailureStage, FailureCode: obs.FailureCode,
+		Findings: []modelFinding{},
 	}
 	for _, finding := range report.Findings {
 		input.Findings = append(input.Findings, modelFinding{
 			ID: finding.ID, Code: finding.Code, Severity: finding.Severity, Message: finding.Message,
 			StartMS: finding.StartMS, EndMS: finding.EndMS,
+			Occurrences: finding.Occurrences, NextCheck: finding.NextCheck,
 		})
 	}
 	return json.Marshal(input)

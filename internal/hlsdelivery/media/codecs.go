@@ -119,7 +119,7 @@ func pmtCodecs(section []byte) (video, audio []string) {
 		if next > end {
 			return nil, nil
 		}
-		v, a := tsStreamCodecs(section[offset], section[offset+5:next])
+		v, a := TSStreamCodecs(section[offset], section[offset+5:next])
 		addCodec(&video, v)
 		addCodec(&audio, a)
 		offset = next
@@ -127,7 +127,8 @@ func pmtCodecs(section []byte) (video, audio []string) {
 	return video, audio
 }
 
-func tsStreamCodecs(streamType byte, descriptors []byte) (video, audio string) {
+// TSStreamCodecs identifies a PMT elementary stream type and its registration descriptors.
+func TSStreamCodecs(streamType byte, descriptors []byte) (video, audio string) {
 	switch streamType {
 	case 0x01:
 		return "mpeg1video", ""

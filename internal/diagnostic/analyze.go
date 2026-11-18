@@ -15,19 +15,22 @@ const (
 )
 
 func analyze(manifest Manifest, events []Event) Report {
-	report := Report{RuleVersion: manifest.Protocol + "/1", Manifest: manifest, Findings: []Finding{}}
+	report := Report{RuleVersion: manifest.Protocol + "/2", Manifest: manifest, Findings: []Finding{}}
 	obs := manifest.Observation
 	metrics := &report.Metrics
 	var firstVideo, lastVideo *Event
 	var longestGapStart, longestGapEnd *Event
-	var lastAudio, lastKey *Event
-	seen := make(map[string]bool)
+	var lastAudio, lastKey, audioGapStart, audioGapEnd *Event
+	seen := make(map[string]int)
 	addOnce := func(code, severity, message string, start, end int64, evidence ...Event) {
-		if seen[code] {
+		if index, ok := seen[code]; ok {
+			finding := &report.Findings[index]
+			finding.Occurrences++
+			finding.EndMS = max(finding.EndMS, end)
 			return
 		}
-		seen[code] = true
-		report.Findings = append(report.Findings, Finding{Code: code, Severity: severity, Message: message, StartMS: start, EndMS: end, Evidence: evidence})
+		seen[code] = len(report.Findings)
+		report.Findings = append(report.Findings, Finding{Code: code, Severity: severity, Message: message, StartMS: start, EndMS: end, Evidence: evidence, Occurrences: 1})
 	}
 
 	checkDTS := func(previous *Event, current Event) {
@@ -74,6 +77,9 @@ func analyze(manifest Manifest, events []Event) Report {
 			}
 			lastVideo = event
 			if event.Keyframe {
+				if metrics.FirstKeyframeMS == nil {
+					metrics.FirstKeyframeMS = &event.ArrivalMS
+				}
 				if lastKey != nil {
 					gop := event.DTS - lastKey.DTS
 					metrics.MaxGOPMS = max(metrics.MaxGOPMS, gop)
@@ -88,6 +94,10 @@ func analyze(manifest Manifest, events []Event) Report {
 			checkDTS(lastAudio, *event)
 			if metrics.FirstAudioMS == nil {
 				metrics.FirstAudioMS = &event.ArrivalMS
+			}
+			if lastAudio != nil && event.ArrivalMS-lastAudio.ArrivalMS > metrics.MaxAudioGapMS {
+				metrics.MaxAudioGapMS = event.ArrivalMS - lastAudio.ArrivalMS
+				audioGapStart, audioGapEnd = lastAudio, event
 			}
 			lastAudio = event
 		case "invalid_audio", "invalid_video", "invalid_tag_size":
@@ -107,6 +117,15 @@ func analyze(manifest Manifest, events []Event) Report {
 	if metrics.MaxVideoGapMS > videoGapWarnMS {
 		addOnce("video_arrival_gap", "warn", fmt.Sprintf("采样点连续 %d ms 未收到新视频帧", metrics.MaxVideoGapMS), longestGapStart.ArrivalMS, longestGapEnd.ArrivalMS, *longestGapStart, *longestGapEnd)
 	}
+	if metrics.MaxAudioGapMS > videoGapWarnMS {
+		addOnce("audio_arrival_gap", "warn", fmt.Sprintf("采样点连续 %d ms 未收到新音频帧", metrics.MaxAudioGapMS), audioGapStart.ArrivalMS, audioGapEnd.ArrivalMS, *audioGapStart, *audioGapEnd)
+	}
+	if lastAudio != nil && obs.EndReason == "duration_limit" && obs.ElapsedMS-lastAudio.ArrivalMS > videoGapWarnMS {
+		addOnce("audio_tail_gap", "warn", fmt.Sprintf("采样结束前 %d ms 未收到新音频帧", obs.ElapsedMS-lastAudio.ArrivalMS), lastAudio.ArrivalMS, obs.ElapsedMS, *lastAudio)
+	}
+	if firstVideo != nil && lastKey == nil && obs.ElapsedMS-firstVideo.ArrivalMS > firstFrameWarnMS {
+		addOnce("no_video_keyframe", "warn", "已收到视频帧，采样窗口内尚未观察到关键帧", firstVideo.ArrivalMS, obs.ElapsedMS, *firstVideo)
+	}
 	if lastVideo != nil && obs.EndReason == "duration_limit" && obs.ElapsedMS-lastVideo.ArrivalMS > videoGapWarnMS {
 		addOnce("video_tail_gap", "warn", fmt.Sprintf("采样结束前 %d ms 未收到新视频帧", obs.ElapsedMS-lastVideo.ArrivalMS), lastVideo.ArrivalMS, obs.ElapsedMS, *lastVideo)
 	}
@@ -123,6 +142,7 @@ func analyze(manifest Manifest, events []Event) Report {
 	case "size_limit", "tag_limit", "canceled":
 		addOnce(obs.EndReason, "info", reason, obs.ElapsedMS, obs.ElapsedMS)
 	}
+	addObservationFindings(&report)
 
 	slices.SortStableFunc(report.Findings, func(left, right Finding) int {
 		switch {
@@ -137,6 +157,7 @@ func analyze(manifest Manifest, events []Event) Report {
 	for i := range report.Findings {
 		report.Findings[i].ID = fmt.Sprintf("F%03d", i+1)
 	}
+	enrichFindings(&report)
 	return report
 }
 
@@ -159,6 +180,12 @@ func endReasonText(reason string) string {
 		return "达到原始流大小上限，已保留采样前缀"
 	case "tag_limit":
 		return "达到标签数量上限，已保留采样前缀"
+	case "timeline_limit":
+		return "达到接收时间线大小上限，已保留完整的数据报前缀"
+	case "udp_bind_error":
+		return "无法绑定 UDP 接收端口或加入组播"
+	case "udp_read_error":
+		return "读取 UDP 数据报失败"
 	case "http_status":
 		return "播放请求返回非 200 状态"
 	case "request_error":
