@@ -18,11 +18,12 @@ import (
 )
 
 const (
-	hlsMaxRecords    = 1024
-	hlsZipOverhead   = 256 << 10
-	hlsPlaylistLimit = 1 << 20
-	hlsInitLimit     = 4 << 20
-	hlsSegmentLimit  = 32 << 20
+	hlsMaxRecords     = 1024
+	hlsZipOverhead    = 256 << 10
+	hlsPlaylistLimit  = 1 << 20
+	hlsInitLimit      = 4 << 20
+	hlsSegmentLimit   = 32 << 20
+	maxHLSRecordBytes = 256 << 10
 
 	hlsPlaylist = "hls_playlist"
 	hlsInit     = "hls_init"
@@ -52,7 +53,8 @@ type hlsCapture struct {
 	client      *http.Client
 	start       time.Time
 	archive     *zip.Writer
-	ledger      *json.Encoder
+	ledger      io.Writer
+	ledgerBytes int64
 	count       int
 	remaining   int64
 	observation *Observation
@@ -73,7 +75,7 @@ func sampleHLS(ctx context.Context, client *http.Client, dir string, target *url
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(seconds)*time.Second)
 	defer cancel()
 	capture := hlsCapture{
-		client: client, start: start, archive: zip.NewWriter(stream), ledger: json.NewEncoder(timeline),
+		client: client, start: start, archive: zip.NewWriter(stream), ledger: timeline,
 		remaining:   maxStreamBytes - hlsZipOverhead,
 		observation: &obs,
 	}
@@ -292,7 +294,7 @@ func (c *hlsCapture) captureSegment(ctx context.Context, track *hlsCaptureTrack,
 }
 
 func (c *hlsCapture) end(ctx context.Context) string {
-	if c.remaining == 0 {
+	if c.remaining == 0 || c.ledgerBytes >= maxTimeline-maxHLSRecordBytes {
 		return "size_limit"
 	}
 	if c.count >= hlsMaxRecords {
@@ -324,7 +326,20 @@ func (c *hlsCapture) record(row hlsRecord, body []byte) error {
 		}
 		c.remaining -= int64(len(body))
 	}
-	return c.ledger.Encode(row)
+	data, err := json.Marshal(row)
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	if len(data) > maxHLSRecordBytes || int64(len(data)) > maxTimeline-c.ledgerBytes {
+		return fmt.Errorf("%w: HLS 请求元数据超出大小上限", ErrInvalid)
+	}
+	n, err := c.ledger.Write(data)
+	c.ledgerBytes += int64(n)
+	if err == nil && n != len(data) {
+		return io.ErrShortWrite
+	}
+	return err
 }
 
 func hlsArtifactName(kind string, id int) string {

@@ -69,9 +69,18 @@ func (t *observedHTTPTransport) RoundTrip(req *http.Request) (*http.Response, er
 		sampleStart: t.sampleStart,
 		request: HTTPRequestTiming{
 			Number: len(t.requests) + 1, StartMS: time.Since(t.sampleStart).Milliseconds(),
+			Method: req.Method, HeadersRecorded: true,
 		},
-		active: make(map[string]int),
+		active: make(map[string]int), requestFields: req.Header.Clone(),
 	}
+	if attempt.requestFields == nil {
+		attempt.requestFields = make(http.Header)
+	}
+	host := req.Host
+	if host == "" {
+		host = req.URL.Host
+	}
+	attempt.requestFields.Set("Host", host)
 	ctx := httptrace.WithClientTrace(req.Context(), attempt.trace())
 	resp, err := t.base.RoundTrip(req.WithContext(ctx))
 	t.requests = append(t.requests, attempt.finish(resp, err))
@@ -79,12 +88,13 @@ func (t *observedHTTPTransport) RoundTrip(req *http.Request) (*http.Response, er
 }
 
 type httpAttempt struct {
-	mu          sync.Mutex
-	sampleStart time.Time
-	request     HTTPRequestTiming
-	active      map[string]int
-	lastStage   string
-	finished    bool
+	mu            sync.Mutex
+	sampleStart   time.Time
+	request       HTTPRequestTiming
+	active        map[string]int
+	lastStage     string
+	finished      bool
+	requestFields http.Header
 }
 
 func (a *httpAttempt) trace() *httptrace.ClientTrace {
@@ -110,9 +120,31 @@ func (a *httpAttempt) trace() *httptrace.ClientTrace {
 		TLSHandshakeStart:    func() { begin("tls", "tls") },
 		TLSHandshakeDone:     func(tls.ConnectionState, error) { end("tls") },
 		GotConn:              a.gotConnection,
+		WroteHeaderField:     a.wroteHeaderField,
 		WroteRequest:         a.wroteRequest,
 		GotFirstResponseByte: a.receivedFirstByte,
 	}
+}
+
+func (a *httpAttempt) wroteHeaderField(name string, values []string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.finished {
+		return
+	}
+	if a.requestFields == nil {
+		a.requestFields = make(http.Header)
+	}
+	// HTTP/1 transport callbacks include synthesized Host, User-Agent,
+	// Accept-Encoding and transfer fields that are absent from Request.Header.
+	// Transports that omit the callback retain the configured request fields.
+	if name == ":authority" {
+		name = "Host"
+	}
+	if !validHTTPHeaderName(name) {
+		return
+	}
+	a.requestFields[http.CanonicalHeaderKey(name)] = append([]string(nil), values...)
 }
 
 func (a *httpAttempt) now() int64 {
@@ -185,8 +217,19 @@ func (a *httpAttempt) finish(resp *http.Response, err error) HTTPRequestTiming {
 	a.finished = true
 	now := a.now()
 	a.request.EndMS, a.request.TotalMS = now, now-a.request.StartMS
+	a.request.RequestHeaders, a.request.RequestHeadersTruncated = captureHTTPHeaders(a.requestFields)
 	if resp != nil {
 		a.request.HTTPStatus = resp.StatusCode
+		a.request.HTTPProtocol = resp.Proto
+		responseFields := resp.Header.Clone()
+		if len(resp.TransferEncoding) > 0 {
+			if responseFields == nil {
+				responseFields = make(http.Header)
+			}
+			// net/http parses and removes this field from Header.
+			responseFields["Transfer-Encoding"] = append([]string(nil), resp.TransferEncoding...)
+		}
+		a.request.ResponseHeaders, a.request.ResponseHeadersTruncated = captureHTTPHeaders(responseFields)
 	}
 	if err != nil {
 		stage := a.lastStage
@@ -304,7 +347,7 @@ func validHTTPRequests(requests []HTTPRequestTiming, startMS, endMS int64) bool 
 			request.EndMS < request.StartMS || request.EndMS > endMS || request.TotalMS != request.EndMS-request.StartMS ||
 			(request.HTTPStatus != 0 && (request.HTTPStatus < 100 || request.HTTPStatus > 599)) ||
 			(request.TTFBMS != nil && (*request.TTFBMS < 0 || *request.TTFBMS > request.TotalMS)) ||
-			!validCaptureFailure(request.FailureCode) || !validFailureStage {
+			!validCaptureFailure(request.FailureCode) || !validFailureStage || !validHTTPRequestHeaders(request) {
 			return false
 		}
 		stages := request.Stages

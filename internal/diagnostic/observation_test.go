@@ -39,8 +39,8 @@ func TestHTTPAttemptKeepsStagesAndSanitizedFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	data, _ := json.Marshal(observation)
-	if strings.Contains(string(data), "private-host") || strings.Contains(string(data), "secret") {
-		t.Fatal("trace exported a raw network address")
+	if strings.Contains(string(data), "path?secret") || strings.Contains(string(data), "secret=token") {
+		t.Fatal("trace exported the raw request URL or query")
 	}
 	observation.Requests[0].Stages[0].EndMS = observation.ElapsedMS + 1
 	if !errors.Is(validateObservationDetails(observation), ErrInvalid) {
@@ -109,8 +109,8 @@ func TestObservedHTTPRedirectTimesEachResponseBeforeBody(t *testing.T) {
 		}
 	}
 	data, _ := json.Marshal(observation)
-	if strings.Contains(string(data), "internal-token") || strings.Contains(string(data), "127.0.0.1") {
-		t.Fatal("redirect trace exported target details")
+	if strings.Contains(string(data), "internal-token") {
+		t.Fatal("redirect trace exported a signed target query")
 	}
 	bodyStart := time.Since(start).Milliseconds()
 	close(bodyReady)
@@ -202,8 +202,8 @@ func TestObservedHTTPKeepsResponseWhenClientRejectsRedirect(t *testing.T) {
 		t.Fatalf("incorrect rejected redirect trace: %+v %v", observation, err)
 	}
 	data, _ := json.Marshal(observation)
-	if strings.Contains(string(data), "redirect-target") || strings.Contains(string(data), redirectError.Error()) {
-		t.Fatal("redirect rejection exported target or raw error")
+	if strings.Contains(string(data), redirectError.Error()) {
+		t.Fatal("redirect rejection exported the raw error")
 	}
 }
 

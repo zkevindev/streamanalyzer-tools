@@ -108,6 +108,11 @@
                             <p id="request-timing-note" class="timing-note muted">单位为毫秒。采样偏移从采样开始计时，TTFB 从当次请求开始计时。— 表示未测得。</p>
                             <div id="request-table"></div>
                             <p id="request-timing-truncated" class="timing-note muted" hidden></p>
+                            <section id="http-headers" aria-labelledby="http-headers-title">
+                                <h4 id="http-headers-title">HTTP 请求与响应头</h4>
+                                <p class="timing-note muted">逐次请求展示客户端记录的头字段。敏感字段已脱敏，URL 查询参数已移除；字段大小写和顺序可能经过协议库归一化。</p>
+                                <div id="http-header-details"></div>
+                            </section>
                         </section>
                         <div id="timing-table"></div>
                     </section>
