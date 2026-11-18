@@ -91,6 +91,15 @@ JSON 报告及 SQLite 任务索引位于数据目录下的 `diagnostics/`。基�
 - 本地文件可作为一条可查询的录像。可选「录像开始时间」，默认录像在设备启动时结束。平台可用 RecordInfo 查询，再按 SDP 的 Playback 时间段回放，结束时设备上报 MediaStatus 121。会话内 INFO 支持暂停、继续、npt 定位和 0.25–4 倍速。直拷视频定位按源 GOP 对齐，倍速音频同步调整采样数量和时间戳，音调随倍速变化。
 
 
+#### ONVIF
+
+打开「模拟器」并切换到「ONVIF」。本机联调可用默认的 127.0.0.1。供局域网客户端发现时，选择客户端可达的本机 IPv4 网卡。ONVIF HTTP 和 RTSP 端口填 0 时自动分配，启动后可在「设备状态」复制实际地址。
+
+- 设备响应 WS-Discovery Probe 和 Resolve，组播地址为 `239.255.255.250:3702/UDP`。
+- ONVIF Device 服务提供设备信息、Scope、服务和能力查询。Media 服务提供 Profile、视频源、编码配置和 `GetStreamUri`。
+- RTSP 提供一路无鉴权的内置 H.264 测试画面，分辨率 320 × 180，帧率 15 fps。支持 RTP/UDP 和 RTSP/TCP 交织，可把界面里的 RTSP 地址直接粘贴到 VLC 或 ffplay。
+
+
 ### 配置大模型厂商
 
 桌面端打开「模型设置」，选择厂商并填写 Base URL、模型名及 API Key。保存前可点击「测试连接」，用当前填写的配置发起一条简短的模型请求，查看耗时或具体失败原因。测试只发送固定提示词，测试结果独立于保存操作。保存后，当前工作台中的新解读请求立即采用新配置。已有解读可使用「用当前模型重新解读」更新。
@@ -214,7 +223,8 @@ go build -o bin/server ./cmd/server
 路由说明：
 - `GET /`：入口页
 - `GET /diagnostics`：排障工作台
-- `GET /simulators`：协议模拟器工作台（GB28181）
+- `GET /simulators`：协议模拟器工作台，默认打开 GB28181
+- `GET /simulators/onvif`：ONVIF 模拟器
 - `GET /realtime`：实时拉流分析（标题 **实时拉流分析 · Stream Analyzer**）
 - `GET /offline`：离线文件解析（标题 **离线文件解析 · Stream Analyzer**；支持 raw/pcap/flv/ts/mp4 等）
 - `GET /history`：历史记录（标题 **历史记录 · Stream Analyzer**）

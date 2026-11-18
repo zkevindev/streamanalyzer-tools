@@ -13,22 +13,33 @@ import (
 	"streamanalyzer/internal/handler"
 	"streamanalyzer/internal/offline"
 	"streamanalyzer/internal/simulator/gb28181"
+	"streamanalyzer/internal/simulator/onvif"
 	"streamanalyzer/internal/storage"
 
 	"github.com/gin-gonic/gin"
 )
 
+type simulators struct {
+	gb28181 gb28181.Manager
+	onvif   onvif.Manager
+}
+
+func (s *simulators) Close() {
+	s.onvif.Close()
+	s.gb28181.Close()
+}
+
 type Server struct {
 	httpServer  *http.Server
 	storage     *storage.CSVStorage
 	diagnostics *diagnostic.Service
-	simulator   *gb28181.Manager
+	simulators  *simulators
 	addr        string
 	close       sync.Once
 	closeErr    error
 }
 
-func newEngine(cfg *Config, model diagnostic.Explainer, simulator *gb28181.Manager) (*gin.Engine, *storage.CSVStorage, *diagnostic.Service, error) {
+func newEngine(cfg *Config, model diagnostic.Explainer, sim *simulators) (*gin.Engine, *storage.CSVStorage, *diagnostic.Service, error) {
 	ApplyDefaults(cfg)
 
 	xlsxStorage, err := storage.NewCSVStorage(cfg.Server.DataDir)
@@ -56,7 +67,7 @@ func newEngine(cfg *Config, model diagnostic.Explainer, simulator *gb28181.Manag
 	r := gin.Default()
 	h.RegisterRoutes(r)
 	handler.RegisterDiagnosticRoutes(r, diagnostics)
-	handler.RegisterSimulatorRoutes(r, simulator)
+	handler.RegisterSimulatorRoutes(r, &sim.gb28181, &sim.onvif)
 	return r, xlsxStorage, diagnostics, nil
 }
 
@@ -65,14 +76,14 @@ func Run(addr string, cfg *Config) error {
 	if err != nil {
 		return err
 	}
-	simulator := &gb28181.Manager{}
-	engine, xlsxStorage, diagnostics, err := newEngine(cfg, model, simulator)
+	sim := &simulators{}
+	engine, xlsxStorage, diagnostics, err := newEngine(cfg, model, sim)
 	if err != nil {
 		return err
 	}
 	defer xlsxStorage.Close()
 	defer diagnostics.Close()
-	defer simulator.Close()
+	defer sim.Close()
 
 	log.Printf("Server starting on %s", addr)
 	return engine.Run(addr)
@@ -87,8 +98,8 @@ func Start(ctx context.Context, addr string, cfg *Config) (*Server, error) {
 }
 
 func StartWithModel(ctx context.Context, addr string, cfg *Config, model diagnostic.Explainer) (*Server, error) {
-	simulator := &gb28181.Manager{}
-	engine, xlsxStorage, diagnostics, err := newEngine(cfg, model, simulator)
+	sim := &simulators{}
+	engine, xlsxStorage, diagnostics, err := newEngine(cfg, model, sim)
 	if err != nil {
 		return nil, err
 	}
@@ -104,7 +115,7 @@ func StartWithModel(ctx context.Context, addr string, cfg *Config, model diagnos
 		httpServer:  &http.Server{Handler: engine},
 		storage:     xlsxStorage,
 		diagnostics: diagnostics,
-		simulator:   simulator,
+		simulators:  sim,
 		addr:        ln.Addr().String(),
 	}
 
@@ -140,7 +151,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	}
 	s.close.Do(func() {
 		s.closeErr = s.httpServer.Shutdown(ctx)
-		s.simulator.Close()
+		s.simulators.Close()
 		_ = s.diagnostics.Close()
 		_ = s.storage.Close()
 	})
