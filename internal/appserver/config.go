@@ -2,6 +2,9 @@ package appserver
 
 import (
 	"os"
+	"strings"
+
+	"streamanalyzer/internal/diagnostic"
 
 	"gopkg.in/yaml.v3"
 )
@@ -48,4 +51,25 @@ func ApplyDefaults(cfg *Config) {
 	} else if *cfg.Server.MaxDumpMB < 0 {
 		*cfg.Server.MaxDumpMB = 0
 	}
+}
+
+func diagnosticModel() (diagnostic.Explainer, error) {
+	return ModelConfigFromEnv().NewExplainer()
+}
+
+// ModelConfigFromEnv preserves the legacy environment as a fallback for both
+// entry points. Desktop preferences take precedence when available.
+func ModelConfigFromEnv() diagnostic.ModelConfig {
+	cfg := diagnostic.ModelConfig{
+		Provider: strings.TrimSpace(os.Getenv("STREAMANALYZER_MODEL_PROVIDER")),
+		BaseURL:  strings.TrimSpace(os.Getenv("STREAMANALYZER_MODEL_BASE_URL")),
+		Model:    strings.TrimSpace(os.Getenv("STREAMANALYZER_MODEL_NAME")),
+		APIKey:   strings.TrimSpace(os.Getenv("STREAMANALYZER_MODEL_API_KEY")),
+	}
+	if cfg == (diagnostic.ModelConfig{}) {
+		cfg.BaseURL = strings.TrimSpace(os.Getenv("STREAMANALYZER_OPENAI_BASE_URL"))
+		cfg.Model = strings.TrimSpace(os.Getenv("STREAMANALYZER_OPENAI_MODEL"))
+		cfg.APIKey = strings.TrimSpace(os.Getenv("STREAMANALYZER_OPENAI_API_KEY"))
+	}
+	return cfg
 }

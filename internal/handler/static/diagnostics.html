@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>排障工作台 · Stream Analyzer</title>
+    <link rel="stylesheet" href="/static/workbench-theme.css">
+    <link rel="stylesheet" href="/static/diagnostics.css">
+    <script src="/static/diagnostics.js" defer></script>
+</head>
+<body>
+<a class="skip" href="#main">跳转到主要内容</a>
+<header class="topbar">
+    <div class="topbar-inner">
+      <a class="wordmark" href="/"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>Stream Analyzer</a>
+      <nav aria-label="工作台导航">
+        <a href="/diagnostics" aria-current="page">排障工作台</a>
+        <a href="/realtime?protocol=rtmp">RTMP 实时分析</a>
+        <a href="/hls-stats">HLS 分析</a>
+        <button type="button" id="model-settings" aria-haspopup="dialog" hidden>模型设置</button>
+      </nav>
+    </div>
+</header>
+<main id="main">
+    <div class="page-heading">
+        <h1>排障工作台</h1>
+        <p class="muted">采样 1–300 秒 · 单次原始流上限 128 MiB</p>
+    </div>
+    <div class="actions">
+        <section class="panel" aria-labelledby="capture-heading">
+            <div class="panel-heading"><h2 id="capture-heading">流媒体采样</h2></div>
+            <form class="panel-body" id="sample">
+                <div class="sample-source">
+                    <div>
+                        <label for="protocol">协议</label>
+                        <select id="protocol">
+                            <option value="http-flv">HTTP-FLV</option>
+                            <option value="rtmp">RTMP / RTMPS</option>
+                            <option value="hls">HLS</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="url">播放地址</label>
+                        <input id="url" type="url" placeholder="https://live.example.com/app/stream.flv" required>
+                    </div>
+                </div>
+                <div class="sample-options">
+                    <div>
+                        <label for="seconds">时长（秒）</label>
+                        <input id="seconds" type="number" min="1" max="300" value="60" required>
+                    </div>
+                    <button type="submit">采样并保存原始流</button>
+                </div>
+            </form>
+        </section>
+        <section class="panel" aria-labelledby="import-heading">
+            <div class="panel-heading"><h2 id="import-heading">导入证据包</h2></div>
+            <form class="panel-body" id="import">
+                <label for="archive">Stream Analyzer 证据包（ZIP）</label>
+                <input id="archive" type="file" accept=".zip,application/zip" required>
+                <button type="submit" class="secondary">导入并复盘</button>
+            </form>
+        </section>
+    </div>
+    <p id="notice" role="status" hidden></p>
+
+    <div class="workspace">
+        <section class="panel history" aria-labelledby="history-heading">
+            <div class="panel-heading"><h2 id="history-heading">排障记录</h2><span id="run-count" class="history-count" hidden></span></div>
+            <ul id="runs"></ul>
+            <p id="empty-history" class="muted">正在加载记录…</p>
+        </section>
+        <section class="panel result" aria-labelledby="result-heading">
+            <div class="panel-heading">
+                <h2 id="result-heading">采样结果</h2>
+                <button type="button" id="stop" class="secondary" hidden>停止采样</button>
+            </div>
+            <div class="panel-body">
+                <p id="summary" class="muted" role="status">选择一条记录查看报告。</p>
+                <div id="report" hidden>
+                    <dl id="metrics" class="metrics"></dl>
+                    <div class="tool-row">
+                        <a id="html" class="button secondary">打开 HTML 报告</a>
+                        <a id="json" class="button secondary" download>报告 JSON</a>
+                        <a id="dump" class="button secondary" download>原始流</a>
+                        <a id="bundle" class="button secondary" download>证据包 ZIP</a>
+                    </div>
+                    <h3 class="report-title">规则诊断</h3>
+                    <div id="trace" class="trace" role="group" aria-label="异常时间线" hidden></div>
+                    <div id="findings"></div>
+                    <div class="model">
+                        <div class="panel-heading">
+                            <h3>模型解读</h3>
+                            <button type="button" id="explain" class="secondary" hidden>生成解读</button>
+                        </div>
+                        <p id="model-status" class="muted" role="status"></p>
+                        <div id="explanation"></div>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </div>
+</main>
+</body>
+</html>

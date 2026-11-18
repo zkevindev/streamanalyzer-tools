@@ -4,9 +4,6 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Stream Analyzer · 首页</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
     
@@ -53,10 +50,10 @@
       justify-content:center;
       width:56px;
       height:56px;
-      background:linear-gradient(135deg,var(--accent),#e8a090);
+      background:linear-gradient(135deg,var(--nav),var(--accent));
       border-radius:14px;
       margin-bottom:1.5rem;
-      box-shadow:0 4px 16px rgba(217,119,87,.3);
+      box-shadow:0 4px 16px rgb(20 38 62 / .16);
     }
 
     .logo svg{
@@ -250,6 +247,7 @@
       }
     }
   </style>
+  <link rel="stylesheet" href="/static/workbench-theme.css">
 </head>
 <body>
   <div class="container">
@@ -260,7 +258,8 @@
         </svg>
       </div>
       <h1>Stream Analyzer</h1>
-      <p class="subtitle">请选择任务类型：实时分析（输入拉流地址）或离线分析（上传 raw / pcap / flv / ts / mp4 等文件）。</p>
+      <p class="subtitle">直播拉流、离线解析与排障报告。</p>
+      <a class="nav-link" href="/diagnostics">排障工作台 →</a>
       <a class="nav-link" href="/history">
         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />

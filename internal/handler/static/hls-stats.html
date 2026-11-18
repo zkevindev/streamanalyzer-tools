@@ -4,9 +4,6 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>HLS 分析 · Stream Analyzer</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
     *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
     :root{--bg:#fafaf9;--surface:#fff;--border:#e8e6e1;--text:#1a1918;--muted:#78716c;--accent:#d97757;--accent-hover:#c4684a;--radius:1rem;--shadow:0 2px 12px rgba(0,0,0,.05)}
@@ -30,7 +27,7 @@
     .check{display:flex;align-items:center;gap:.4rem;font-size:.875rem;color:var(--text)}
     .check input{width:auto}
     .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:.75rem}
-    .stat{background:#fafaf9;border:1px solid var(--border);border-radius:.75rem;padding:.75rem}
+    .stat{background:var(--surface-inset);border:1px solid var(--border);border-radius:.75rem;padding:.75rem}
     .stat b{display:block;font-size:1.05rem}
     .stat span{color:var(--muted);font-size:.75rem}
     table{width:100%;border-collapse:collapse;font-size:.8125rem}
@@ -41,18 +38,19 @@
     .muted{color:var(--muted);font-size:.875rem}
     @media(max-width:640px){body{padding:1rem}}
   </style>
+  <link rel="stylesheet" href="/static/workbench-theme.css">
 </head>
 <body>
   <div class="container">
     <nav class="nav-bar">
-      <a href="/" class="nav-item">入口</a>
+      <a href="/diagnostics" class="nav-item">排障工作台</a>
       <a href="/realtime" class="nav-item">实时分析</a>
       <a href="/hls-stats" class="nav-item active">HLS 分析</a>
       <a href="/offline" class="nav-item">离线分析</a>
       <a href="/history" class="nav-item">历史记录</a>
     </nav>
     <h1>HLS 分析</h1>
-    <p class="desc">分析播放列表和分片。实时页里的 HLS 仍然看 PTS/DTS，两边互不替代。</p>
+    <p class="desc">采样播放列表与分片，查看请求耗时、缓存状态和交付质量。</p>
     <form class="card" id="form">
       <div class="grid">
         <div class="wide">

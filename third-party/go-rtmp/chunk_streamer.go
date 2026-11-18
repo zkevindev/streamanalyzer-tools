@@ -9,6 +9,7 @@ package rtmp
 
 import (
 	"context"
+	"encoding/binary"
 	"io"
 	"math"
 	"sync"
@@ -27,6 +28,17 @@ const maxWriterQueueSize = 64
 type ChunkMessage struct {
 	StreamID uint32
 	Message  message.Message
+}
+
+// ChunkPayload is a reassembled message before application message decoding.
+// Offsets are relative to the first chunk after the handshake. The span can
+// contain chunks from other messages when the sender interleaves chunk streams.
+type ChunkPayload struct {
+	TypeID      message.TypeID
+	Timestamp   uint32
+	StartOffset uint64
+	EndOffset   uint64
+	Payload     []byte
 }
 
 type ChunkStreamer struct {
@@ -58,6 +70,8 @@ type ChunkStreamer struct {
 func NewChunkStreamer(r io.Reader, w io.Writer, config *StreamControlStateConfig) *ChunkStreamer {
 	if config == nil {
 		config = defaultStreamControlStateConfig
+	} else {
+		config = config.normalize()
 	}
 
 	cs := &ChunkStreamer{
@@ -110,6 +124,49 @@ func (cs *ChunkStreamer) Read(cmsg *ChunkMessage) (int, uint32, error) {
 	return reader.basicHeader.chunkStreamID, uint32(reader.timestamp), nil
 }
 
+// ReadPayload reads a directed capture without decoding its application
+// messages. Payload is valid only until the next read. RTMP control messages
+// that change framing are applied before the next message is read.
+func (cs *ChunkStreamer) ReadPayload() (ChunkPayload, error) {
+	before := cs.r.totalReadBytes
+	reader, err := cs.NewChunkReader()
+	if err != nil {
+		if err == io.EOF {
+			if cs.r.totalReadBytes != before {
+				return ChunkPayload{}, io.ErrUnexpectedEOF
+			}
+			for _, candidate := range cs.readers {
+				if candidate.initialized && !candidate.completed {
+					return ChunkPayload{}, io.ErrUnexpectedEOF
+				}
+			}
+		}
+		return ChunkPayload{}, err
+	}
+	p := ChunkPayload{
+		TypeID: message.TypeID(reader.messageTypeID), Timestamp: reader.timestamp,
+		StartOffset: reader.firstOffset, EndOffset: cs.r.totalReadBytes, Payload: reader.buf.Bytes(),
+	}
+	switch p.TypeID {
+	case message.TypeIDSetChunkSize, message.TypeIDAbortMessage:
+		if len(p.Payload) != 4 {
+			return ChunkPayload{}, errors.New("invalid RTMP framing control payload length")
+		}
+		value := binary.BigEndian.Uint32(p.Payload)
+		if p.TypeID == message.TypeIDSetChunkSize {
+			if value&0x80000000 != 0 {
+				return ChunkPayload{}, errors.New("invalid RTMP chunk size reserved bit")
+			}
+			if err := cs.peerState.SetChunkSize(value); err != nil {
+				return ChunkPayload{}, err
+			}
+		} else {
+			cs.abortMessage(value)
+		}
+	}
+	return p, nil
+}
+
 func (cs *ChunkStreamer) Write(
 	ctx context.Context, // NOTE: Retire writing when a current chunk is busy
 	chunkStreamID int,
@@ -140,7 +197,7 @@ again:
 	if err != nil {
 		return nil, err
 	}
-	if cs.r.FragmentReadBytes() >= uint32(cs.peerState.ackWindowSize/2) { // TODO: fix size
+	if cs.controlStreamWriter != nil && cs.r.FragmentReadBytes() >= uint32(cs.peerState.ackWindowSize/2) { // TODO: fix size
 		if err := cs.sendAck(cs.r.TotalReadBytes()); err != nil {
 			return nil, err
 		}
@@ -194,6 +251,7 @@ func (cs *ChunkStreamer) Close() error {
 
 // returns nil reader when chunk is fragmented.
 func (cs *ChunkStreamer) readChunk() (*ChunkStreamReader, error) {
+	offset := cs.r.totalReadBytes
 	var bh chunkBasicHeader
 	if err := decodeChunkBasicHeader(cs.r, cs.cacheBuffer, &bh); err != nil {
 		return nil, err
@@ -210,10 +268,17 @@ func (cs *ChunkStreamer) readChunk() (*ChunkStreamReader, error) {
 	if err != nil {
 		return nil, errors.Wrapf(err, "Failed to prepare chunk reader")
 	}
-	if reader.completed {
+	if !reader.initialized && bh.fmt >= 2 {
+		return nil, errors.New("RTMP compressed chunk without preceding message header")
+	}
+	if !reader.initialized || reader.completed {
+		reader.firstOffset = offset
 		reader.buf.Reset()
 		reader.completed = false
+	} else if bh.fmt != 3 {
+		return nil, errors.New("RTMP chunk started a message before the previous message completed")
 	}
+	reader.initialized = true
 
 	reader.basicHeader = bh
 	reader.messageHeader = mh
@@ -221,6 +286,7 @@ func (cs *ChunkStreamer) readChunk() (*ChunkStreamReader, error) {
 	switch bh.fmt {
 	case 0:
 		reader.timestamp = mh.timestamp
+		reader.extended = mh.timestamp >= 0xffffff
 		reader.timestampDelta = 0 // reset
 		reader.messageLength = mh.messageLength
 		reader.messageTypeID = mh.messageTypeID
@@ -228,24 +294,33 @@ func (cs *ChunkStreamer) readChunk() (*ChunkStreamReader, error) {
 
 	case 1:
 		reader.timestampDelta = mh.timestampDelta
+		reader.extended = mh.timestampDelta >= 0xffffff
 		reader.messageLength = mh.messageLength
 		reader.messageTypeID = mh.messageTypeID
 
 	case 2:
 		reader.timestampDelta = mh.timestampDelta
+		reader.extended = mh.timestampDelta >= 0xffffff
 
 	case 3:
-		// DO NOTHING
+		if reader.extended {
+			if _, err := io.ReadFull(cs.r, cs.cacheBuffer[:4]); err != nil {
+				return nil, err
+			}
+		}
 
 	default:
 		panic("unsupported chunk") // TODO: fix
+	}
+	if reader.messageLength > cs.config.MaxMessageSize {
+		return nil, errors.New("RTMP message exceeds the configured size limit")
 	}
 
 	//cs.logger.Debugf("(READ) MessageLength = %d, Current = %d", reader.messageLength, reader.buf.Len())
 
 	expectLen := int(reader.messageLength) - reader.buf.Len()
-	if expectLen <= 0 {
-		panic("invalid state") // TODO fix
+	if expectLen < 0 {
+		return nil, errors.New("invalid RTMP message length")
 	}
 
 	if uint32(expectLen) > cs.peerState.chunkSize {
@@ -254,8 +329,12 @@ func (cs *ChunkStreamer) readChunk() (*ChunkStreamReader, error) {
 	//cs.logger.Debugf("(READ) Length = %d", expectLen)
 
 	lr := io.LimitReader(cs.r, int64(expectLen))
-	if _, err := io.CopyBuffer(&reader.buf, lr, cs.cacheBuffer); err != nil {
+	n, err := io.CopyBuffer(&reader.buf, lr, cs.cacheBuffer)
+	if err != nil {
 		return nil, err
+	}
+	if n != int64(expectLen) {
+		return nil, io.ErrUnexpectedEOF
 	}
 	//cs.logger.Debugf("(READ) Buffer: %+v", reader.buf.Bytes())
 
@@ -269,6 +348,13 @@ func (cs *ChunkStreamer) readChunk() (*ChunkStreamReader, error) {
 	reader.completed = true
 
 	return reader, nil
+}
+
+func (cs *ChunkStreamer) abortMessage(chunkStreamID uint32) {
+	if reader := cs.readers[int(chunkStreamID)]; reader != nil {
+		reader.buf.Reset()
+		reader.completed = true
+	}
 }
 
 func (cs *ChunkStreamer) writeChunk(writer *ChunkStreamWriter) (bool, error) {
@@ -287,6 +373,13 @@ func (cs *ChunkStreamer) writeChunk(writer *ChunkStreamWriter) (bool, error) {
 	}
 	if err := encodeChunkMessageHeader(cs.w, writer.basicHeader.fmt, &writer.messageHeader); err != nil {
 		return false, err
+	}
+	if writer.basicHeader.fmt == 3 && writer.extended {
+		var timestamp [4]byte
+		binary.BigEndian.PutUint32(timestamp[:], writer.extendedValue)
+		if _, err := cs.w.Write(timestamp[:]); err != nil {
+			return false, err
+		}
 	}
 
 	if _, err := io.CopyN(cs.w, writer, int64(expectLen)); err != nil {
@@ -334,6 +427,14 @@ func (cs *ChunkStreamer) updateWriterHeader(writer *ChunkStreamWriter) {
 		writer.messageHeader.messageStreamID = writer.messageStreamID
 	}
 	writer.basicHeader.fmt = fmt
+	switch fmt {
+	case 0:
+		writer.extendedValue = writer.timestamp
+		writer.extended = writer.timestamp >= 0xffffff
+	case 1, 2:
+		writer.extendedValue = writer.timestampDelta
+		writer.extended = writer.timestampDelta >= 0xffffff
+	}
 }
 
 func (cs *ChunkStreamer) waitWriters() {

@@ -1,0 +1,43 @@
+version: '3'
+
+tasks:
+  build:
+    desc: Build the desktop application for the current platform
+    cmds:
+      - task: build:{{OS}}
+
+  build:darwin:
+    env:
+      CGO_ENABLED: '1'
+      CGO_CFLAGS: '-mmacosx-version-min=12.0'
+      CGO_LDFLAGS: '-mmacosx-version-min=12.0'
+      MACOSX_DEPLOYMENT_TARGET: '12.0'
+    cmds:
+      - go build -tags production -o build/bin/streamanalyzer ./cmd/desktop
+
+  build:linux:
+    cmds:
+      - go build -tags production,gtk3 -o build/bin/streamanalyzer ./cmd/desktop
+
+  build:windows:
+    env:
+      CGO_ENABLED: '0'
+    cmds:
+      - powershell -NoProfile -Command 'New-Item -ItemType Directory -Force -Path build/bin | Out-Null'
+      - wails3 generate icons -input build/appicon.png -windowsfilename build/bin/streamanalyzer.ico -macfilename build/bin/iconfile.icns
+      - wails3 generate syso -arch {{ARCH}} -icon build/bin/streamanalyzer.ico -manifest build/windows/app.manifest -out cmd/desktop/resource_windows_{{ARCH}}.syso
+      - go build -tags production -ldflags "-H windowsgui" -o build/bin/streamanalyzer.exe ./cmd/desktop
+
+  package:darwin:
+    desc: Bundle the native macOS build and create a DMG
+    deps: [build:darwin]
+    vars:
+      APP: build/bin/streamanalyzer.app
+      DMG: build/bin/StreamAnalyzer-{{ARCH}}.dmg
+    cmds:
+      - mkdir -p "{{.APP}}/Contents/MacOS" "{{.APP}}/Contents/Resources"
+      - cp build/bin/streamanalyzer "{{.APP}}/Contents/MacOS/streamanalyzer"
+      - cp build/darwin/Info.plist "{{.APP}}/Contents/Info.plist"
+      - wails3 generate icons -input build/appicon.png -macfilename "{{.APP}}/Contents/Resources/iconfile.icns" -windowsfilename build/bin/streamanalyzer.ico
+      - codesign --force --sign - "{{.APP}}"
+      - hdiutil create -volname StreamAnalyzer -srcfolder "{{.APP}}" -ov -format UDZO "{{.DMG}}"

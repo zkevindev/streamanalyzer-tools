@@ -176,6 +176,7 @@ func (m *CommandMessage) TypeID() TypeID {
 
 // AggregateMessage (22)
 type AggregateMessage struct {
+	Payload io.Reader
 }
 
 func (m *AggregateMessage) TypeID() TypeID {

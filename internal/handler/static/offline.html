@@ -4,9 +4,6 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>离线文件解析 · Stream Analyzer</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet">
   <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
   <style>
     *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -91,6 +88,7 @@
     .media-filter button[data-filter="audio"].active::before{background:linear-gradient(135deg,rgba(5,150,105,.08) 0%,rgba(5,150,105,.02) 100%);opacity:1}
     @media(max-width:640px){body{padding:1rem}.form-grid{grid-template-columns:1fr}.page-header{flex-direction:column}.chart-grid{grid-template-columns:1fr}}
   </style>
+  <link rel="stylesheet" href="/static/workbench-theme.css">
 </head>
 <body>
   <div class="container">
@@ -106,11 +104,11 @@
           <p class="page-desc">上传 raw / pcap / flv / ts / mp4 等文件，解析并生成分析产物；任务详情中仅 pcap 模式显示 RTMP 端口，codec 列为视频/音频编码（如 h264 / aac）。</p>
         </div>
       </div>
-      <a href="/" class="back-link">
+      <a href="/diagnostics" class="back-link">
         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
           <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5 3 12m0 0 7.5-7.5M3 12h18" />
         </svg>
-        返回首页
+        返回工作台
       </a>
     </div>
 

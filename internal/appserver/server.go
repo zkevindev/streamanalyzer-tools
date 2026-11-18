@@ -6,8 +6,10 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"sync"
 
 	"streamanalyzer/internal/analyzer"
+	"streamanalyzer/internal/diagnostic"
 	"streamanalyzer/internal/handler"
 	"streamanalyzer/internal/offline"
 	"streamanalyzer/internal/storage"
@@ -16,17 +18,26 @@ import (
 )
 
 type Server struct {
-	httpServer *http.Server
-	storage    *storage.CSVStorage
-	addr       string
+	httpServer  *http.Server
+	storage     *storage.CSVStorage
+	diagnostics *diagnostic.Service
+	addr        string
+	close       sync.Once
+	closeErr    error
 }
 
-func NewEngine(cfg *Config) (*gin.Engine, *storage.CSVStorage, error) {
+func newEngine(cfg *Config, model diagnostic.Explainer) (*gin.Engine, *storage.CSVStorage, *diagnostic.Service, error) {
 	ApplyDefaults(cfg)
 
 	xlsxStorage, err := storage.NewCSVStorage(cfg.Server.DataDir)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, nil, err
+	}
+
+	diagnostics, err := diagnostic.Open(cfg.Server.DataDir, model)
+	if err != nil {
+		xlsxStorage.Close()
+		return nil, nil, nil, err
 	}
 
 	streamAnalyzer := analyzer.NewStreamAnalyzer(xlsxStorage, *cfg.Server.MaxDumpMB)
@@ -42,36 +53,52 @@ func NewEngine(cfg *Config) (*gin.Engine, *storage.CSVStorage, error) {
 
 	r := gin.Default()
 	h.RegisterRoutes(r)
-	return r, xlsxStorage, nil
+	handler.RegisterDiagnosticRoutes(r, diagnostics)
+	return r, xlsxStorage, diagnostics, nil
 }
 
 func Run(addr string, cfg *Config) error {
-	engine, xlsxStorage, err := NewEngine(cfg)
+	model, err := diagnosticModel()
+	if err != nil {
+		return err
+	}
+	engine, xlsxStorage, diagnostics, err := newEngine(cfg, model)
 	if err != nil {
 		return err
 	}
 	defer xlsxStorage.Close()
+	defer diagnostics.Close()
 
 	log.Printf("Server starting on %s", addr)
 	return engine.Run(addr)
 }
 
 func Start(ctx context.Context, addr string, cfg *Config) (*Server, error) {
-	engine, xlsxStorage, err := NewEngine(cfg)
+	model, err := diagnosticModel()
+	if err != nil {
+		return nil, err
+	}
+	return StartWithModel(ctx, addr, cfg, model)
+}
+
+func StartWithModel(ctx context.Context, addr string, cfg *Config, model diagnostic.Explainer) (*Server, error) {
+	engine, xlsxStorage, diagnostics, err := newEngine(cfg, model)
 	if err != nil {
 		return nil, err
 	}
 
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
+		diagnostics.Close()
 		xlsxStorage.Close()
 		return nil, err
 	}
 
 	s := &Server{
-		httpServer: &http.Server{Handler: engine},
-		storage:    xlsxStorage,
-		addr:       ln.Addr().String(),
+		httpServer:  &http.Server{Handler: engine},
+		storage:     xlsxStorage,
+		diagnostics: diagnostics,
+		addr:        ln.Addr().String(),
 	}
 
 	go func() {
@@ -89,6 +116,10 @@ func Start(ctx context.Context, addr string, cfg *Config) (*Server, error) {
 	return s, nil
 }
 
+func (s *Server) SetDiagnosticModel(model diagnostic.Explainer) {
+	s.diagnostics.SetModel(model)
+}
+
 func (s *Server) URL() string {
 	if s == nil || s.addr == "" {
 		return ""
@@ -100,11 +131,10 @@ func (s *Server) Shutdown(ctx context.Context) error {
 	if s == nil {
 		return nil
 	}
-	if s.storage != nil {
-		s.storage.Close()
-	}
-	if s.httpServer != nil {
-		return s.httpServer.Shutdown(ctx)
-	}
-	return nil
+	s.close.Do(func() {
+		s.closeErr = s.httpServer.Shutdown(ctx)
+		_ = s.diagnostics.Close()
+		_ = s.storage.Close()
+	})
+	return s.closeErr
 }

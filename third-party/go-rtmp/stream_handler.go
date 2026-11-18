@@ -84,6 +84,10 @@ func (h *streamHandler) Handle(chunkStreamID int, timestamp uint32, msg message.
 		l.Infof("Handle SetChunkSize: Msg = %#v", msg)
 		return h.stream.streamer().PeerState().SetChunkSize(msg.ChunkSize)
 
+	case *message.AbortMessage:
+		h.stream.streamer().abortMessage(msg.ChunkStreamID)
+		return nil
+
 	case *message.WinAckSize:
 		l.Infof("Handle WinAckSize: Msg = %#v", msg)
 		return h.stream.streamer().PeerState().SetAckWindowSize(msg.Size)

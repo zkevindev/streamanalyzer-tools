@@ -1,4 +1,4 @@
-// Package media 从 TS 和 fMP4 分片里判断开头是不是关键帧，并估算时长。
+// Package media inspects container-level properties of HLS media segments.
 package media
 
 import (
@@ -31,6 +31,9 @@ func Inspect(segment, init []byte) Info {
 	}
 	if isMP4(segment) || isMP4(init) {
 		return inspectMP4(segment, init)
+	}
+	if isADTS(segment) {
+		return Info{Format: "adts", Codec: "aac"}
 	}
 	return Info{}
 }
@@ -114,7 +117,6 @@ func inspectTS(data []byte) Info {
 	pmtPID := -1
 	videoPID := -1
 	pcrPID := -1
-	hevc := false
 	var pes []byte
 	var sawRAI bool
 	var sawVideo bool
@@ -138,12 +140,9 @@ func inspectTS(data []byte) Info {
 			continue
 		}
 		if videoPID < 0 && pmtPID >= 0 && pid == pmtPID && pusi {
-			videoPID, pcrPID, hevc = parsePMT(payload)
-			if hevc {
-				info.Codec = "h265"
-			} else if videoPID >= 0 {
-				info.Codec = "h264"
-			}
+			var videoType byte
+			videoPID, pcrPID, videoType = parsePMT(payload)
+			info.Codec, _ = tsStreamCodecs(videoType, nil)
 		}
 		if pcrPID >= 0 && pid == pcrPID && hasPCR {
 			pcrs = append(pcrs, pcr)
@@ -179,7 +178,10 @@ func inspectTS(data []byte) Info {
 	}
 
 	if sawVideo {
-		start, known := firstVCLIsIRAP(pes, hevc)
+		var start, known bool
+		if info.Codec == "h264" || info.Codec == "h265" {
+			start, known = firstVCLIsIRAP(pes, info.Codec == "h265")
+		}
 		if !known && sawRAI {
 			start, known = true, true
 		}
@@ -274,7 +276,7 @@ func parsePAT(payload []byte) int {
 	return -1
 }
 
-func parsePMT(payload []byte) (videoPID, pcrPID int, hevc bool) {
+func parsePMT(payload []byte) (videoPID, pcrPID int, videoType byte) {
 	videoPID, pcrPID = -1, -1
 	if len(payload) < 1 {
 		return
@@ -303,7 +305,7 @@ func parsePMT(payload []byte) (videoPID, pcrPID int, hevc bool) {
 		esil := int(s[i+3]&0x0F)<<8 | int(s[i+4])
 		if videoPID < 0 && isVideoStream(streamType) {
 			videoPID = epid
-			hevc = streamType == 0x24
+			videoType = streamType
 		}
 		i += 5 + esil
 	}
@@ -312,7 +314,7 @@ func parsePMT(payload []byte) (videoPID, pcrPID int, hevc bool) {
 
 func isVideoStream(streamType byte) bool {
 	switch streamType {
-	case 0x02, 0x10, 0x1B, 0x1F, 0x20, 0x24:
+	case 0x01, 0x02, 0x10, 0x1B, 0x1F, 0x20, 0x24, 0x33:
 		return true
 	default:
 		return false
