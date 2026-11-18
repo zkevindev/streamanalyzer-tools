@@ -75,6 +75,9 @@ func sampleRTMP(ctx context.Context, dir string, target *url.URL, seconds int) (
 		Origin: origin(target), StartedAt: start.UTC(), RequestedSeconds: seconds,
 	}
 	obs.EndReason = captureRTMP(ctx, target, &tap, &obs)
+	if player := capturePlayer(ctx); player != nil {
+		player.EndMedia()
+	}
 	obs.ElapsedMS = time.Since(start).Milliseconds()
 	if len(tap.stamps) > 0 {
 		obs.TTFBMS = &tap.stamps[0].ArrivalMS
@@ -100,7 +103,13 @@ func sampleRTMP(ctx context.Context, dir string, target *url.URL, seconds int) (
 func captureRTMP(ctx context.Context, target *url.URL, tap *rtmpTap, obs *Observation) string {
 	setup := &rtmpSetupTiming{start: tap.start}
 	ctx = setup.context(ctx)
-	client, _, _, err := rtmp.DialAndPlay(ctx, target.String(), &rtmp.DefaultHandler{}, &rtmp.PlayOptions{Start: -2, RecvTap: tap, OnStage: setup.completed})
+	var handler rtmp.Handler = &rtmp.DefaultHandler{}
+	if player := capturePlayer(ctx); player != nil {
+		// FLV v1 with audio/video flags and the initial PreviousTagSize.
+		player.publish([]byte{'F', 'L', 'V', 1, 5, 0, 0, 0, 9, 0, 0, 0, 0})
+		handler = &rtmpPlayerHandler{player: player}
+	}
+	client, _, _, err := rtmp.DialAndPlay(ctx, target.String(), handler, &rtmp.PlayOptions{Start: -2, RecvTap: tap, OnStage: setup.completed})
 	playEnd := time.Since(tap.start).Milliseconds()
 	setup.finish(obs, err)
 	if err != nil && ctx.Err() != nil {

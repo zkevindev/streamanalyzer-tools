@@ -1,7 +1,9 @@
 package handler
 
 import (
+	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -18,6 +20,23 @@ func RegisterDiagnosticRoutes(r *gin.Engine, service *diagnostic.Service) {
 		serveEmbeddedStaticFile(c, "diagnostics.html")
 	})
 	api := r.Group("/api/diagnostics", localDiagnostics)
+	RegisterDiagnosticPlayerMedia(api, service)
+	api.POST("/runs/:id/player", func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 512<<10)
+		decoder := json.NewDecoder(c.Request.Body)
+		decoder.DisallowUnknownFields()
+		var record diagnostic.PlayerRecording
+		if err := decoder.Decode(&record); err != nil || decoder.Decode(new(any)) != io.EOF {
+			diagnosticError(c, diagnostic.ErrInvalid)
+			return
+		}
+		report, err := service.SavePlayerRecording(c.Param("id"), c.GetHeader("X-StreamAnalyzer-Player"), record)
+		if err != nil {
+			diagnosticError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, report)
+	})
 	api.GET("/config", func(c *gin.Context) {
 		identity := service.ModelIdentity()
 		configured := identity != (diagnostic.ModelIdentity{})
@@ -202,6 +221,8 @@ func diagnosticError(c *gin.Context, err error) {
 		status, message = http.StatusConflict, "该记录尚无可用报告"
 	case errors.Is(err, diagnostic.ErrModelChanged):
 		status, message = http.StatusConflict, "模型配置已更新，请重新生成解读"
+	case errors.Is(err, diagnostic.ErrReportChanged):
+		status, message = http.StatusConflict, "排障记录已更新，请刷新报告后重试"
 	case errors.Is(err, diagnostic.ErrBusy):
 		status, message = http.StatusServiceUnavailable, "当前任务较多，请稍后重试"
 	case errors.Is(err, diagnostic.ErrUnconfigured):

@@ -55,6 +55,8 @@ type Explanation struct {
 const explanationPrompt = "你是流媒体排障助手。请用中文，仅返回 JSON，格式为 " +
 	`{"summary":"观测摘要","hypotheses":[{"claim":"待验证假设","evidence_ids":["F001"],"next_check":"可执行的验证步骤"}]}` +
 	"。结论限于采样点。每个假设必须引用输入 findings 中真实存在的 ID。" +
+	"播放器首屏是从提交采样到视频呈现的观测，loadeddata_estimate 表示估算。" +
+	"卡顿排除启动等待、暂停、跳转和后台时段。source 为 independent_pull 时播放器与采样使用独立连接，不能把两条连接的时间相关性当作根因。" +
 	"没有足够证据时，给出简洁摘要并返回空 hypotheses。"
 
 type modelClient struct {
@@ -160,6 +162,25 @@ type modelFinding struct {
 	NextCheck   string `json:"next_check,omitempty"`
 }
 
+type modelPlayer struct {
+	State             string        `json:"state"`
+	Source            string        `json:"source"`
+	Engine            string        `json:"engine"`
+	StartOffsetMS     int64         `json:"start_offset_ms"`
+	FirstScreenMS     *int64        `json:"first_screen_ms,omitempty"`
+	FirstScreenMethod string        `json:"first_screen_method,omitempty"`
+	FirstPlayingMS    *int64        `json:"first_playing_ms,omitempty"`
+	StallCount        int           `json:"stall_count"`
+	TotalStallMS      int64         `json:"total_stall_ms"`
+	MaxStallMS        int64         `json:"max_stall_ms"`
+	ActiveMS          int64         `json:"active_ms"`
+	StallRatio        float64       `json:"stall_ratio"`
+	MinBufferMS       *int64        `json:"min_buffer_ms,omitempty"`
+	MaxBufferMS       int64         `json:"max_buffer_ms"`
+	StallThresholdMS  int64         `json:"stall_threshold_ms"`
+	Stalls            []PlayerStall `json:"stalls"`
+}
+
 // Only tool-generated findings and numeric measurements leave the process.
 func modelInput(report Report) ([]byte, error) {
 	obs := report.Manifest.Observation
@@ -179,6 +200,7 @@ func modelInput(report Report) ([]byte, error) {
 		FailureStage      string              `json:"failure_stage,omitempty"`
 		FailureCode       string              `json:"failure_code,omitempty"`
 		Findings          []modelFinding      `json:"findings"`
+		Player            *modelPlayer        `json:"player,omitempty"`
 	}{
 		Protocol: report.Manifest.Protocol, ElapsedMS: obs.ElapsedMS, HTTPStatus: obs.HTTPStatus, TTFBMS: obs.TTFBMS,
 		EndReason: obs.EndReason, Metrics: report.Metrics, HLS: report.HLS, MPEGTS: report.MPEGTS,
@@ -187,6 +209,15 @@ func modelInput(report Report) ([]byte, error) {
 	}
 	input.Requests = report.Requests
 	input.RequestsTruncated = report.RequestsTruncated
+	if player := report.Player; player != nil {
+		input.Player = &modelPlayer{
+			State: player.State, Source: player.Source, Engine: player.Engine, StartOffsetMS: player.StartOffsetMS,
+			FirstScreenMS: player.FirstScreenMS, FirstScreenMethod: player.FirstScreenMethod, FirstPlayingMS: player.FirstPlayingMS,
+			StallCount: player.StallCount, TotalStallMS: player.TotalStallMS, MaxStallMS: player.MaxStallMS, ActiveMS: player.ActiveMS,
+			StallRatio: player.StallRatio, MinBufferMS: player.MinBufferMS, MaxBufferMS: player.MaxBufferMS, StallThresholdMS: player.StallThresholdMS,
+			Stalls: player.Stalls[:min(20, len(player.Stalls))],
+		}
+	}
 	if len(input.Requests) == 0 {
 		input.Requests = obs.Requests
 	}

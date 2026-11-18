@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"html/template"
 	"io"
+	"math"
 	"strconv"
 	"strings"
 )
@@ -14,19 +15,23 @@ var httpTimingPhases = []struct{ Name, Label string }{
 }
 
 var reportPage = template.Must(template.New("report").Funcs(template.FuncMap{
-	"seconds":       func(ms int64) float64 { return float64(ms) / 1000 },
-	"finish":        endReasonText,
-	"dumpName":      dumpName,
-	"join":          strings.Join,
-	"modelProvider": modelProviderLabel,
-	"stageName":     stageLabel,
-	"mediaArrival":  mediaArrivalLabel,
-	"phaseDuration": requestPhaseDuration,
-	"requestKind":   httpTimingKindLabel,
-	"elapsed":       func(startMS, endMS int64) int64 { return endMS - startMS },
-	"pid":           func(pid uint16) string { return fmt.Sprintf("0x%04X", pid) },
-	"streamType":    func(streamType uint8) string { return fmt.Sprintf("0x%02X", streamType) },
-	"tsEvent":       tsEventLabel,
+	"seconds":        func(ms int64) float64 { return float64(ms) / 1000 },
+	"finish":         endReasonText,
+	"dumpName":       dumpName,
+	"join":           strings.Join,
+	"modelProvider":  modelProviderLabel,
+	"stageName":      stageLabel,
+	"mediaArrival":   mediaArrivalLabel,
+	"phaseDuration":  requestPhaseDuration,
+	"requestKind":    httpTimingKindLabel,
+	"elapsed":        func(startMS, endMS int64) int64 { return endMS - startMS },
+	"pid":            func(pid uint16) string { return fmt.Sprintf("0x%04X", pid) },
+	"streamType":     func(streamType uint8) string { return fmt.Sprintf("0x%02X", streamType) },
+	"tsEvent":        tsEventLabel,
+	"playerState":    playerReportState,
+	"playerSource":   playerSourceLabel,
+	"playerEvidence": func(events []Event) bool { return len(events) > 0 && events[0].Artifact == playerName },
+	"intervalEnd":    func(startMS, durationMS int64) int64 { return startMS + durationMS },
 }).Parse(`{{define "codecRows"}}
 {{with .VideoCodecs}}<dt>视频编码</dt><dd>{{join . " / "}}</dd>{{end}}
 {{with .AudioCodecs}}<dt>音频编码</dt><dd>{{join . " / "}}</dd>{{end}}
@@ -52,6 +57,14 @@ thead{color:#52657e;background:#f7f9fc}
 .timing-note{font-size:.88rem;color:#52657e}
 .request-timing th,.request-timing td{white-space:nowrap;font-size:.85rem}
 .request-timing tbody tr:nth-child(even){background:#f7f9fc}
+.player-buffer-chart{margin:1rem 0;border:1px solid #d5deea;border-radius:.375rem;background:#f7f9fc;padding:.5rem .65rem}
+.player-buffer-chart figcaption{color:#52657e;font-size:.875rem}
+.player-buffer-chart svg{display:block;width:100%;height:auto}
+.player-buffer-chart text{fill:#52657e;font:12px ui-monospace,monospace}
+.player-buffer-chart .grid{stroke:#d4dfec;stroke-width:1}
+.player-buffer-chart .line{fill:none;stroke:#164d92;stroke-width:2}
+.player-buffer-chart .point{fill:#164d92}
+.player-buffer-chart .stall{fill:#ecc781;opacity:.55}
 @media print{body{background:#fff}article{break-inside:avoid}.request-timing th,.request-timing td{white-space:normal}}
 </style>
 </head>
@@ -103,6 +116,38 @@ thead{color:#52657e;background:#f7f9fc}
 </table></div>{{end}}
 </article>
 {{end}}
+{{end}}
+{{with .Report.Player}}
+<article><h2>播放器体验</h2>
+<p class="timing-note">首屏与开始播放从提交采样计时。缓冲曲线和卡顿区间从后端采样开始计时。</p>
+<dl>
+<dt>状态</dt><dd>{{playerState .}}</dd>
+<dt>来源</dt><dd>{{playerSource .Source}}</dd>
+<dt>首屏{{if eq .FirstScreenMethod "loadeddata_estimate"}}（加载首帧估算）{{end}}</dt><dd>{{with .FirstScreenMS}}{{.}} ms{{else}}未观测{{end}}</dd>
+<dt>开始播放</dt><dd>{{with .FirstPlayingMS}}{{.}} ms{{else}}未观测{{end}}</dd>
+<dt>卡顿次数{{with .StallThresholdMS}}（≥ {{.}} ms）{{end}}</dt><dd>{{if .FirstPlayingMS}}{{.StallCount}}{{else}}未观测{{end}}</dd>
+<dt>累计卡顿</dt><dd>{{if .FirstPlayingMS}}{{.TotalStallMS}} ms{{else}}未观测{{end}}</dd>
+<dt>最长卡顿</dt><dd>{{if .FirstPlayingMS}}{{.MaxStallMS}} ms{{else}}未观测{{end}}</dd>
+<dt>播放观察时长</dt><dd>{{if .FirstPlayingMS}}{{.ActiveMS}} ms{{else}}未观测{{end}}</dd>
+{{with .MinBufferMS}}<dt>最小可播放缓冲</dt><dd>{{.}} ms</dd>{{end}}
+</dl>
+<p class="timing-note">卡顿统计从开始播放到采样结束，计入{{with .StallThresholdMS}}至少 {{.}} ms 的{{end}}等待。暂停、跳转和后台期间停止计时。正常结束后可短暂补记首屏。</p>
+{{with $.PlayerChart}}
+<figure class="player-buffer-chart"><figcaption>可播放缓冲{{if .Stalls}} · 阴影为卡顿区间{{end}}</figcaption>
+<svg viewBox="0 0 615 152" role="img" aria-label="可播放缓冲，横轴是距采样开始的秒数">
+{{range .YTicks}}<line x1="45" y1="{{.Position}}" x2="585" y2="{{.Position}}" class="grid"/><text x="40" y="{{.Position}}" dy=".34em" text-anchor="end">{{.Label}}</text>{{end}}
+{{range .Stalls}}<rect x="{{.X}}" y="18" width="{{.Width}}" height="94" class="stall"/>{{end}}
+<polyline points="{{.Points}}" class="line"/>
+{{if .SinglePoint}}<circle cx="{{.PointX}}" cy="{{.PointY}}" r="3" class="point"/>{{end}}
+{{range .XTicks}}<text x="{{.Position}}" y="131" text-anchor="middle">{{.Label}}</text>{{end}}
+<text x="315" y="149" text-anchor="middle">距采样开始</text>
+</svg></figure>
+{{end}}
+{{if .Stalls}}<h3>卡顿区间</h3><div class="scroll"><table>
+<thead><tr><th scope="col">开始偏移 (ms)</th><th scope="col">结束偏移 (ms)</th><th scope="col">耗时 (ms)</th></tr></thead>
+<tbody>{{range .Stalls}}<tr><td>{{.StartMS}}</td><td>{{.EndMS}}</td><td>{{.DurationMS}}</td></tr>{{end}}</tbody>
+</table></div>{{end}}
+</article>
 {{end}}
 {{if eq .Report.Manifest.Protocol "hls"}}
 {{with .Report.HLS}}
@@ -171,7 +216,10 @@ thead{color:#52657e;background:#f7f9fc}
 <p>采样相对时间 {{printf "%.3f" (seconds .StartMS)}}–{{printf "%.3f" (seconds .EndMS)}} 秒{{if .Occurrences}} · 共 {{.Occurrences}} 次{{end}}</p>
 {{with .NextCheck}}<p><strong>建议检查</strong> {{.}}</p>{{end}}
 {{if .Evidence}}<div class="scroll"><table>
-{{if eq $.Report.Manifest.Protocol "hls"}}
+{{if playerEvidence .Evidence}}
+<thead><tr><th scope="col">对象</th><th scope="col">开始偏移 (ms)</th><th scope="col">结束偏移 (ms)</th><th scope="col">耗时 (ms)</th><th scope="col">原始记录</th></tr></thead>
+<tbody>{{range .Evidence}}<tr><td>{{if eq .Kind "player_stall"}}播放器卡顿{{else}}{{.Kind}}{{end}}</td><td>{{.ArrivalMS}}</td><td>{{intervalEnd .ArrivalMS .DurationMS}}</td><td>{{.DurationMS}}</td><td><code>{{.Artifact}}</code></td></tr>{{end}}</tbody>
+{{else if eq $.Report.Manifest.Protocol "hls"}}
 <thead><tr><th scope="col">对象</th><th scope="col">流</th><th scope="col">分片序号</th><th scope="col">到达 (ms)</th><th scope="col">HTTP</th><th scope="col">请求耗时 (ms)</th><th scope="col">原始包条目</th><th scope="col">长度 (字节)</th></tr></thead>
 <tbody>{{range .Evidence}}<tr><td>{{.Kind}}</td><td>{{if eq .Rendition "audio"}}独立音频{{else if eq .Rendition "main"}}主路{{else}}—{{end}}</td><td>{{with .Sequence}}{{.}}{{else}}—{{end}}</td><td>{{.ArrivalMS}}</td><td>{{if .HTTPStatus}}{{.HTTPStatus}}{{else}}—{{end}}</td><td>{{if or .DurationMS .HTTPStatus}}{{.DurationMS}}{{else}}—{{end}}</td><td>{{with .Artifact}}<code>{{.}}</code>{{else}}—{{end}}</td><td>{{if .Artifact}}{{.Size}}{{else}}—{{end}}</td></tr>{{end}}</tbody>
 {{else if $.MPEGTS}}
@@ -316,6 +364,105 @@ func tsEventLabel(kind string) string {
 	}
 }
 
+func playerSourceLabel(source string) string {
+	switch source {
+	case "same_capture":
+		return "同一采样流"
+	case "independent_pull":
+		return "独立 HLS 拉流"
+	default:
+		return source
+	}
+}
+
+func playerReportState(player *PlayerReport) string {
+	switch player.State {
+	case "awaiting":
+		return "等待播放器数据"
+	case "recording":
+		return "采集中"
+	case "complete":
+		if player.FirstPlayingMS == nil {
+			return "采集结束，未开始播放"
+		}
+		return "采集完成"
+	case "unsupported":
+		return "当前环境不支持该播放格式"
+	case "autoplay_blocked":
+		return "自动播放受限"
+	case "error":
+		for i := len(player.Events) - 1; i >= 0; i-- {
+			event := player.Events[i]
+			if event.Kind != "error" {
+				continue
+			}
+			switch event.Code {
+			case "media_error":
+				return "播放器媒体解码失败"
+			case "network_error":
+				return "播放器网络请求失败"
+			case "no_stream":
+				return "播放器未收到媒体流"
+			}
+			break
+		}
+		return "播放失败"
+	default:
+		return player.State
+	}
+}
+
+type playerChartTick struct {
+	Position float64
+	Label    string
+}
+
+type playerChartSpan struct{ X, Width float64 }
+
+type playerChartData struct {
+	Points         string
+	SinglePoint    bool
+	PointX, PointY float64
+	XTicks, YTicks []playerChartTick
+	Stalls         []playerChartSpan
+}
+
+func playerChart(player *PlayerReport, elapsed int64) *playerChartData {
+	if player == nil || len(player.BufferSamples) == 0 {
+		return nil
+	}
+	duration, maximum := max(1, elapsed), 1000.0
+	for _, sample := range player.BufferSamples {
+		duration = max(duration, sample.OffsetMS)
+		maximum = max(maximum, math.Ceil(float64(sample.BufferMS)/1000)*1000)
+	}
+	for _, stall := range player.Stalls {
+		duration = max(duration, stall.EndMS)
+	}
+	x := func(ms float64) float64 { return 45 + 540*max(0, ms)/float64(duration) }
+	y := func(ms float64) float64 { return 112 - 94*ms/maximum }
+	chart := &playerChartData{SinglePoint: len(player.BufferSamples) == 1}
+	var points strings.Builder
+	for _, sample := range player.BufferSamples {
+		fmt.Fprintf(&points, "%.1f,%.1f ", x(float64(sample.OffsetMS)), y(float64(sample.BufferMS)))
+	}
+	chart.Points = strings.TrimSpace(points.String())
+	first := player.BufferSamples[0]
+	chart.PointX, chart.PointY = x(float64(first.OffsetMS)), y(float64(first.BufferMS))
+	for _, stall := range player.Stalls {
+		start, end := x(float64(stall.StartMS)), x(float64(stall.EndMS))
+		chart.Stalls = append(chart.Stalls, playerChartSpan{start, max(0, end-start)})
+	}
+	chart.XTicks = []playerChartTick{
+		{x(0), "0s"}, {x(float64(duration) / 2), fmt.Sprintf("%.1fs", float64(duration)/2000)},
+		{x(float64(duration)), fmt.Sprintf("%.1fs", float64(duration)/1000)},
+	}
+	for _, value := range []float64{0, maximum / 2, maximum} {
+		chart.YTicks = append(chart.YTicks, playerChartTick{y(value), fmt.Sprintf("%gs", value/1000)})
+	}
+	return chart
+}
+
 func RenderHTML(w io.Writer, report Report, explanation *Explanation, backURL string) error {
 	protocol := "HTTP-FLV"
 	mpegTS, datagram, rtp := false, false, false
@@ -368,5 +515,7 @@ func RenderHTML(w io.Writer, report Report, explanation *Explanation, backURL st
 		HTTPFailures bool
 		TimingStages []CaptureStage
 		LegacyRTMP   bool
-	}{report, explanation, backURL, protocol, mpegTS, datagram, rtp, requests, httpTimingPhases, hasHTTPFailures, stages, report.Manifest.Protocol == ProtocolRTMP && !hasRTMPHandshake})
+		PlayerChart  *playerChartData
+	}{report, explanation, backURL, protocol, mpegTS, datagram, rtp, requests, httpTimingPhases, hasHTTPFailures, stages,
+		report.Manifest.Protocol == ProtocolRTMP && !hasRTMPHandshake, playerChart(report.Player, report.Manifest.Observation.ElapsedMS)})
 }

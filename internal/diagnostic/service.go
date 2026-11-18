@@ -1,6 +1,7 @@
 package diagnostic
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"database/sql"
@@ -31,13 +32,15 @@ type Service struct {
 	modelMu sync.Mutex
 	model   *modelSelection
 
-	mu       sync.Mutex
-	active   map[string]context.CancelFunc
-	closed   bool
-	workers  sync.WaitGroup
-	close    sync.Once
-	closeErr error
-	imports  chan struct{}
+	mu          sync.Mutex
+	active      map[string]context.CancelFunc
+	closed      bool
+	workers     sync.WaitGroup
+	close       sync.Once
+	closeErr    error
+	imports     chan struct{}
+	persistence sync.RWMutex
+	players     map[string]*playerSessionState
 }
 
 type modelSelection struct {
@@ -64,6 +67,7 @@ func Open(baseDir string, model Explainer) (*Service, error) {
 	s := &Service{
 		root: root, db: db, client: captureClient(),
 		active: make(map[string]context.CancelFunc), imports: make(chan struct{}, 2),
+		players: make(map[string]*playerSessionState),
 	}
 	s.SetModel(model)
 	if err := s.recoverRuns(); err != nil {
@@ -114,6 +118,9 @@ func (s *Service) Close() error {
 		s.closed = true
 		for _, cancel := range s.active {
 			cancel()
+		}
+		for _, state := range s.players {
+			state.session.Close()
 		}
 		s.mu.Unlock()
 		s.workers.Wait()
@@ -186,6 +193,16 @@ func (s *Service) Start(req SampleRequest) (Run, error) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
+	var player *PlayerSession
+	if req.Playback {
+		session := newPlayerSession(context.Background(), protocol, target, s.client)
+		player = session
+		s.prunePlayersLocked()
+		state := &playerSessionState{session: session, token: rand.Text(), created: run.CreatedAt}
+		s.players[run.ID] = state
+		run.Player = playerStart(run.ID, state)
+		ctx = withPlayerSession(ctx, session)
+	}
 	s.active[run.ID] = cancel
 	s.workers.Add(1)
 	go func(run Run) {
@@ -197,10 +214,26 @@ func (s *Service) Start(req SampleRequest) (Run, error) {
 			s.mu.Unlock()
 		}()
 
+		if player != nil && player.Transport() != "hls" {
+			player.WaitForSubscriber(ctx, 500*time.Millisecond)
+		}
 		report, err := s.sampleProtocol(ctx, dir, target, seconds, run.Protocol)
 		if err == nil {
-			err = persistReport(dir, report)
+			s.persistence.Lock()
+			err = s.attachPlayerReport(dir, &report, run.ID)
+			if err == nil {
+				err = persistReport(dir, report)
+				if err == nil && report.Player != nil {
+					cleanupPlayerVersions(dir, report.Player.Revision)
+				}
+			}
+			s.persistence.Unlock()
 		}
+		s.mu.Lock()
+		if state := s.players[run.ID]; state != nil {
+			state.session.EndMedia()
+		}
+		s.mu.Unlock()
 		if err != nil {
 			slog.Error("save diagnostic", "run_id", run.ID, "protocol", run.Protocol, "error", err)
 			run.Status, run.Error = "failed", "证据或报告保存失败"
@@ -278,6 +311,12 @@ func (s *Service) Import(source io.Reader) (Run, error) {
 }
 
 func (s *Service) Detail(id string) (Detail, error) {
+	s.persistence.RLock()
+	defer s.persistence.RUnlock()
+	return s.detail(id)
+}
+
+func (s *Service) detail(id string) (Detail, error) {
 	run, err := s.getRun(id)
 	if err != nil {
 		return Detail{}, err
@@ -370,6 +409,15 @@ func (s *Service) explain(ctx context.Context, id string, refresh bool) (Explana
 	if !validExplanation(explanation, detail.Report.Findings) {
 		return Explanation{}, ErrProvider
 	}
+	s.persistence.Lock()
+	defer s.persistence.Unlock()
+	current, err := readJSONFile[Report](dir, reportName)
+	if err != nil {
+		return Explanation{}, err
+	}
+	if playerRevision(current.Player) != playerRevision(detail.Report.Player) {
+		return Explanation{}, ErrReportChanged
+	}
 	if err := writeJSONFile(dir, explanationName, explanation); err != nil {
 		return Explanation{}, err
 	}
@@ -377,14 +425,31 @@ func (s *Service) explain(ctx context.Context, id string, refresh bool) (Explana
 }
 
 func (s *Service) WriteBundle(id string, w io.Writer) error {
-	detail, err := s.Detail(id)
+	s.persistence.RLock()
+	detail, err := s.detail(id)
 	if err != nil {
+		s.persistence.RUnlock()
 		return err
 	}
 	if detail.Report == nil {
+		s.persistence.RUnlock()
 		return ErrPending
 	}
-	return writeBundle(w, s.runDir(detail.ID), *detail.Report)
+	dir := s.runDir(detail.ID)
+	var player []byte
+	if detail.Report.Player != nil {
+		player, err = os.ReadFile(filepath.Join(dir, playerVersionName(detail.Report.Player.Revision)))
+	}
+	// Snapshot the bounded recording before its revision can be cleaned up.
+	// A slow download must not hold up other recordings or capture reports.
+	s.persistence.RUnlock()
+	if err != nil {
+		return err
+	}
+	if player != nil {
+		return writeBundleWithPlayer(w, dir, *detail.Report, bytes.NewReader(player))
+	}
+	return writeBundle(w, dir, *detail.Report)
 }
 
 func (s *Service) OpenDump(id string) (*os.File, error) {

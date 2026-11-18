@@ -47,18 +47,50 @@ func (a *artifactWriter) artifact() Artifact {
 }
 
 func writeBundle(w io.Writer, dir string, report Report) error {
+	return writeBundleWithPlayer(w, dir, report, nil)
+}
+
+func writeBundleWithPlayer(w io.Writer, dir string, report Report, player io.Reader) error {
 	name := dumpName(report.Manifest.Protocol)
 	if name == "" {
 		return fmt.Errorf("%w: 不支持的采样协议", ErrInvalid)
 	}
 	archive := zip.NewWriter(w)
-	for _, filename := range []string{manifestName, name, timelineName, reportName} {
+	names := []string{manifestName, name, timelineName, reportName}
+	if report.Manifest.Player != nil {
+		names = append(names, playerName)
+	}
+	for _, filename := range names {
 		entry, err := archive.CreateHeader(&zip.FileHeader{Name: filename, Method: zip.Store})
 		if err != nil {
 			return err
 		}
-		if err := copyFile(entry, filepath.Join(dir, filename)); err != nil {
-			return err
+		switch filename {
+		case manifestName:
+			if err := json.NewEncoder(entry).Encode(report.Manifest); err != nil {
+				return err
+			}
+		case reportName:
+			if err := json.NewEncoder(entry).Encode(report); err != nil {
+				return err
+			}
+		case playerName:
+			if report.Player == nil {
+				return fmt.Errorf("%w: 播放器证据缺少版本", ErrInvalid)
+			}
+			if player != nil {
+				if _, err := io.Copy(entry, player); err != nil {
+					return err
+				}
+			} else {
+				if err := copyFile(entry, filepath.Join(dir, playerVersionName(report.Player.Revision))); err != nil {
+					return err
+				}
+			}
+		default:
+			if err := copyFile(entry, filepath.Join(dir, filename)); err != nil {
+				return err
+			}
 		}
 	}
 	entry, err := archive.Create(htmlName)
@@ -123,22 +155,42 @@ func readBundle(dir string, source io.Reader) (Report, error) {
 	if err := extractArtifact(dir, entries[timelineName], manifest.Timeline); err != nil {
 		return Report{}, err
 	}
+	if manifest.Player != nil {
+		if entries[playerName] == nil {
+			return Report{}, fmt.Errorf("%w: 缺少播放器证据", ErrInvalid)
+		}
+		if err := extractArtifact(dir, entries[playerName], *manifest.Player); err != nil {
+			return Report{}, err
+		}
+	} else if entries[playerName] != nil {
+		return Report{}, fmt.Errorf("%w: 播放器证据未在清单中声明", ErrInvalid)
+	}
+	var report Report
 	switch manifest.Protocol {
 	case ProtocolHTTPFLV:
 		events, err := replay(dir, manifest)
 		if err != nil {
 			return Report{}, err
 		}
-		return analyze(manifest, events), nil
+		report = analyze(manifest, events)
 	case ProtocolRTMP:
-		return replayRTMP(dir, manifest)
+		report, err = replayRTMP(dir, manifest)
 	case ProtocolHLS:
-		return replayHLS(dir, manifest)
+		report, err = replayHLS(dir, manifest)
 	case ProtocolHTTPTS, ProtocolUDPTS, ProtocolRTPTS:
-		return replayTS(dir, manifest)
+		report, err = replayTS(dir, manifest)
 	default:
 		return Report{}, fmt.Errorf("%w: 不支持的采样协议", ErrInvalid)
 	}
+	if err != nil {
+		return Report{}, err
+	}
+	if manifest.Player != nil {
+		if err := attachPlayerArtifact(dir, &report); err != nil {
+			return Report{}, err
+		}
+	}
+	return report, nil
 }
 
 // The evidence archives use short entry names and a bounded number of files.
@@ -204,6 +256,7 @@ func bundleEntries(files []*zip.File) (map[string]*zip.File, error) {
 		streamName: maxStreamBytes, rtmpStreamName: maxStreamBytes, hlsStreamName: maxStreamBytes,
 		tsStreamName: maxStreamBytes, udpStreamName: maxStreamBytes, rtpStreamName: maxStreamBytes,
 		reportName: 1 << 20, htmlName: 1 << 20,
+		playerName: maxPlayerBytes,
 	}
 	entries := make(map[string]*zip.File, len(limits))
 	for _, file := range files {
@@ -231,7 +284,8 @@ func readManifest(entry *zip.File) (Manifest, error) {
 		return manifest, fmt.Errorf("%w: 清单无效", ErrInvalid)
 	}
 	legacyFLV := manifest.Protocol == ProtocolHTTPFLV && manifest.Version == legacyFLVSchemaVersion
-	if dumpName(manifest.Protocol) == "" || (manifest.Version != multiProtocolSchemaVersion && !legacyFLV) {
+	if dumpName(manifest.Protocol) == "" || (manifest.Version != multiProtocolSchemaVersion && manifest.Version != playerSchemaVersion && !legacyFLV) ||
+		(manifest.Player != nil && manifest.Version != playerSchemaVersion) {
 		return manifest, fmt.Errorf("%w: 证据包版本或协议不受支持", ErrInvalid)
 	}
 	obs := manifest.Observation

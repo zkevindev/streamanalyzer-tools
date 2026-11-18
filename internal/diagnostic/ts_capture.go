@@ -34,6 +34,8 @@ type tsCapture struct {
 	timeline    *artifactWriter
 	observation *Observation
 	start       time.Time
+	player      *PlayerSession
+	protocol    string
 }
 
 func sampleTS(ctx context.Context, client *http.Client, dir string, target *url.URL, seconds int, protocol string) (Report, error) {
@@ -48,7 +50,7 @@ func sampleTS(ctx context.Context, client *http.Client, dir string, target *url.
 
 	start := time.Now()
 	obs := Observation{Origin: origin(target), StartedAt: start.UTC(), RequestedSeconds: seconds}
-	capture := tsCapture{stream: stream, timeline: timeline, observation: &obs, start: start}
+	capture := tsCapture{stream: stream, timeline: timeline, observation: &obs, start: start, player: capturePlayer(ctx), protocol: protocol}
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(seconds)*time.Second)
 	defer cancel()
 	var captureErr error
@@ -56,6 +58,9 @@ func sampleTS(ctx context.Context, client *http.Client, dir string, target *url.
 		captureErr = capture.http(ctx, client, target)
 	} else {
 		captureErr = capture.datagrams(ctx, target)
+	}
+	if capture.player != nil {
+		capture.player.EndMedia()
 	}
 	obs.ElapsedMS = time.Since(start).Milliseconds()
 	if err := errors.Join(captureErr, stream.close(), timeline.close()); err != nil {
@@ -94,6 +99,16 @@ func (c *tsCapture) keep(data []byte) (bool, error) {
 	}
 	if _, err := c.timeline.Write(record); err != nil {
 		return false, err
+	}
+	if c.player != nil {
+		if c.protocol == ProtocolRTPTS {
+			header, end, _, _, invalid := rtpTSHeader(data)
+			if invalid == "" {
+				c.player.publish(data[header:end])
+			}
+		} else {
+			c.player.publish(data)
+		}
 	}
 	if c.stream.bytes == maxStreamBytes {
 		c.observation.EndReason = "size_limit"
