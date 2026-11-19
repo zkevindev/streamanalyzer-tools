@@ -23,6 +23,7 @@ import (
 )
 
 type simulators struct {
+	rtmp       mediasource.RTMPManager
 	media      mediasource.Manager
 	gb28181    gb28181.Manager
 	gbPlatform gb28181.PlatformManager
@@ -32,6 +33,7 @@ type simulators struct {
 }
 
 func (s *simulators) Close() {
+	s.rtmp.Close()
 	s.media.Close()
 	s.hls.Close()
 	s.sip.Close()
@@ -78,7 +80,7 @@ func newEngine(cfg *Config, model diagnostic.Explainer, sim *simulators) (*gin.E
 	r := gin.Default()
 	h.RegisterRoutes(r)
 	handler.RegisterDiagnosticRoutes(r, diagnostics)
-	handler.RegisterSimulatorRoutes(r, &sim.gb28181, &sim.onvif, &sim.sip, &sim.hls, &sim.gbPlatform, &sim.media)
+	handler.RegisterSimulatorRoutes(r, &sim.gb28181, &sim.onvif, &sim.sip, &sim.hls, &sim.gbPlatform, &sim.media, &sim.rtmp)
 	return r, xlsxStorage, diagnostics, nil
 }
 

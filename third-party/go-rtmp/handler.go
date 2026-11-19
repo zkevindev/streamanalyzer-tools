@@ -8,6 +8,7 @@
 package rtmp
 
 import (
+	"errors"
 	"io"
 
 	"github.com/yutopp/go-rtmp/message"
@@ -31,3 +32,6 @@ type Handler interface {
 	OnUnknownDataMessage(timestamp uint32, data *message.DataMessage) error
 	OnClose()
 }
+
+// ErrStreamNotFound selects NetStream.Play.StreamNotFound for a failed OnPlay.
+var ErrStreamNotFound = errors.New("RTMP stream not found")

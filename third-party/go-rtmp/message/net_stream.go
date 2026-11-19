@@ -71,6 +71,7 @@ const (
 	NetStreamOnStatusCodeMuticastStreamReset NetStreamOnStatusCode = "NetStream.MulticastStream.Reset"
 	NetStreamOnStatusCodePlayStart           NetStreamOnStatusCode = "NetStream.Play.Start"
 	NetStreamOnStatusCodePlayFailed          NetStreamOnStatusCode = "NetStream.Play.Failed"
+	NetStreamOnStatusCodePlayStreamNotFound  NetStreamOnStatusCode = "NetStream.Play.StreamNotFound"
 	NetStreamOnStatusCodePlayComplete        NetStreamOnStatusCode = "NetStream.Play.Complete"
 	NetStreamOnStatusCodePublishBadName      NetStreamOnStatusCode = "NetStream.Publish.BadName"
 	NetStreamOnStatusCodePublishFailed       NetStreamOnStatusCode = "NetStream.Publish.Failed"
