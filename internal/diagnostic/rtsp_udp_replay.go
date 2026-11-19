@@ -106,7 +106,7 @@ func canonicalRTSPIP(value string) bool {
 	return ip != nil && ip.String() == value
 }
 
-func replayRTSPUDP(report *Report, metadata rtspArchiveMetadata, session *description.Session, entries map[string]*zip.File, responses map[int]*base.Response, states []rtspTrackState, events *[]Event, visit func(Event)) error {
+func replayRTSPUDP(report *Report, metadata rtspArchiveMetadata, session *description.Session, entries map[string]*zip.File, responses map[int]*base.Response, states []rtspTrackState, events *[]Event, visit func(Event), export *rtspWireExport) error {
 	bySocket, err := validRTSPUDPMetadata(metadata, session, responses)
 	if err != nil {
 		return err
@@ -176,6 +176,19 @@ func replayRTSPUDP(report *Report, metadata rtspArchiveMetadata, session *descri
 					*events = append(*events, Event{Artifact: rtspUDPDataName, Offset: span.Offset, Size: span.Size, ArrivalMS: span.ArrivalMS, Kind: "rtcp_invalid"})
 				}
 			} else {
+				if export != nil && export.senderReport != nil {
+					for _, packet := range packets {
+						if sr, ok := packet.(*rtcp.SenderReport); ok {
+							bytes, err := sr.Marshal()
+							if err != nil {
+								return err
+							}
+							if err := export.senderReport(transport.MediaID, bytes, span.ArrivalMS); err != nil {
+								return err
+							}
+						}
+					}
+				}
 				metrics.RTCPPackets += len(packets)
 				observeRTSPClocks(metrics, states, transport.MediaID, packets, Event{Artifact: rtspUDPDataName, Offset: span.Offset,
 					Size: span.Size, ArrivalMS: span.ArrivalMS, Kind: "rtcp_sender_report"})
@@ -185,7 +198,22 @@ func replayRTSPUDP(report *Report, metadata rtspArchiveMetadata, session *descri
 				}
 			}
 		} else {
-			observeRTSPRTP(metrics, states, transport.MediaID, payload, rtspUDPDataName, span.Offset, span.ArrivalMS, events, visit)
+			walk := visit
+			var exportErr error
+			if export != nil {
+				walk = func(event Event) {
+					if visit != nil {
+						visit(event)
+					}
+					if event.Codec != "unknown" {
+						exportErr = export.packet(transport.MediaID, payload, span.ArrivalMS)
+					}
+				}
+			}
+			observeRTSPRTP(metrics, states, transport.MediaID, payload, rtspUDPDataName, span.Offset, span.ArrivalMS, events, walk)
+			if exportErr != nil {
+				return exportErr
+			}
 		}
 	}
 	if scanner.Err() != nil || reader.readErr != nil || reader.count > maxRTSPUDPIndexBytes || offset != int64(entries[rtspUDPDataName].UncompressedSize64) {

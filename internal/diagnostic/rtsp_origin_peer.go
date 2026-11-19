@@ -18,16 +18,17 @@ import (
 const replayRTSPMethods = "OPTIONS, DESCRIBE, SETUP, PLAY, GET_PARAMETER, TEARDOWN"
 
 type replayRTSPPeer struct {
-	source   *rtspReplayOrigin
-	wire     *net.TCPConn
-	codec    *conn.Conn
-	ctx      context.Context
-	cancel   context.CancelFunc
-	write    sync.Mutex
-	play     sync.WaitGroup
-	session  string
-	channels map[int][2]int
-	playing  bool
+	datagrams map[int]*rtspReplayUDP
+	source    *rtspReplayOrigin
+	wire      *net.TCPConn
+	codec     *conn.Conn
+	ctx       context.Context
+	cancel    context.CancelFunc
+	write     sync.Mutex
+	play      sync.WaitGroup
+	session   string
+	channels  map[int][2]int
+	playing   bool
 }
 
 func (o *rtspReplayOrigin) serve() {
@@ -44,7 +45,7 @@ func (o *rtspReplayOrigin) serve() {
 				defer func() { <-slots }()
 				ctx, cancel := context.WithCancel(o.ctx)
 				peer := &replayRTSPPeer{source: o, wire: socket, codec: conn.NewConn(bufio.NewReader(socket), socket),
-					ctx: ctx, cancel: cancel, channels: make(map[int][2]int)}
+					ctx: ctx, cancel: cancel, channels: make(map[int][2]int), datagrams: make(map[int]*rtspReplayUDP)}
 				peer.serve()
 			})
 		default:
@@ -60,6 +61,9 @@ func (p *replayRTSPPeer) serve() {
 		p.cancel()
 		_ = p.wire.Close()
 		p.play.Wait()
+		for _, pair := range p.datagrams {
+			pair.close()
+		}
 	}()
 	for p.ctx.Err() == nil {
 		if !p.playing {
@@ -144,30 +148,32 @@ func (p *replayRTSPPeer) request(r *base.Request) (res *base.Response, start boo
 			return
 		}
 		var transport headers.Transport
-		if transport.Unmarshal(r.Header["Transport"]) != nil || transport.Protocol != headers.TransportProtocolTCP ||
-			transport.Profile != headers.TransportProfileAVP || transport.InterleavedIDs == nil ||
+		if transport.Unmarshal(r.Header["Transport"]) != nil || transport.Profile != headers.TransportProfileAVP ||
 			transport.Delivery != nil && *transport.Delivery != headers.TransportDeliveryUnicast {
 			res.StatusCode = base.StatusUnsupportedTransport
 			return
 		}
-		ids := *transport.InterleavedIDs
-		if ids[0] < 0 || ids[1] > 255 || ids[0]+1 != ids[1] {
-			res.StatusCode = base.StatusUnsupportedTransport
-			return
-		}
-		for previous, occupied := range p.channels {
-			if previous != id && ids[0] <= occupied[1] && occupied[0] <= ids[1] {
+		delivery := headers.TransportDeliveryUnicast
+		selected := headers.Transport{Profile: headers.TransportProfileAVP, Delivery: &delivery}
+		if p.source.transport == "udp" {
+			pair, code := p.setupUDP(id, transport)
+			if code != base.StatusOK {
+				res.StatusCode = code
+				return
+			}
+			selected.Protocol, selected.ClientPorts, selected.ServerPorts = headers.TransportProtocolUDP, transport.ClientPorts, &pair.serverPorts
+		} else {
+			ids, ok := p.setupInterleaved(id, transport)
+			if !ok {
 				res.StatusCode = base.StatusUnsupportedTransport
 				return
 			}
+			selected.Protocol, selected.InterleavedIDs = headers.TransportProtocolTCP, &ids
 		}
-		p.channels[id] = ids
 		if p.session == "" {
 			p.session = uuid.NewString()
 		}
 		res.Header["Session"] = base.HeaderValue{p.session}
-		delivery := headers.TransportDeliveryUnicast
-		selected := headers.Transport{Protocol: headers.TransportProtocolTCP, Profile: headers.TransportProfileAVP, Delivery: &delivery, InterleavedIDs: &ids}
 		if first, ok := p.source.startPacket[id]; ok {
 			selected.SSRC = &first.ssrc
 		}
@@ -187,8 +193,9 @@ func (p *replayRTSPPeer) request(r *base.Request) (res *base.Response, start boo
 			}
 		}
 		var info headers.RTPInfo
-		for id := range p.channels {
-			if first, ok := p.source.startPacket[id]; ok {
+		for id := 1; id <= maxRTSPTracks; id++ {
+			_, available := p.channels[id]
+			if first, ok := p.source.startPacket[id]; ok && (available || p.datagrams[id] != nil) {
 				seq := first.seq
 				info = append(info, &headers.RTPInfoEntry{URL: p.source.url + "/trackID=" + strconv.Itoa(id), SequenceNumber: &seq, Timestamp: &first.timestamp})
 			}
@@ -210,13 +217,31 @@ func (p *replayRTSPPeer) request(r *base.Request) (res *base.Response, start boo
 	return
 }
 
+func (p *replayRTSPPeer) setupInterleaved(id int, transport headers.Transport) ([2]int, bool) {
+	if transport.Protocol != headers.TransportProtocolTCP || transport.InterleavedIDs == nil {
+		return [2]int{}, false
+	}
+	ids := *transport.InterleavedIDs
+	if ids[0] < 0 || ids[1] > 255 || ids[0]+1 != ids[1] {
+		return [2]int{}, false
+	}
+	for previous, occupied := range p.channels {
+		if previous != id && ids[0] <= occupied[1] && occupied[0] <= ids[1] {
+			return [2]int{}, false
+		}
+	}
+	p.channels[id] = ids
+	return ids, true
+}
+
 func (p *replayRTSPPeer) send() {
 	defer p.wire.Close()
 	start := time.Now()
 	payload, wire := make([]byte, 65535), make([]byte, 65539)
 	for _, frame := range p.source.frames {
 		channel, selected := p.channels[frame.media]
-		if !selected {
+		pair := p.datagrams[frame.media]
+		if !selected && pair == nil {
 			continue
 		}
 		if waitReplayAt(p.ctx, start, frame.at-p.source.playbackStart) != nil {
@@ -225,6 +250,12 @@ func (p *replayRTSPPeer) send() {
 		data := payload[:frame.size]
 		if _, err := p.source.file.ReadAt(data, frame.offset); err != nil {
 			return
+		}
+		if pair != nil {
+			if err := pair.send(data, frame.rtcp); err != nil {
+				return
+			}
+			continue
 		}
 		p.write.Lock()
 		_ = p.wire.SetWriteDeadline(time.Now().Add(4 * time.Second))

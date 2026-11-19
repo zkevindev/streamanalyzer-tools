@@ -147,3 +147,55 @@ func readRTSPReplay(target string) (rtspReplayProbe, error) {
 	}
 	return rtspReplayProbe{}, fmt.Errorf("replay SDP omitted video")
 }
+
+func TestRTSPUDPEvidenceReplayPreservesSenderClock(t *testing.T) {
+	server := testDiagnosticServer(t, t.TempDir())
+	camera := decodeDiagnostic[onvif.Status](t, diagnosticRequest(t, server, "POST", onvifAPI+"/start", 201, []byte(`{"rtcp_clock_step_ms":350}`)))
+	const api = "/api/diagnostics"
+	create := func(target string, seconds int) string {
+		t.Helper()
+		req, _ := json.Marshal(diagnostic.SampleRequest{Protocol: diagnostic.ProtocolRTSP, Transport: "udp", URL: target, Seconds: seconds})
+		run := decodeDiagnostic[diagnostic.Run](t, diagnosticRequest(t, server, "POST", api+"/runs", 202, req))
+		return api + "/runs/" + run.ID
+	}
+	path := create(camera.StreamURL, 5)
+	original := waitDiagnostic(t, server, path)
+	if !original.RTSPReplayAvailable || original.Report == nil || len(original.Report.RTSP.SenderClocks) != 2 {
+		t.Fatalf("UDP original lacks replay evidence: %+v", original)
+	}
+	bundle := diagnosticRequest(t, server, "GET", path+"/evidence.zip", 200, nil)
+	diagnosticRequest(t, server, "POST", onvifAPI+"/stop", 200, nil)
+	imported := decodeDiagnostic[diagnostic.Run](t, diagnosticRequest(t, server, "POST", api+"/import", 201, bundle))
+	sourcePath := api + "/runs/" + imported.ID + "/rtsp-replay"
+	source := decodeDiagnostic[diagnostic.RTSPReplayStatus](t, diagnosticRequest(t, server, "POST", sourcePath+"/start", 201, nil))
+	if source.Transport != "udp" || source.SenderReports < 6 || source.Packets != original.Report.RTSP.RTPPackets {
+		t.Fatalf("invalid UDP proof source: %+v", source)
+	}
+	first := create(source.URL, 6)
+	time.Sleep(150 * time.Millisecond)
+	second := create(source.URL, 6)
+	for _, target := range []string{first, second} {
+		detail := waitDiagnostic(t, server, target)
+		if detail.Report == nil || detail.Report.RTSP == nil {
+			t.Fatalf("replay failed: %+v", detail)
+		}
+		got := detail.Report.RTSP
+		want := original.Report.RTSP
+		if got.Transport != "udp" || got.RTPPackets != source.Packets || got.RTCPPackets != source.SenderReports ||
+			got.FilteredDatagrams != 0 || len(got.SenderClocks) != len(want.SenderClocks) {
+			t.Fatalf("replay lost exact media or SR counts: %+v", got)
+		}
+		for _, clock := range got.SenderClocks {
+			wanted := slices.IndexFunc(want.SenderClocks, func(item diagnostic.RTSPSenderClock) bool { return item.TrackID == clock.TrackID })
+			if wanted == -1 || clock.Samples != want.SenderClocks[wanted].Samples || clock.SSRC != want.SenderClocks[wanted].SSRC ||
+				clock.MaxStepMS != want.SenderClocks[wanted].MaxStepMS {
+				t.Fatalf("replay altered the source time mapping: %+v, want %+v", clock, want.SenderClocks)
+			}
+		}
+	}
+	state := decodeDiagnostic[diagnostic.RTSPReplayStatus](t, diagnosticRequest(t, server, "GET", sourcePath, 200, nil))
+	if state.Plays != 2 {
+		t.Fatalf("expected two independent UDP sessions: %+v", state)
+	}
+	diagnosticRequest(t, server, "POST", sourcePath+"/stop", 200, nil)
+}

@@ -56,8 +56,9 @@ func walkRTSPMediaEvents(dir string, manifest Manifest, visit func(Event)) error
 }
 
 type rtspWireExport struct {
-	describe func(*description.Session) error
-	packet   func(media int, data []byte, arrival int64) error
+	senderReport func(media int, data []byte, arrival int64) error
+	describe     func(*description.Session) error
+	packet       func(media int, data []byte, arrival int64) error
 }
 
 func replayRTSPWithEvents(dir string, manifest Manifest, visit func(Event)) (Report, error) {
@@ -134,9 +135,6 @@ func readRTSPWire(dir string, manifest Manifest, visit func(Event), export *rtsp
 		session, tracks = nil, []RTSPTrackMetrics{}
 	}
 	if export != nil {
-		if udp {
-			return Report{}, ErrInvalid
-		}
 		if err := export.describe(session); err != nil {
 			return Report{}, err
 		}
@@ -331,7 +329,7 @@ func readRTSPWire(dir string, manifest Manifest, visit func(Event), export *rtsp
 		}
 	}
 	if udp {
-		if err := replayRTSPUDP(&report, metadata, session, entries, responses, states, &events, visit); err != nil {
+		if err := replayRTSPUDP(&report, metadata, session, entries, responses, states, &events, visit, export); err != nil {
 			return Report{}, err
 		}
 	}
