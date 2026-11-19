@@ -73,7 +73,14 @@ func (r *rtmpRelay) snapshot() *RTMPIngestStatus {
 	status := &RTMPIngestStatus{Publishing: r.publisher != nil && r.currentPublication() != nil, Viewers: len(r.viewers), Sessions: slices.Clone(r.sessions)}
 	if f := r.failover; f != nil {
 		report := f.report
-		report.PrimaryConnected = f.demoted != nil || (report.SwitchedAt.IsZero() && r.publisher != nil)
+		report.PrimaryConnected = f.demoted != nil || (!f.onBackup && r.publisher != nil)
+		report.Switches = slices.Clone(report.Switches)
+		if r.publisher != nil {
+			report.ActivePublisher = "primary"
+			if f.onBackup {
+				report.ActivePublisher = "backup"
+			}
+		}
 		status.Failover = &report
 	}
 	return status
@@ -91,11 +98,15 @@ func (s *rtmpSource) reservePublisher(wire *rtmpWire, name string) error {
 	defer s.mu.Unlock()
 	r := s.relay
 	if name == "backup" {
-		if f := r.failover; f != nil && f.standby == nil && f.report.SwitchedAt.IsZero() && s.ctx.Err() == nil {
+		if f := r.failover; f != nil && f.standby == nil && !f.onBackup && (f.report.FailbackStableMS > 0 || f.report.SwitchedAt.IsZero()) && s.ctx.Err() == nil {
 			f.standby = wire
 			return nil
 		}
 		return errors.New("the relay does not have an available standby slot")
+	}
+	if f := r.failover; f != nil && f.onBackup && f.report.FailbackStableMS != 0 && f.demoted == nil && s.ctx.Err() == nil {
+		f.demoted = wire
+		return nil
 	}
 	if r.publisher != nil || s.ctx.Err() != nil {
 		return errors.New("the relay already has a publisher or has stopped")
@@ -110,6 +121,10 @@ func (s *rtmpSource) publisherStarted(wire *rtmpWire) {
 	r := s.relay
 	if f := r.failover; f != nil && f.standby == wire && s.ctx.Err() == nil {
 		f.report.BackupPublishedAt = time.Now()
+		return
+	}
+	if f := r.failover; f != nil && f.demoted == wire && s.ctx.Err() == nil {
+		f.primaryPublished = time.Now()
 		return
 	}
 	if r.publisher != wire || s.ctx.Err() != nil {
@@ -135,7 +150,8 @@ func (s *rtmpSource) releasePublisher(wire *rtmpWire) {
 			f.standby, f.backupAudio, f.backupVideo = nil, nil, nil
 			f.report.BackupPublishedAt = time.Time{}
 		case f.demoted:
-			f.demoted = nil
+			f.demoted, f.primaryAudio, f.primaryVideo = nil, nil, nil
+			f.resumeStart, f.resumeLast = time.Time{}, time.Time{}
 			for i := range r.sessions {
 				if r.sessions[i].Number == f.oldNumber {
 					r.sessions[i].DisconnectedAt = time.Now()
@@ -148,7 +164,7 @@ func (s *rtmpSource) releasePublisher(wire *rtmpWire) {
 		if p := r.currentPublication(); p != nil {
 			p.DisconnectedAt = time.Now()
 		}
-		if f := r.failover; f != nil && f.report.SwitchedAt.IsZero() {
+		if f := r.failover; f != nil && !f.onBackup {
 			f.report.PrimaryLastMediaAt, f.report.StallDetectedAt = time.Time{}, time.Time{}
 		}
 		r.publisher, r.firstStamp, r.initAudio, r.initVideo = nil, nil, nil, nil
@@ -243,15 +259,18 @@ func (s *rtmpSource) forwardMedia(wire *rtmpWire, kind byte, stamp uint32, data 
 	now := time.Now()
 	config, key := relayHeader(kind, data)
 	if f := r.failover; f != nil {
-		if f.demoted == wire {
+		if f.demoted == wire && !s.recoverPrimary(wire, kind, stamp, data, now, config, key) {
 			return nil
 		}
 		if f.standby == wire && !s.standbyMedia(wire, kind, stamp, data, now, config, key) {
 			return nil
 		}
-		if f.report.SwitchedAt.IsZero() && r.publisher == wire && !config {
-			f.report.PrimaryLastMediaAt = now
-			f.report.StallDetectedAt = time.Time{}
+		if r.publisher == wire && !config {
+			f.activeLastMedia = now
+			if !f.onBackup {
+				f.report.PrimaryLastMediaAt = now
+				f.report.StallDetectedAt = time.Time{}
+			}
 		}
 	}
 	p := r.currentPublication()

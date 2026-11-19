@@ -11,6 +11,7 @@ function updateFields() {
   el('keyframe-delay').disabled = el('keyframe-field').hidden;
   el('primary-stall-field').hidden = el('fault').value !== 'publish_failover';
   el('primary-stall').disabled = el('primary-stall-field').hidden;
+  el('primary-stable').disabled = el('primary-stable-field').hidden = el('primary-stall-field').hidden;
 }
 
 function render() {
@@ -39,6 +40,14 @@ function render() {
     failover.primary_connected && '主路连接仍在', failover.stall_detected_at && '已检测到主路停发',
     failover.switched_at && '已转发备路首个关键帧，转发空窗 ' + failover.gap_ms + ' ms',
   ].filter(Boolean).join(' · ') : '';
+  const changes = failover?.switches || [];
+  el('switch-list').hidden = !changes.length;
+  el('switch-list').replaceChildren(...changes.map(change => {
+    const row = document.createElement('li');
+    row.textContent = [new Date(change.keyframe_at).toLocaleTimeString(), change.to === 'primary' ? '回切主路' : '切换备路',
+      '关键帧等待 ' + change.keyframe_wait_ms + ' ms', '媒体空窗 ' + change.media_gap_ms + ' ms'].join(' · ');
+    return row;
+  }));
   el('publication-list').replaceChildren(...(ingest.sessions || []).slice().reverse().map(session => {
     const row = document.createElement('li');
     const start = new Date(session.published_at);
@@ -98,6 +107,7 @@ el('fault').addEventListener('change', updateFields);
 el('form').addEventListener('submit', event => {
   event.preventDefault();
   void change('/start', {fault: el('fault').value, port: Number(el('port').value),
+    failback_stable_ms: el('fault').value === 'publish_failover' ? Number(el('primary-stable').value) : 0,
     stall_ms: el('fault').value === 'publish_failover' ? Number(el('primary-stall').value) : 0,
     delay_keyframe_ms: el('fault').value === 'publish_relay' ? Number(el('keyframe-delay').value) : 0});
 });
