@@ -94,6 +94,11 @@
                     <video id="sample-player" controls muted playsinline preload="none" aria-label="采样流播放器"></video>
                     <p id="player-status" class="muted" role="status"></p>
                     <button id="play-player" class="secondary" type="button" hidden>开始播放</button>
+                    <div id="hls-quality" hidden>
+                        <label for="hls-quality-select">HLS 清晰度</label>
+                        <select id="hls-quality-select"><option value="-1">自动</option></select>
+                        <span id="hls-quality-playing" class="muted" role="status"></span>
+                    </div>
                 </section>
                 <div id="report" hidden>
                     <dl id="metrics" class="metrics"></dl>

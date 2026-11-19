@@ -258,7 +258,7 @@ function completePlayback(player, reason) {
     player.deadline = setTimeout(() => stopPlayback(player), 800);
 }
 
-function startPlayback(run, startedAt, startedAtPerformanceMS, seconds, hlsRecovery) {
+function startPlayback(run, startedAt, startedAtPerformanceMS, seconds, hlsRecovery, hlsABR) {
     if (protocols[run.protocol]?.nativeRTSP) return;
     const grant = run.player;
     if (!grant) return;
@@ -270,6 +270,10 @@ function startPlayback(run, startedAt, startedAtPerformanceMS, seconds, hlsRecov
     preview.dataset.runId = run.id;
     preview.hidden = false;
     node('play-player').hidden = true;
+    const quality = node('hls-quality-select');
+    const label = node('hls-quality-playing');
+    node('hls-quality').hidden = true;
+    label.textContent = '';
     if (typeof PlayerDiagnostics === 'undefined') {
         status.textContent = '播放器模块加载失败。';
         video.hidden = true;
@@ -282,7 +286,16 @@ function startPlayback(run, startedAt, startedAtPerformanceMS, seconds, hlsRecov
         autoplay_blocked: playerStates.autoplay_blocked, unsupported: playerStates.unsupported, error: playerStates.error,
     };
     player.collector = new PlayerDiagnostics(video, grant, {
-        startedAt, startedAtPerformanceMS, hlsRecovery,
+        startedAt, startedAtPerformanceMS, hlsRecovery, hlsABR,
+        onQualities(levels, selectQuality) {
+            if (activePlayer !== player || levels.length < 2) return;
+            quality.replaceChildren(new Option('自动', '-1'), ...levels.map((level, index) => new Option(level.height + 'p', index)));
+            quality.onchange = () => selectQuality(Number(quality.value));
+            node('hls-quality').hidden = false;
+        },
+        onQualityPlaying(level) {
+            if (activePlayer === player && level) label.textContent = '正在播放 ' + level.height + 'p';
+        },
         onChange(event) {
             if (activePlayer !== player || !statuses[event.kind]) return;
             if (['autoplay_blocked', 'unsupported', 'error'].includes(player.status) &&
@@ -1496,13 +1509,15 @@ bindForm('sample', async () => {
     const seconds = node('seconds').valueAsNumber;
     const playback = !protocols[node('protocol').value]?.nativeRTSP && !node('analyze-playback').disabled && node('analyze-playback').checked;
     const url = node('url').value.trim();
-    const hlsRecovery = Boolean(simulatorURL && simulatorURL === url && launchOptions.get('hls_recovery') === '1');
+    const localSimulator = Boolean(simulatorURL && simulatorURL === url);
+    const hlsRecovery = localSimulator && launchOptions.get('hls_recovery') === '1';
+    const hlsABR = localSimulator && launchOptions.get('hls_abr') === '1';
     const run = await api('/runs', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ protocol: node('protocol').value, url, seconds, playback }),
     });
     stopPlayback(activePlayer);
-    startPlayback(run, startedAt, startedAtPerformanceMS, seconds, hlsRecovery);
+    startPlayback(run, startedAt, startedAtPerformanceMS, seconds, hlsRecovery, hlsABR);
     return run;
 });
 bindForm('import', () => {

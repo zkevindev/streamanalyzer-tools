@@ -39,7 +39,7 @@
         <form id="hls-form" class="panel-body">
           <fieldset id="simulator-fields" disabled>
             <label for="mode">场景</label>
-            <select id="mode" name="mode"><option value="normal">正常点播</option><option value="live">滚动直播</option><option value="delay">分片延迟</option><option value="not_found">分片返回 404</option></select>
+            <select id="mode" name="mode"><option value="normal">正常点播</option><option value="live">滚动直播</option><option value="abr">双码率 fMP4 直播</option><option value="delay">分片延迟</option><option value="not_found">分片返回 404</option></select>
             <div class="sim-fields">
               <div id="segment-field" hidden><label for="segment">分片序号</label><input id="segment" name="segment" type="number" value="4" min="1" max="12" required></div>
               <div id="delay-field" hidden><label for="delay-ms">延迟（毫秒）</label><input id="delay-ms" name="delay_ms" type="number" value="10000" min="500" max="15000" required></div>
