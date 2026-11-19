@@ -30,19 +30,21 @@ type modelCredentialStore interface {
 }
 
 type modelSettingsRequest struct {
-	Provider    string `json:"provider"`
-	BaseURL     string `json:"base_url"`
-	Model       string `json:"model"`
-	APIKey      string `json:"api_key,omitempty"`
-	ClearAPIKey bool   `json:"clear_api_key,omitempty"`
+	ImageInput  *string `json:"image_input,omitempty"`
+	Provider    string  `json:"provider"`
+	BaseURL     string  `json:"base_url"`
+	Model       string  `json:"model"`
+	APIKey      string  `json:"api_key,omitempty"`
+	ClearAPIKey bool    `json:"clear_api_key,omitempty"`
 }
 
 type modelSettingsView struct {
-	Provider  string `json:"provider"`
-	BaseURL   string `json:"base_url"`
-	Model     string `json:"model"`
-	HasAPIKey bool   `json:"has_api_key"`
-	Warning   string `json:"warning,omitempty"`
+	ImageInput string `json:"image_input"`
+	Provider   string `json:"provider"`
+	BaseURL    string `json:"base_url"`
+	Model      string `json:"model"`
+	HasAPIKey  bool   `json:"has_api_key"`
+	Warning    string `json:"warning,omitempty"`
 }
 
 type modelCredential struct {
@@ -158,7 +160,11 @@ func (s *modelSettings) resolveDraft(input modelSettingsRequest) (diagnostic.Mod
 	if strings.TrimSpace(input.Provider) == "" || strings.TrimSpace(input.Model) == "" {
 		return diagnostic.ModelConfig{}, fmt.Errorf("%w: 请选择厂商并填写模型名", diagnostic.ErrInvalid)
 	}
-	next := diagnostic.ModelConfig{Provider: input.Provider, BaseURL: input.BaseURL, Model: input.Model, APIKey: input.APIKey}.Normalize()
+	mode := s.current.ImageInput
+	if input.ImageInput != nil {
+		mode = *input.ImageInput
+	}
+	next := diagnostic.ModelConfig{Provider: input.Provider, BaseURL: input.BaseURL, Model: input.Model, APIKey: input.APIKey, ImageInput: mode}.Normalize()
 	if input.ClearAPIKey && next.APIKey != "" {
 		return diagnostic.ModelConfig{}, fmt.Errorf("%w: 清除 API Key 时请留空密钥输入框", diagnostic.ErrInvalid)
 	}
@@ -170,8 +176,13 @@ func (s *modelSettings) resolveDraft(input modelSettingsRequest) (diagnostic.Mod
 }
 
 func (s *modelSettings) view() modelSettingsView {
+	mode := s.current.ImageInput
+	if mode == "" {
+		mode = diagnostic.ImageInputAuto
+	}
 	return modelSettingsView{
-		Provider: s.current.Provider, BaseURL: s.current.BaseURL, Model: s.current.Model,
+		ImageInput: mode,
+		Provider:   s.current.Provider, BaseURL: s.current.BaseURL, Model: s.current.Model,
 		HasAPIKey: s.current.APIKey != "", Warning: s.warning,
 	}
 }

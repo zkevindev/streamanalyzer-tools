@@ -81,6 +81,27 @@ func TestDesktopModelSettingsApplyWithoutRestart(t *testing.T) {
 	if state["model_configured"] != true || state["model_provider"] != "deepseek" || state["model_name"] != "deepseek-flash" {
 		t.Fatalf("new model did not take effect on the running server: %+v", state)
 	}
+	for _, mode := range []string{diagnostic.ImageInputText, diagnostic.ImageInputAuto} {
+		body, _ := json.Marshal(modelSettingsRequest{Provider: diagnostic.ProviderDeepSeek, BaseURL: "https://api.deepseek.com", Model: "deepseek-flash", ImageInput: &mode})
+		req := httptest.NewRequest(http.MethodPost, "/model-settings", strings.NewReader(string(body)))
+		req.Header.Set(settingsHeader, "test-shell-only")
+		req.Header.Set("Content-Type", "application/json")
+		out := httptest.NewRecorder()
+		shell.ServeHTTP(out, req)
+		if out.Code != http.StatusOK || strings.Contains(out.Body.String(), key) {
+			t.Fatalf("policy save failed or exposed key: %d", out.Code)
+		}
+		response, err := http.Get(server.URL() + "/api/diagnostics/config")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var updated map[string]any
+		err = json.NewDecoder(response.Body).Decode(&updated)
+		response.Body.Close()
+		if err != nil || updated["model_image_input"] != mode || updated["model_name"] != "deepseek-flash" {
+			t.Fatalf("same-model screenshot policy was not hot applied: %+v %v", updated, err)
+		}
+	}
 
 	res, err = http.Post(server.URL()+"/model-settings", "application/json", strings.NewReader("{}"))
 	if err != nil {
@@ -154,6 +175,7 @@ func TestDesktopModelConnectionTestsDraftWithoutSaving(t *testing.T) {
 	startingConfig := diagnostic.ModelConfig{
 		Provider: diagnostic.ProviderOpenAICompatible, BaseURL: upstream.URL + "/v1", Model: "saved", APIKey: savedKey,
 	}
+	startingConfig = startingConfig.Normalize()
 	settings, _, err := openModelSettingsWithStore(t.TempDir(), startingConfig, store)
 	if err != nil {
 		t.Fatal(err)
@@ -179,6 +201,7 @@ func TestDesktopModelConnectionTestsDraftWithoutSaving(t *testing.T) {
 			body, err := json.Marshal(modelSettingsRequest{
 				Provider: startingConfig.Provider, BaseURL: upstream.URL + test.target, Model: test.name,
 				APIKey: test.key, ClearAPIKey: test.clear,
+				ImageInput: func() *string { mode := diagnostic.ImageInputText; return &mode }(),
 			})
 			if err != nil {
 				t.Fatal(err)

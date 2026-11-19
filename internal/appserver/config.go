@@ -71,5 +71,8 @@ func ModelConfigFromEnv() diagnostic.ModelConfig {
 		cfg.Model = strings.TrimSpace(os.Getenv("STREAMANALYZER_OPENAI_MODEL"))
 		cfg.APIKey = strings.TrimSpace(os.Getenv("STREAMANALYZER_OPENAI_API_KEY"))
 	}
+	if cfg != (diagnostic.ModelConfig{}) {
+		cfg.ImageInput = strings.TrimSpace(os.Getenv("STREAMANALYZER_MODEL_IMAGE_INPUT"))
+	}
 	return cfg
 }

@@ -48,6 +48,8 @@ var reportPage = template.Must(template.New("report").Funcs(template.FuncMap{
 	"investigationMedia":     investigationMediaLabel,
 	"investigationAlignment": investigationAlignmentLabel,
 	"investigationModel":     investigationModelLabel,
+	"modelInputFallback":     modelInputFallbackLabel,
+	"modelInputVision":       modelInputUsesVision,
 	"videoSource":            playerVideoQualitySourceLabel,
 	"videoCount":             playerVideoObservedCount,
 	"videoMS":                playerVideoObservedTime,
@@ -80,7 +82,15 @@ var reportPage = template.Must(template.New("report").Funcs(template.FuncMap{
 	"presentationCount":      playerPresentationCountLabel,
 	"intervalName":           playerIntervalLabel,
 	"investigationTitle":     playerInvestigationIntervalTitle,
-}).Parse(`{{define "rtspMediaEvidence"}}
+}).Parse(`{{define "modelInputEvidence"}}
+<section class="model-input-evidence"><p><strong>{{if eq .Audit.Mode "vision"}}本次为图文解读 · {{len .Used}} 张截图与时序文本{{else}}本次为时序文本解读{{end}}</strong></p>
+<p class="timing-note">请求设置 {{if eq .Audit.RequestedMode "text"}}仅文本{{else}}自动图文{{end}} · 播放器记录修订 #{{.Audit.PlayerRevision}}{{with .Audit.FallbackCode}} · {{modelInputFallback .}}{{end}}</p>
+{{if .Attempted}}<p class="timing-note">已尝试发送 {{len .Attempted}} 张截图；图文请求不支持，最终建议基于文本。</p>{{else if eq .Audit.Mode "text"}}<p class="timing-note">本次仅发送时序文本，未发送截图像素。</p>{{end}}
+{{if eq .Audit.Mode "vision"}}<p class="timing-note">截图来自采样源流，图像观察仍需结合时序验证；不能据此重现或证明本机画面冻结。</p>{{end}}
+{{if .Used}}<p>本次采用的截图</p><ul>{{range .Used}}<li>{{if .AnchorID}}<strong id="{{.AnchorID}}">{{.ID}}</strong>{{else}}<strong>{{.ID}}</strong>{{end}} · {{.Role}}{{with .MediaTimeMS}} · 媒体时间 {{.}} ms{{end}} · {{.Bytes}} 字节 {{if .Href}}<a href="{{.Href}}">查看本地截图</a>{{else}}本地截图引用未匹配{{end}}</li>{{end}}</ul>{{end}}
+{{if .Attempted}}<p>已尝试发送的截图</p><ul>{{range .Attempted}}<li><strong>{{.ID}}</strong> · {{.Role}}{{with .MediaTimeMS}} · 媒体时间 {{.}} ms{{end}} · {{.Bytes}} 字节 {{if .Href}}<a href="{{.Href}}">查看本地截图</a>{{else}}本地截图引用未匹配{{end}}</li>{{end}}</ul>{{end}}
+{{if or .Used .Attempted}}<details><summary>截图文件指纹（SHA-256）</summary>{{range .Used}}<p class="timing-note">{{.ID}} · {{.SHA256}}</p>{{end}}{{range .Attempted}}<p class="timing-note">{{.ID}} · {{.SHA256}}</p>{{end}}</details>{{end}}</section>
+{{end}}{{define "rtspMediaEvidence"}}
 <section class="rtsp-media-evidence"><h4>RTSP 离线媒体重建</h4>
 <p class="timing-note">离线重建仅使用已采集的原始 RTP，不会重新连接源站。按保存的播放器媒体时间与接收端 RTP 时钟估算位置，不是源端 UTC 或精确呈帧对齐，也未按收包到达时间直接定位画面。</p>
 <p class="timing-note">片段与截图用于核对同期源流内容，不能重现或证明本机画面冻结；原收流等待和播放器停顿请对照时序证据。</p>
@@ -451,8 +461,8 @@ thead{color:#52657e;background:#f7f9fc}
 {{range .OtherImages}}<p><a href="{{.Href}}">下载源流截图 · {{.Bytes}} 字节</a></p>{{end}}
 {{range .Clips}}<p><a href="{{.Href}}">下载源流片段 · {{.Bytes}} 字节</a></p>{{end}}
 {{if .Media.Assets}}<p class="timing-note">媒体文件保存在证据包中；独立 HTML 内嵌可用截图，片段通过下载链接或解压证据包后查看。</p>{{end}}
-<h3>模型建议（{{if .Media.RTSP}}时序与重建证据{{else}}时序证据{{end}}）</h3>
-<p class="timing-note">{{if .Media.RTSP}}模型基于时序与媒体重建记录提出待验证建议；未向模型发送截图像素，截图供人工对照。{{else}}模型依据关联的接收间隔、缓冲与关键帧记录提出待验证建议，源流片段和截图供复核。{{end}}</p>
+<h3>模型建议（{{if modelInputVision .Explanation}}截图与时序证据{{else if .Media.RTSP}}时序与重建证据{{else}}时序证据{{end}}）</h3>
+{{if .Explanation}}{{if .ModelInput}}{{template "modelInputEvidence" .ModelInput}}{{else}}<p class="timing-note">该历史结果未记录截图输入方式。</p>{{end}}{{else}}<p class="timing-note">截图是否发送以实际解读记录为准，整份报告解读仍为文本。</p>{{end}}
 {{with .Explanation}}<p class="timing-note">解读来源 {{modelProvider .Provider}}{{if .Model}} · {{.Model}}{{end}}</p><p>{{.Summary}}</p>
 {{range .Hypotheses}}<h4>待验证 · {{.Claim}}</h4><p>{{range .EvidenceIDs}}<a href="#case-{{.}}">{{.}}</a> {{end}}</p><p>{{.NextCheck}}</p>{{end}}
 {{else}}<p>{{investigationModel .ModelState}}</p>{{end}}
@@ -553,7 +563,8 @@ thead{color:#52657e;background:#f7f9fc}
 </article>
 {{else}}<p>这次采样暂无规则触发。</p>{{end}}
 {{with .Explanation}}
-<h2>模型解读</h2>
+<h2>模型解读（整份报告文本汇总）</h2>
+<p class="timing-note">整份报告解读仅使用时序文本，截图输入仅用于选中异常的补查。</p>
 <article><p><small>解读来源 {{modelProvider .Provider}}{{if .Model}} · {{.Model}}{{end}}</small></p>
 <p>{{.Summary}}</p>
 {{range .Hypotheses}}<h3>待验证 · {{.Claim}}</h3>
@@ -924,6 +935,7 @@ func RenderHTMLWithAssets(w io.Writer, report Report, explanation *Explanation, 
 
 type investigationHTML struct {
 	StallInvestigation
+	ModelInput    *modelInputEvidenceHTML
 	Images        []investigationHTMLImage
 	ImagesOmitted int
 	OtherImages   []investigationHTMLClip
@@ -951,7 +963,7 @@ func investigationHTMLItems(items []StallInvestigation, backURL string, assets m
 	var result []investigationHTML
 	embeddedBytes := 0
 	for _, item := range items {
-		view := investigationHTML{StallInvestigation: item}
+		view := investigationHTML{StallInvestigation: item, ModelInput: modelInputEvidenceView(item, backURL)}
 		for _, sample := range item.Correlation.BufferSamples {
 			if sample.Video != nil && (sample.Video.TotalFrames != nil || sample.Video.DroppedFrames != nil || sample.Video.PresentedFrames != nil || sample.Video.FrameAgeMS != nil) {
 				view.VideoSamples = append(view.VideoSamples, sample)

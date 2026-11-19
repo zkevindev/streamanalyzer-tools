@@ -1260,9 +1260,67 @@ function renderStallAssessment(item) {
     return block;
 }
 
+const modelInputFallbackLabels = {
+    disabled: '已选择仅文本', no_images: '没有可用截图', images_invalid: '截图未通过完整性校验',
+    provider_text_only: '当前厂商使用文本接口', model_text_only: '当前型号仅支持文本', images_unsupported: '图文请求不支持，已回退文本',
+};
+const modelImageRole = (name) => name?.endsWith('/before.jpg') ? '异常前源流截图' : name?.endsWith('/after.jpg') ? '异常后源流截图' : '异常附近源流截图';
+function modelImageAsset(item, reference) {
+    if (reference.case_id !== item.id || !/^S\d{3}-I00[1-3]$/.test(reference.id || '') || !reference.id.startsWith(item.id + '-')) return null;
+    return (item.media?.assets || []).find((asset) => asset.kind === 'screenshot' && asset.name === reference.name && asset.bytes === reference.bytes && asset.sha256 === reference.sha256) || null;
+}
+function renderModelInputEvidence(item) {
+    const block = element('section', '', 'model-input-evidence');
+    const audit = item.explanation?.input_evidence;
+    if (!audit) {
+        block.append(element('p', '该历史结果未记录截图输入方式。', 'timing-note muted model-input-legacy'));
+        return block;
+    }
+    const used = (audit.images || []).slice(0, 3);
+    const attempted = (audit.attempted_images || []).slice(0, 3);
+    const vision = audit.mode === 'vision';
+    const label = vision ? `本次为图文解读 · ${used.length} 张截图与时序文本` : '本次为时序文本解读';
+    block.append(element('p', label, 'model-input-mode'));
+    const context = [`请求设置 ${audit.requested_mode === 'text' ? '仅文本' : '自动图文'}`, `播放器记录修订 #${audit.player_revision ?? '未记录'}`];
+    if (audit.fallback_code) context.push(modelInputFallbackLabels[audit.fallback_code] || '未记录可识别的回退原因');
+    block.append(element('p', context.join(' · '), 'timing-note muted'));
+    if (attempted.length) block.append(element('p', `已尝试发送 ${attempted.length} 张截图；图文请求不支持，最终建议基于文本。`, 'timing-note model-input-fallback'));
+    else if (!vision) block.append(element('p', '本次仅发送时序文本，未发送截图像素。', 'timing-note muted'));
+    if (vision) block.append(element('p', '截图来自采样源流，图像观察仍需结合时序验证；不能据此重现或证明本机画面冻结。', 'timing-note muted'));
+    const fingerprints = [];
+    const anchors = new Set([...(item.correlation?.findings || []), ...(item.assessment?.findings || [])].map((finding) => finding.id));
+    for (const [references, finalInput] of [[used, true], [attempted, false]]) {
+        if (!references.length) continue;
+        block.append(element('p', finalInput ? '本次采用的截图' : '已尝试发送的截图', 'timing-note'));
+        const list = element('ul', '', 'model-input-images');
+        for (const reference of references) {
+            const row = element('li', '');
+            const asset = modelImageAsset(item, reference);
+            const id = element('strong', reference.id || '截图编号未记录');
+            if (finalInput && vision && asset && !anchors.has(reference.id)) { id.id = 'case-' + reference.id; anchors.add(reference.id); }
+            row.append(id, document.createTextNode(` · ${modelImageRole(reference.name)}${reference.media_time_ms == null ? '' : ` · ${item.media?.rtsp ? '重建' : '采样'}媒体时间 ${time(reference.media_time_ms)}`} · ${reference.bytes == null ? '大小未记录' : bytes(reference.bytes)} `));
+            const url = asset && investigationAssetURL(item, asset);
+            if (url) { const link = element('a', '查看本地截图'); link.href = url; row.append(link); }
+            else row.append(element('span', '本地截图引用未匹配', 'muted'));
+            list.append(row);
+            fingerprints.push([reference.id || '截图', reference.sha256 || '未记录']);
+        }
+        block.append(list);
+    }
+    if (fingerprints.length) {
+        const details = element('details', '', 'model-input-identities'); details.append(element('summary', '截图文件指纹（SHA-256）'));
+        for (const [id, hash] of fingerprints) details.append(element('p', `${id} · ${hash}`, 'timing-note muted'));
+        block.append(details);
+    }
+    return block;
+}
+
 function renderInvestigationModel(item) {
     const block = element('section', '', 'stall-model');
-    block.append(element('h5', item.media?.rtsp ? '模型建议（时序与重建证据）' : '模型建议（时序证据）'), element('p', item.media?.rtsp ? '模型基于时序与媒体重建记录提出待验证建议；未向模型发送截图像素，截图供人工对照。' : '模型依据关联的接收间隔、缓冲与关键帧记录提出待验证建议，源流片段和截图供复核。', 'timing-note muted'));
+    const vision = item.explanation?.input_evidence?.mode === 'vision';
+    block.append(element('h5', vision ? '模型建议（截图与时序证据）' : item.media?.rtsp ? '模型建议（时序与重建证据）' : '模型建议（时序证据）'));
+    if (item.explanation) block.append(renderModelInputEvidence(item));
+    else block.append(element('p', currentModel?.image_input === 'text' ? '当前补查设为仅文本，截图供人工对照。' : '当前补查将按模型设置使用可用截图与时序；图片不支持时回退文本，实际输入以解读记录为准。', 'timing-note muted'));
     if (item.explanation) {
         block.append(element('p', `解读来源 ${modelLabel(item.explanation)}`, 'model-source muted'), element('p', item.explanation.summary));
         const list = element('ul', '');
@@ -1503,7 +1561,7 @@ function renderModelStatus() {
     button.textContent = result ? '用当前模型重新解读' : '生成解读';
     if (button.disabled) return;
     node('model-status').textContent = currentModel
-        ? (button.hidden ? '' : `当前模型 ${modelLabel(currentModel)}。发送脱敏指标与异常证据 ID。`)
+        ? (button.hidden ? '' : `当前模型 ${modelLabel(currentModel)}。整份报告解读仅发送脱敏文本；异常补查可按设置发送截图。`)
         : '模型服务尚未配置。';
 }
 
@@ -1512,7 +1570,7 @@ async function refreshModelConfiguration() {
     const config = await api('/config', { cache: 'no-store' });
     if (request !== modelConfigRequest) return;
     currentModel = config.model_configured
-        ? { provider: config.model_provider || 'openai-compatible', model: config.model_name || '' }
+        ? { provider: config.model_provider || 'openai-compatible', model: config.model_name || '', image_input: config.model_image_input === 'text' ? 'text' : 'auto' }
         : null;
     if (!node('report').hidden) renderModelStatus();
 }

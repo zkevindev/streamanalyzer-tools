@@ -86,6 +86,14 @@
           <input id="settings-model" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" required>
         </div>
         <div class="field">
+          <label for="settings-image-input">补查截图输入</label>
+          <select id="settings-image-input" aria-describedby="image-input-hint">
+            <option value="auto">自动图文，不支持图片时回退文本</option>
+            <option value="text">仅文本</option>
+          </select>
+          <p class="hint" id="image-input-hint">自动图文会向所选模型发送异常截图与时序；整份报告解读仍为文本。测试连接只验证文本请求，图片能力在实际补查时确认。</p>
+        </div>
+        <div class="field">
           <label for="settings-key">API Key</label>
           <input id="settings-key" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" aria-describedby="key-hint">
           <p class="hint" id="key-hint">API Key 保存在系统凭据库。</p>
@@ -115,6 +123,7 @@
     const endpoint = el('settings-endpoint');
     const model = el('settings-model');
     const key = el('settings-key');
+    const imageInput = el('settings-image-input');
     const clearKey = el('clear-key');
     const testButton = el('test-settings');
     const closeButton = el('close-settings');
@@ -200,7 +209,7 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           provider: provider.value, base_url: endpoint.value.trim(), model: model.value.trim(),
-          api_key: key.value.trim(), clear_api_key: clearKey.checked,
+          api_key: key.value.trim(), clear_api_key: clearKey.checked, image_input: imageInput.value,
         }),
       });
     }
@@ -227,6 +236,7 @@
         provider.value = result.provider || '';
         endpoint.value = result.base_url || '';
         model.value = result.model || '';
+        imageInput.value = result.image_input === 'text' ? 'text' : 'auto';
         updateFieldHints();
         setFieldsDisabled(false);
         setStatus(result.warning || '', Boolean(result.warning));
@@ -309,7 +319,7 @@
       setStatus('正在连接模型服务…');
       try {
         const result = await postSettings('/model-settings/test', test.signal);
-        if (testingSettings === test) setStatus(`连接成功 · ${result.elapsed_ms} ms`);
+        if (testingSettings === test) setStatus(`文本连接成功 · ${result.elapsed_ms} ms。图片能力在实际异常补查解读时确认。`);
       } catch (error) {
         if (testingSettings === test) setStatus(error.message, true);
       } finally {

@@ -1,0 +1,63 @@
+// Build ./cmd/server and ./internal/diagnostic/testdata/rtsp-stall-fixture.
+// Requires Node22+, Chrome, FFmpeg and FFprobe. Never touches desktop credentials.
+const assert=require('node:assert/strict'),http=require('node:http'),fs=require('node:fs/promises'),os=require('node:os'),path=require('node:path');
+const {spawn}=require('node:child_process'),{once}=require('node:events'),{createHash}=require('node:crypto'),{setTimeout:delay}=require('node:timers/promises');
+async function until(fn,seconds=25){for(let i=0;i<seconds*10;i++){const v=await fn();if(v)return v;await delay(100);}throw Error('Timed out');}
+async function stop(child){if(!child||child.exitCode!==null)return;child.kill('SIGTERM');await Promise.race([once(child,'exit'),delay(2000)]);if(child.exitCode===null)child.kill('SIGKILL');}
+(async()=>{
+ const binary=process.env.STREAMANALYZER_TEST_SERVER,fixtureBinary=process.env.STREAMANALYZER_RTSP_STALL_FIXTURE;assert.ok(binary&&fixtureBinary,'Set server and RTSP fixture binary paths');
+ const directory=await fs.mkdtemp(path.join(os.tmpdir(),'streamanalyzer-model-images-'));const calls=[],providerErrors=[],results=[];let phase,app,fixture,chrome,ws,logs='';
+ const provider=http.createServer(async(req,res)=>{try{
+  let body='';for await(const chunk of req)body+=chunk;const request=JSON.parse(body),content=request.messages.find(v=>v.role==='user').content;
+  const blocks=Array.isArray(content)?content:[],input=JSON.parse(blocks.length?blocks[0].text:content),images=blocks.filter(v=>v.type==='image_url');
+  const observed=[];for(let i=0;i<images.length;i++){const uri=images[i].image_url.url;assert.ok(uri.startsWith('data:image/jpeg;base64,'));const jpeg=Buffer.from(uri.split(',')[1],'base64'),reference=input.image_evidence[i];assert.equal(jpeg[0],255);assert.equal(jpeg[1],216);assert.equal(jpeg.length,reference.bytes);assert.equal(createHash('sha256').update(jpeg).digest('hex'),reference.sha256);observed.push({id:reference.id,bytes:jpeg.length,sha256:reference.sha256});}
+  assert.ok(!body.includes('rtsp://')&&!body.includes('source_ip'));
+  const selected=input.stall_investigations?.[0];assert.ok(selected&&selected.buffer_samples.length>0&&selected.rtsp_media,'numeric player/RTP evidence missing');
+  if(images.length){assert.equal(images.length,3);assert.equal(input.image_pixels_provided,true);assert.equal(selected.image_pixels_provided,true);assert.ok(input.findings.some(v=>v.id===input.image_evidence[0].id));}
+  else assert.equal(Boolean(input.image_pixels_provided),false);
+  calls.push({phase:phase.name,images:observed,mode:images.length?'vision':'text'});
+  if(phase.name==='unsupported'&&images.length){res.writeHead(400,{'Content-Type':'application/json'});res.end(JSON.stringify({error:{code:'unsupported_image_input',message:'This model does not support images.'}}));return;}
+  const evidenceID=images.length?input.image_evidence[0].id:input.findings[0].id;
+  const answer={summary:'已结合本次输入核对截图与时序',hypotheses:[{claim:'源流内容仍需结合接收时序验证',evidence_ids:[evidenceID],next_check:'对照源端发送记录'}],input_evidence:{mode:'vision',images:[{id:'invented-image'}]}};
+  res.setHeader('Content-Type','application/json');res.end(JSON.stringify({choices:[{message:{content:JSON.stringify(answer)}}]}));
+ }catch(error){providerErrors.push(error.message);res.writeHead(500,{'Content-Type':'application/json'});res.end(JSON.stringify({error:'fixture assertion failed'}));}});
+ provider.listen(0,'127.0.0.1');await once(provider,'listening');
+ const reservation=http.createServer();reservation.listen(0,'127.0.0.1');await once(reservation,'listening');const port=reservation.address().port;await new Promise(r=>reservation.close(r));const base=`http://127.0.0.1:${port}`;
+ const api=async(method,url,body)=>{const r=await fetch(base+url,{method,headers:body?{'Content-Type':'application/json'}:{},body:body?JSON.stringify(body):undefined});const value=await r.json();assert.ok(r.ok,JSON.stringify(value));return value;};
+ const bytesAt=async url=>Buffer.from(await(await fetch(base+url)).arrayBuffer());
+ try{
+  const profile=path.join(directory,'chrome');chrome=spawn(process.env.CHROME_BIN||'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',['--headless=new','--no-first-run','--autoplay-policy=no-user-gesture-required',`--user-data-dir=${profile}`,'--remote-debugging-port=0','about:blank'],{stdio:'ignore'});
+  const debug=await until(()=>fs.readFile(path.join(profile,'DevToolsActivePort'),'utf8').catch(()=>'')),tabs=await(await fetch(`http://127.0.0.1:${debug.split('\n')[0]}/json/list`)).json();ws=new WebSocket(tabs.find(v=>v.type==='page').webSocketDebuggerUrl);await once(ws,'open');
+  let sequence=0;const pending=new Map(),errors=[];ws.addEventListener('message',({data})=>{const m=JSON.parse(data);if(m.id){const p=pending.get(m.id);pending.delete(m.id);m.error?p.reject(m.error):p.resolve(m.result);}else if(m.method==='Runtime.exceptionThrown')errors.push(m.params);});
+  const cdp=(method,params={})=>new Promise((resolve,reject)=>{pending.set(++sequence,{resolve,reject});ws.send(JSON.stringify({id:sequence,method,params}));});
+  const evaluate=async expression=>{const r=await cdp('Runtime.evaluate',{expression,returnByValue:true,awaitPromise:true});if(r.exceptionDetails)throw Error(JSON.stringify(r.exceptionDetails));return r.result.value;};await cdp('Runtime.enable');
+  async function launch(next){await stop(app);phase=next;const config=path.join(directory,next.name+'.yaml');await fs.writeFile(config,`server:\n  addr: "127.0.0.1:${port}"\n  data_dir: ${JSON.stringify(path.join(directory,'data-'+next.name))}\n`);app=spawn(binary,['-config',config],{env:{...process.env,STREAMANALYZER_MODEL_PROVIDER:next.provider,STREAMANALYZER_MODEL_BASE_URL:`http://127.0.0.1:${provider.address().port}/v1`,STREAMANALYZER_MODEL_NAME:'images-'+next.name,STREAMANALYZER_MODEL_API_KEY:'test-key',STREAMANALYZER_MODEL_IMAGE_INPUT:next.input},stdio:['ignore','pipe','pipe']});for(const pipe of [app.stdout,app.stderr])pipe.on('data',d=>{logs=(logs+d).slice(-6000);});await until(async()=>{try{return(await api('GET','/api/diagnostics/config')).model_name==='images-'+next.name;}catch{return false;}});await cdp('Page.navigate',{url:base+'/diagnostics'});await until(()=>evaluate(`typeof renderInvestigation==='function'`).catch(()=>false));}
+  async function importZIP(buffer,label){const previous=new Set((await api('GET','/api/diagnostics/runs')).map(v=>v.id));const file=path.join(directory,label+'.zip');await fs.writeFile(file,buffer);const doc=await cdp('DOM.getDocument'),input=await cdp('DOM.querySelector',{nodeId:doc.root.nodeId,selector:'#archive'});await cdp('DOM.setFileInputFiles',{nodeId:input.nodeId,files:[file]});await evaluate(`document.getElementById('import').requestSubmit()`);return until(async()=>{const list=await api('GET','/api/diagnostics/runs');return list.find(v=>!previous.has(v.id));});}
+  async function completed(id){return until(async()=>{const d=await api('GET','/api/diagnostics/runs/'+id),item=d.report?.stall_investigations?.[0];return item?.explanation&&item.model_state==='complete'&&!['queued','running'].includes(item.status)?d:false;},60);}
+  let capturedBundle,originalRaw,originalAssets={};
+  for(const next of [{name:'vision',provider:'openai-compatible',input:'auto',mode:'vision'},{name:'deepseek',provider:'deepseek',input:'auto',mode:'text',fallback:'provider_text_only'},{name:'text',provider:'openai-compatible',input:'text',mode:'text',fallback:'disabled'},{name:'unsupported',provider:'openai-compatible',input:'auto',mode:'text',fallback:'images_unsupported'}]){
+   await launch(next);let run;
+   if(next.name==='vision'){
+    fixture=spawn(fixtureBinary,[],{stdio:['ignore','pipe','inherit']});let ready='';const source=await new Promise((resolve,reject)=>{fixture.once('error',reject);fixture.stdout.on('data',v=>{ready+=v;const end=ready.indexOf('\n');if(end>=0)resolve(JSON.parse(ready.slice(0,end)));});});
+    await evaluate(`document.getElementById('protocol').value='rtsp';document.getElementById('protocol').dispatchEvent(new Event('change'));document.getElementById('url').value=${JSON.stringify(source.url)};document.getElementById('seconds').value='12';document.getElementById('analyze-playback').checked=true;document.getElementById('sample').requestSubmit()`);
+    run=await until(async()=>{const rows=await api('GET','/api/diagnostics/runs');return rows.find(v=>v.mode==='sample');});const detail=await until(async()=>{const d=await api('GET','/api/diagnostics/runs/'+run.id);return d.report?.player?.state==='complete'?d:false;},23);const index=detail.report.player.stalls.findIndex(v=>v.duration_ms>2000);assert.ok(index>=0);const stats=await(await fetch(source.status_url)).json();assert.equal(stats.plays,1);await stop(fixture);fixture=undefined;
+    await api('POST',`/api/diagnostics/runs/${run.id}/stalls`,{stall_index:index+1});
+   }else{run=await importZIP(capturedBundle,next.name+'-input');await api('POST',`/api/diagnostics/runs/${run.id}/stalls/S001/explain`,{});}
+   const detail=await completed(run.id),item=detail.report.stall_investigations[0],audit=item.explanation.input_evidence;assert.equal(audit.version,1);assert.equal(audit.mode,next.mode);assert.equal(audit.requested_mode,next.input);assert.equal(audit.fallback_code||'',next.fallback||'');assert.equal(audit.images.length,next.mode==='vision'?3:0);assert.equal(audit.attempted_images?.length||0,next.name==='unsupported'?3:0);assert.equal(item.media.assets.length,4);
+   for(const asset of item.media.assets){const data=await bytesAt(`/api/diagnostics/runs/${run.id}/stall-assets/S001/${asset.name.split('/').at(-1)}`);if(next.name==='vision')originalAssets[asset.name]=data;else assert.ok(data.equals(originalAssets[asset.name]));}
+   if(next.name==='vision'){
+    for(const ref of audit.images){const measured=calls.find(v=>v.phase==='vision'&&v.images.length).images.find(v=>v.id===ref.id);assert.equal(measured.sha256,ref.sha256);assert.ok(originalAssets[ref.name]);const dims=await evaluate(`new Promise((resolve,reject)=>{const i=new Image();i.onload=()=>resolve([i.naturalWidth,i.naturalHeight]);i.onerror=reject;i.src='data:image/jpeg;base64,'+${JSON.stringify(originalAssets[ref.name].toString('base64'))};})`);assert.ok(dims[0]>=160&&dims[1]>=90);}
+    await api('POST',`/api/diagnostics/runs/${run.id}/explain`,{});assert.equal(calls.at(-1).mode,'text','global report unexpectedly sent images');originalRaw=await bytesAt(`/api/diagnostics/runs/${run.id}/dump`);
+   }
+   await evaluate(`selectRun(${JSON.stringify(run.id)})`);
+   await until(()=>evaluate(`document.getElementById('stall-investigation-results').textContent.includes(${JSON.stringify(next.mode==='vision'?'本次为图文解读':'本次为时序文本解读')})`));
+   if(next.name==='unsupported'){const text=await evaluate(`document.querySelector('.model-input-evidence').textContent`);assert.ok(text.includes('已尝试发送 3 张截图')&&!text.includes('未发送截图像素'));}
+   for(const ref of audit.images)assert.equal(await evaluate(`document.querySelectorAll('[id="case-${ref.id}"]').length`),1);
+   assert.equal(await evaluate(`new Set(Array.from(document.querySelectorAll('[id]')).map(v=>v.id)).size===document.querySelectorAll('[id]').length`),true);
+   const html=await(await fetch(base+`/api/diagnostics/runs/${run.id}/report.html`)).text();assert.ok(html.includes(next.mode==='vision'?'本次为图文解读':'本次为时序文本解读'));if(next.name==='unsupported')assert.ok(html.includes('已尝试发送 3 张截图'));
+   const bundle=await bytesAt(`/api/diagnostics/runs/${run.id}/evidence.zip`);if(next.name==='vision')capturedBundle=bundle;const imported=await importZIP(bundle,next.name+'-output');const replay=await api('GET','/api/diagnostics/runs/'+imported.id);assert.deepEqual(replay.report,detail.report);assert.ok(originalRaw.equals(await bytesAt(`/api/diagnostics/runs/${imported.id}/dump`)));
+   results.push({phase:next.name,input_evidence:audit,source_stopped:true,exact_report_and_assets:true});
+  }
+  assert.equal(providerErrors.length,0,JSON.stringify(providerErrors));assert.equal(errors.length,0,JSON.stringify(errors));assert.equal(calls.length,6);console.log(JSON.stringify({result:'PASS',results,calls}));
+ }catch(error){console.error(logs);throw error;}finally{ws?.close();await stop(fixture);await stop(chrome);await stop(app);await new Promise(r=>provider.close(r));await fs.rm(directory,{recursive:true,force:true,maxRetries:5,retryDelay:100});}
+})().catch(error=>{console.error(error);process.exitCode=1;});

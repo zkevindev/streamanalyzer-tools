@@ -53,6 +53,62 @@ func (p *ChatCompletions) Explain(ctx context.Context, report Report) (Explanati
 	return p.parse(answer, report)
 }
 
+func (p *ChatCompletions) SupportsImages() bool {
+	return p.identity.Provider != ProviderDeepSeek
+}
+
+func (p *ChatCompletions) ExplainWithImages(ctx context.Context, report Report, images []ModelImage) (Explanation, error) {
+	if len(images) == 0 {
+		return p.Explain(ctx, report)
+	}
+	if err := validateModelImages(images); err != nil {
+		return Explanation{}, err
+	}
+	if !p.SupportsImages() {
+		return Explanation{}, ErrModelImagesUnsupported
+	}
+	data, err := modelInputWithImages(report, images)
+	if err != nil {
+		return Explanation{}, err
+	}
+	type imageURL struct {
+		URL string `json:"url"`
+	}
+	type block struct {
+		Type     string    `json:"type"`
+		Text     string    `json:"text,omitempty"`
+		ImageURL *imageURL `json:"image_url,omitempty"`
+	}
+	type message struct {
+		Role    string `json:"role"`
+		Content any    `json:"content"`
+	}
+	content := []block{{Type: "text", Text: string(data)}}
+	for _, image := range images {
+		content = append(content, block{Type: "text", Text: modelImageLabel(image)}, block{Type: "image_url", ImageURL: &imageURL{URL: "data:image/jpeg;base64," + modelImageBase64(image)}})
+	}
+	request := struct {
+		Model    string    `json:"model"`
+		Messages []message `json:"messages"`
+	}{Model: p.identity.Model, Messages: []message{{Role: "system", Content: explanationPrompt}, {Role: "user", Content: content}}}
+	headers := make(map[string]string)
+	if p.apiKey != "" {
+		headers["Authorization"] = "Bearer " + p.apiKey
+	}
+	var response struct {
+		Choices []struct {
+			Message *chatMessage `json:"message"`
+		} `json:"choices"`
+	}
+	if err := p.postImages(ctx, "/chat/completions", headers, request, &response); err != nil {
+		return Explanation{}, err
+	}
+	if len(response.Choices) == 0 || response.Choices[0].Message == nil {
+		return Explanation{}, fmt.Errorf("%w: 缺少可用的模型响应", ErrProvider)
+	}
+	return p.parse(response.Choices[0].Message.Content, report)
+}
+
 func (p *ChatCompletions) testConnection(ctx context.Context) error {
 	_, err := p.complete(ctx, connectionProbeSystem, connectionProbeInput, 64)
 	return err
