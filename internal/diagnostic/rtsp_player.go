@@ -20,31 +20,32 @@ import (
 
 const rtspLegacyPreviewArchiveVersion = 3
 const rtspPreviewArchiveVersion = 4
-const rtspPreviewCodecCapabilitiesVersion = 2
+const rtspPreviewCodecCapabilitiesVersion = 3
 const rtspPlayerSchemaVersion = 6
 
 // RTSPPreviewReport describes the local remux pipeline, not a decoded source
 // frame or source A/V synchronisation. The wire archive remains authoritative.
 type RTSPPreviewReport struct {
-	Version                  int    `json:"version"`
-	CodecCapabilitiesVersion int    `json:"codec_capabilities_version,omitempty"`
-	VideoOutputCodec         string `json:"video_output_codec,omitempty"`
-	AudioOutputCodec         string `json:"audio_output_codec,omitempty"`
-	VideoTransform           string `json:"video_transform,omitempty"`
-	AudioTransform           string `json:"audio_transform,omitempty"`
-	State                    string `json:"state"`
-	ReasonCode               string `json:"reason_code,omitempty"`
-	ClockAlignment           string `json:"clock_alignment"`
-	VideoTrackID             int    `json:"video_track_id,omitempty"`
-	AudioTrackID             int    `json:"audio_track_id,omitempty"`
-	VideoCodec               string `json:"video_codec,omitempty"`
-	AudioCodec               string `json:"audio_codec,omitempty"`
-	VideoReason              string `json:"video_reason,omitempty"`
-	AudioReason              string `json:"audio_reason,omitempty"`
-	VideoAUs                 int    `json:"video_aus"`
-	AudioAUs                 int    `json:"audio_aus"`
-	PacketErrors             int    `json:"packet_errors"`
-	DroppedPackets           int    `json:"dropped_packets"`
+	G711                     *RTSPG711PreviewReport `json:"g711,omitempty"`
+	Version                  int                    `json:"version"`
+	CodecCapabilitiesVersion int                    `json:"codec_capabilities_version,omitempty"`
+	VideoOutputCodec         string                 `json:"video_output_codec,omitempty"`
+	AudioOutputCodec         string                 `json:"audio_output_codec,omitempty"`
+	VideoTransform           string                 `json:"video_transform,omitempty"`
+	AudioTransform           string                 `json:"audio_transform,omitempty"`
+	State                    string                 `json:"state"`
+	ReasonCode               string                 `json:"reason_code,omitempty"`
+	ClockAlignment           string                 `json:"clock_alignment"`
+	VideoTrackID             int                    `json:"video_track_id,omitempty"`
+	AudioTrackID             int                    `json:"audio_track_id,omitempty"`
+	VideoCodec               string                 `json:"video_codec,omitempty"`
+	AudioCodec               string                 `json:"audio_codec,omitempty"`
+	VideoReason              string                 `json:"video_reason,omitempty"`
+	AudioReason              string                 `json:"audio_reason,omitempty"`
+	VideoAUs                 int                    `json:"video_aus"`
+	AudioAUs                 int                    `json:"audio_aus"`
+	PacketErrors             int                    `json:"packet_errors"`
+	DroppedPackets           int                    `json:"dropped_packets"`
 }
 
 type rtspPreviewPacket struct {
@@ -64,6 +65,9 @@ type rtspPreview struct {
 	hevc                       *rtspHEVCPreview
 	audio                      *format.MPEG4Audio
 	opus                       *rtspOpusPreview
+	g711                       *rtspG711Encoder
+	g711Lookup                 func() (string, error)
+	g711HeaderReady            chan struct{}
 	videoDecoder               *rtph264.Decoder
 	audioDecoder               *rtpmpeg4audio.Decoder
 	sps, pps                   []byte
@@ -188,12 +192,46 @@ func (p *rtspPreview) start(client *gortsplib.Client, desc *description.Session)
 			}
 		}
 	}
-	if !p.hasVideo() && !p.hasAudio() {
-		p.fail("codec_unsupported")
-		p.report.State = "unsupported"
+	p.startG711(client, desc)
+	if p.g711 != nil {
+		go func() {
+			<-p.g711.initialized
+			p.begin()
+			close(p.g711HeaderReady)
+		}()
+	} else {
+		p.begin()
+	}
+}
+
+// begin publishes the FLV header only once local audio capability is known.
+// Native PLAY and wire recording proceed while optional tool checks run.
+func (p *rtspPreview) begin() {
+	p.mu.Lock()
+	if p.g711 != nil {
+		p.g711.mu.Lock()
+		if p.g711.failed {
+			p.report.AudioReason = p.g711.report.ReasonCode
+		}
+		p.g711.mu.Unlock()
+	}
+	if p.failed {
+		p.mu.Unlock()
 		close(p.done)
 		return
 	}
+	if !p.hasVideo() && !p.hasAudio() {
+		reason := "codec_unsupported"
+		if p.g711 != nil {
+			reason = p.report.AudioReason
+		}
+		p.failLocked(reason)
+		p.report.State = "unsupported"
+		p.mu.Unlock()
+		close(p.done)
+		return
+	}
+	p.mu.Unlock()
 	p.dts.Initialize()
 	flags := byte(0)
 	if p.hasVideo() {
@@ -269,6 +307,7 @@ func (p *rtspPreview) finish() RTSPPreviewReport {
 	close(p.queue)
 	p.mu.Unlock()
 	<-p.done
+	p.finishG711()
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if !p.failed && p.report.State != "ready" {
@@ -286,7 +325,7 @@ func (p *rtspPreview) finish() RTSPPreviewReport {
 			p.report.VideoReason = "no_random_access"
 		}
 	}
-	if p.hasAudio() && p.report.AudioAUs == 0 {
+	if p.g711 == nil && p.hasAudio() && p.report.AudioAUs == 0 {
 		p.report.AudioReason = "no_media"
 	}
 	if p.player.StreamDropped() && !p.failed {
@@ -483,7 +522,7 @@ func validRTSPPreview(p *RTSPPreviewReport, tracks []RTSPTrackMetrics) bool {
 		return false
 	}
 	if p.Version == 1 {
-		if p.CodecCapabilitiesVersion != 0 || p.VideoOutputCodec != "" || p.AudioOutputCodec != "" || p.VideoTransform != "" || p.AudioTransform != "" {
+		if p.G711 != nil || p.CodecCapabilitiesVersion != 0 || p.VideoOutputCodec != "" || p.AudioOutputCodec != "" || p.VideoTransform != "" || p.AudioTransform != "" {
 			return false
 		}
 	} else {
@@ -501,9 +540,12 @@ func validRTSPPreview(p *RTSPPreviewReport, tracks []RTSPTrackMetrics) bool {
 			if p.AudioOutputCodec != "" || p.AudioTransform != "" {
 				return false
 			}
-		} else if p.AudioOutputCodec != p.AudioCodec || p.AudioTransform != "native_remux" {
+		} else if p.AudioTransform != "g711_to_aac" && (p.AudioOutputCodec != p.AudioCodec || p.AudioTransform != "native_remux") {
 			return false
 		}
+	}
+	if !validRTSPG711Preview(p, tracks) {
+		return false
 	}
 	switch p.State {
 	case "not_requested":
@@ -511,6 +553,12 @@ func validRTSPPreview(p *RTSPPreviewReport, tracks []RTSPTrackMetrics) bool {
 			return false
 		}
 	case "unsupported":
+		if p.G711 != nil && p.G711.State == "unavailable" {
+			if p.VideoTrackID != 0 || p.VideoAUs != 0 || p.AudioAUs != 0 {
+				return false
+			}
+			break
+		}
 		if p.VideoTrackID != 0 || p.AudioTrackID != 0 || p.VideoCodec != "" || p.AudioCodec != "" || p.VideoAUs != 0 || p.AudioAUs != 0 || p.PacketErrors != 0 || p.DroppedPackets != 0 {
 			return false
 		}
@@ -523,7 +571,7 @@ func validRTSPPreview(p *RTSPPreviewReport, tracks []RTSPTrackMetrics) bool {
 		return false
 	}
 	for _, code := range []string{p.ReasonCode, p.VideoReason, p.AudioReason} {
-		if !validRTSPPreviewReason(code) || p.Version == 1 && code == "missing_hevc_parameters" || code == "opus_configuration_unsupported" && (p.Version != 2 || p.CodecCapabilitiesVersion < 2) {
+		if !validRTSPPreviewReason(code) || p.Version == 1 && (code == "missing_hevc_parameters" || validRTSPG711Reason(code)) || code == "opus_configuration_unsupported" && (p.Version != 2 || p.CodecCapabilitiesVersion < 2) || p.Version == 2 && p.CodecCapabilitiesVersion < 3 && validRTSPG711Reason(code) {
 			return false
 		}
 	}
@@ -552,9 +600,12 @@ func validRTSPPreview(p *RTSPPreviewReport, tracks []RTSPTrackMetrics) bool {
 		}
 		return false
 	}
-	return (p.VideoCodec == "" || p.VideoCodec == "h264" || p.Version == 2 && p.CodecCapabilitiesVersion >= 1 && p.VideoCodec == "h265") && (p.AudioCodec == "" || p.AudioCodec == "aac" || p.Version == 2 && p.CodecCapabilitiesVersion >= 2 && p.AudioCodec == "opus") && selected(p.VideoTrackID, p.VideoCodec, "video") && selected(p.AudioTrackID, p.AudioCodec, "audio")
+	return (p.VideoCodec == "" || p.VideoCodec == "h264" || p.Version == 2 && p.CodecCapabilitiesVersion >= 1 && p.VideoCodec == "h265") && (p.AudioCodec == "" || p.AudioCodec == "aac" || p.Version == 2 && p.CodecCapabilitiesVersion >= 2 && p.AudioCodec == "opus" || p.Version == 2 && p.CodecCapabilitiesVersion >= 3 && (p.AudioCodec == "pcma" || p.AudioCodec == "pcmu")) && selected(p.VideoTrackID, p.VideoCodec, "video") && selected(p.AudioTrackID, p.AudioCodec, "audio")
 }
 func validRTSPPreviewReason(code string) bool {
+	if validRTSPG711Reason(code) {
+		return true
+	}
 	switch code {
 	case "", "missing_hevc_parameters", "no_track", "no_media", "codec_unsupported", "packetization_unsupported", "aac_configuration_unsupported", "opus_configuration_unsupported", "queue_limit", "missing_video_parameters", "no_random_access", "timestamp_unsupported", "access_unit_limit", "player_unavailable", "capture_setup_failed":
 		return true
@@ -563,6 +614,7 @@ func validRTSPPreviewReason(code string) bool {
 }
 
 func addRTSPPreviewFinding(report *Report) {
+	addRTSPG711Finding(report)
 	p := report.RTSP.Preview
 	if p == nil {
 		return
@@ -576,4 +628,6 @@ func addRTSPPreviewFinding(report *Report) {
 	}
 }
 
-func (p *rtspPreview) hasAudio() bool { return p.audio != nil || p.opus != nil }
+func (p *rtspPreview) hasAudio() bool {
+	return p.audio != nil || p.opus != nil || p.g711 != nil && p.g711.available()
+}

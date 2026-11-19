@@ -50,10 +50,10 @@ func serveDiagnosticPlayerSocket(c *gin.Context, player *diagnostic.PlayerSessio
 	previewClose := func() bool {
 		if reason := player.PreviewFailure(); reason != "" {
 			code := websocket.CloseInternalServerErr
-			if reason == "codec_unsupported" {
+			if reason == "codec_unsupported" || reason == "ffmpeg_unavailable" || reason == "ffmpeg_unsupported" || reason == "ffmpeg_start_failed" || reason == "g711_configuration_unsupported" {
 				code = websocket.CloseUnsupportedData
 			}
-			if reason == "queue_limit" {
+			if reason == "queue_limit" || reason == "g711_queue_limit" {
 				code = websocket.CloseTryAgainLater
 			}
 			closeSocket(code, "rtsp_preview:"+reason)

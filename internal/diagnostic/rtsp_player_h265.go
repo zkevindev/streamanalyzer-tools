@@ -197,6 +197,9 @@ func validRTSPPreviewArchiveVersion(metadata rtspArchiveMetadata, data []byte) b
 	if metadata.Preview == nil {
 		return false
 	}
+	if !validRTSPG711ArchiveFields(metadata.Preview, data) {
+		return false
+	}
 	if metadata.Version == rtspPreviewArchiveVersion {
 		return metadata.Preview.Version == 2
 	}
@@ -211,7 +214,7 @@ func validRTSPPreviewArchiveVersion(metadata rtspArchiveMetadata, data []byte) b
 	if json.Unmarshal(fields["preview"], &previewFields) != nil {
 		return false
 	}
-	for _, key := range []string{"codec_capabilities_version", "video_output_codec", "audio_output_codec", "video_transform", "audio_transform"} {
+	for _, key := range []string{"codec_capabilities_version", "video_output_codec", "audio_output_codec", "video_transform", "audio_transform", "g711"} {
 		if _, exists := previewFields[key]; exists {
 			return false
 		}

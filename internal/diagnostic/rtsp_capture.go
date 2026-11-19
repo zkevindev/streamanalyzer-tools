@@ -295,6 +295,10 @@ func sampleRTSPTransport(ctx context.Context, dir string, target *url.URL, secon
 }
 
 func sampleRTSPTransportWithTLS(ctx context.Context, dir string, target *url.URL, seconds int, protocol, selected string, config *tls.Config) (Report, error) {
+	return sampleRTSPTransportWithPreviewLookup(ctx, dir, target, seconds, protocol, selected, config, nil)
+}
+
+func sampleRTSPTransportWithPreviewLookup(ctx context.Context, dir string, target *url.URL, seconds int, protocol, selected string, config *tls.Config, lookup func() (string, error)) (Report, error) {
 	selected, err := rtspTransportArgument(protocol, selected)
 	if err != nil {
 		return Report{}, err
@@ -368,6 +372,7 @@ func sampleRTSPTransportWithTLS(ctx context.Context, dir string, target *url.URL
 	var preview *rtspPreview
 	if player := capturePlayer(ctx); player != nil {
 		preview = newRTSPPreview(player)
+		preview.g711Lookup = lookup
 		capture.metadata.Version = rtspPreviewArchiveVersion
 	}
 	var desc *description.Session
@@ -432,6 +437,7 @@ func sampleRTSPTransportWithTLS(ctx context.Context, dir string, target *url.URL
 		}
 		client.Close()
 	}
+	receiveEndMS := capture.now()
 	if preview != nil {
 		if !preview.started {
 			preview.fail("capture_setup_failed")
@@ -443,6 +449,9 @@ func sampleRTSPTransportWithTLS(ctx context.Context, dir string, target *url.URL
 		capture.metadata.Preview = &result
 	}
 	observation.ElapsedMS = capture.now()
+	if capture.metadata.Version == rtspPreviewArchiveVersion {
+		observation.ElapsedMS = receiveEndMS
+	}
 	capture.mu.Lock()
 	observation.EndReason = capture.reason
 	if observation.EndReason == "" {

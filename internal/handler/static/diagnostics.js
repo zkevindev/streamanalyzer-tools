@@ -48,7 +48,22 @@ const rtspPreviewNote = '原生 RTSP/RTP 采样不依赖浏览器预览。未记
 const rtspPreviewStates = { ready: '已输出媒体', unsupported: '编码或封装暂不支持', failed: '本机转封装未完成', not_requested: '未请求预览' };
 const rtspPreviewReasons = { no_track: '未选择对应轨道', no_media: '未输出对应媒体', codec_unsupported: '首版仅支持 H.264 / AAC-LC', packetization_unsupported: 'RTP 打包方式不支持', aac_configuration_unsupported: 'AAC 配置不支持（需 AAC-LC、1024 采样、单/双声道）', queue_limit: '本机预览队列达到上限', missing_video_parameters: '缺少有效 SPS/PPS', no_random_access: '未取得可用 IDR 随机接入点', timestamp_unsupported: '媒体时间戳或 DTS 不可转换', access_unit_limit: '媒体访问单元达到上限', player_unavailable: '本机播放器已停止接收', capture_setup_failed: '原生播放准备或 PLAY 未完成' };
 const rtspPreviewClockNote = '同次采样的 RTP 在本机转封装为 FLV，不另建拉流连接。音视频使用接收端 RTP 共同时间基准，不代表已验证源端音画同步；输出访问单元数不是解码或呈帧数。浏览器解码能力仍需实际播放验证。';
+const rtspG711States = { ready: '已输出 AAC', no_media: '未输出音频', unavailable: '本机转码不可用', failed: '本机转码失败' };
+const rtspG711Reasons = {
+    ffmpeg_unavailable: '未找到 FFmpeg，G.711 音频预览不可用', ffmpeg_unsupported: '本机 FFmpeg 不支持所需的 AAC 转码输出',
+    ffmpeg_start_failed: '本机 FFmpeg 音频编码器无法启动', ffmpeg_failed: '本机 G.711 音频转码进程失败',
+    ffmpeg_output_invalid: 'AAC 输出与编码时序元数据不一致，已停止预览', ffmpeg_drain_timeout: '音频编码器结束排空超时，已停止预览',
+    g711_configuration_unsupported: 'G.711 采样率或声道配置不受本版支持', g711_packet_invalid: 'G.711 包大小或声道采样长度超出本版预览范围',
+    g711_queue_limit: '本机 G.711 转码队列达到上限，原始采样继续', g711_timeline_discontinuity: 'G.711 RTP 时钟或 SSRC 出现较大不连续，未重新归零音频',
+    g711_silence_limit: '已达到按 RTP 缺口补入静音的上限', g711_sample_limit: '音频样本时间范围达到预览上限',
+    g711_player_unavailable: '本机播放器已停止接收 G.711 转码输出', audio_no_media: '没有得到可供预览的 G.711 音频输出',
+};
+const rtspG711ClockNote = 'G.711 在本机经 FFmpeg 有损转码为 AAC，原始 RTP 不变。样本数按每声道统计；输入、补静音和迟到丢弃使用输入采样率，输出与编码预延迟/填充使用输出采样率。补静音依据 RTP 时间缺口生成。首个编码输出耗时从开始处理首个输入包起计。本机工具检查、首个编码输出和排空耗时不属于网络阶段。';
 function rtspPreviewReason(code, preview) {
+    if (preview?.version === 2 && preview.codec_capabilities_version >= 3) {
+        if (code === 'codec_unsupported') return '本版支持 H.264 / H.265 / AAC-LC / Opus，并可将 G.711 转码为 AAC；其他编码预览暂不支持';
+        if (rtspG711Reasons[code]) return rtspG711Reasons[code];
+    }
     if (preview?.version === 2 && preview.codec_capabilities_version >= 2 && code === 'codec_unsupported') return '本版支持 H.264 / H.265 / AAC-LC / Opus；其他编码预览暂不支持';
     if (preview?.version === 2 && preview.codec_capabilities_version >= 2 && code === 'opus_configuration_unsupported') return 'Opus 预览仅支持单/双声道和映射族 0';
     if (preview?.version === 2 && code === 'codec_unsupported') return '本版支持 H.264 / H.265 / AAC-LC；其他编码预览暂不支持';
@@ -59,7 +74,7 @@ function renderRTSPPreview(metrics) {
     const preview = metrics?.preview;
     target.replaceChildren();
     if (!preview) { node('rtsp-capability').textContent = rtspPreviewNote; return; }
-    node('rtsp-capability').textContent = rtspPreviewClockNote;
+    node('rtsp-capability').textContent = rtspPreviewClockNote + (preview.g711 ? ' ' + rtspG711ClockNote : '');
     const entries = [
         ['本机转封装状态', rtspPreviewStates[preview.state] || '未记录'], ['预览原因', rtspPreviewReason(preview.reason_code, preview)],
         ['预览视频', preview.video_track_id ? `#${preview.video_track_id} · ${preview.video_codec}` : '未选择'], ['视频说明', rtspPreviewReason(preview.video_reason, preview)],
@@ -69,8 +84,20 @@ function renderRTSPPreview(metrics) {
     if (preview.version === 2) entries.push(
         ['编码能力版本', preview.codec_capabilities_version ?? '未记录'],
         ['视频预览输出', preview.video_output_codec || '未选择'], ['视频处理', preview.video_transform === 'native_remux' ? '原生转封装' : preview.video_transform || '未选择'],
-        ['音频预览输出', preview.audio_output_codec || '未选择'], ['音频处理', preview.audio_transform === 'native_remux' ? '原生转封装' : preview.audio_transform || '未选择'],
+        ['音频预览输出', preview.audio_output_codec || '未选择'], ['音频处理', preview.audio_transform === 'g711_to_aac' ? '本机 G.711 → AAC 转码' : preview.audio_transform === 'native_remux' ? '原生转封装' : preview.audio_transform || '未选择'],
     );
+    if (preview.g711) {
+        const g = preview.g711;
+        const observed = (value, suffix = '') => value == null ? '未观测' : `${value}${suffix}`;
+        entries.push(
+            ['G.711 转码状态', rtspG711States[g.state] || '未记录'], ['G.711 转码原因', rtspPreviewReason(g.reason_code, preview)], ['本机编码器', g.encoder || '未记录'],
+            ['输入采样率', observed(g.input_sample_rate, ' Hz')], ['输出采样率', observed(g.output_sample_rate, ' Hz')], ['音频声道', observed(g.channels)],
+            ['输入 G.711 包', observed(g.input_packets)], ['输入样本', observed(g.input_samples)], ['按 RTP 缺口补静音样本', observed(g.inserted_silence_samples)],
+            ['迟到丢弃样本', observed(g.dropped_late_samples)], ['转码丢弃包', observed(g.dropped_packets)], ['转码包错误', observed(g.packet_errors)], ['时钟不连续次数', observed(g.timeline_resets)],
+            ['输出 AAC 访问单元', observed(g.output_aus)], ['输出样本', observed(g.output_samples)], ['编码预延迟样本', observed(g.encoder_priming_samples)], ['编码填充样本', observed(g.encoder_padding_samples)],
+            ['工具检查耗时', observed(g.tool_check_ms, ' ms')], ['首个编码输出耗时', observed(g.startup_ms, ' ms')], ['编码器排空耗时', observed(g.drain_ms, ' ms')],
+        );
+    }
     renderMetrics('rtsp-preview-metrics', entries);
 }
 
