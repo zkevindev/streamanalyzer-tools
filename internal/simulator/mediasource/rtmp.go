@@ -22,11 +22,13 @@ import (
 )
 
 type RTMPConfig struct {
-	Fault string `json:"fault"`
-	Port  int    `json:"port"`
+	DelayKeyframeMS int    `json:"delay_keyframe_ms,omitempty"`
+	Fault           string `json:"fault"`
+	Port            int    `json:"port"`
 }
 
 type RTMPStatus struct {
+	Ingest *RTMPIngestStatus `json:"ingest,omitempty"`
 	RTMPConfig
 	Active      bool   `json:"active"`
 	URL         string `json:"url,omitempty"`
@@ -43,6 +45,7 @@ type RTMPManager struct {
 }
 
 type rtmpSource struct {
+	relay    *rtmpRelay
 	status   RTMPStatus
 	ctx      context.Context
 	cancel   context.CancelFunc
@@ -58,11 +61,12 @@ func (m *RTMPManager) Start(cfg RTMPConfig) (RTMPStatus, error) {
 	switch cfg.Fault {
 	case "":
 		cfg.Fault = "normal"
-	case "normal", "tls_untrusted", "handshake_stall", "app_reject", "stream_not_found", "no_media":
+	case "normal", "tls_untrusted", "handshake_stall", "app_reject", "stream_not_found", "no_media", "publish_relay":
 	default:
 		return RTMPStatus{}, ErrInvalid
 	}
-	if cfg.Port < 0 || cfg.Port > 65535 {
+	if cfg.Port < 0 || cfg.Port > 65535 || cfg.DelayKeyframeMS < 0 || cfg.DelayKeyframeMS > 15000 ||
+		cfg.Fault != "publish_relay" && cfg.DelayKeyframeMS != 0 {
 		return RTMPStatus{}, ErrInvalid
 	}
 	m.mu.Lock()
@@ -103,6 +107,9 @@ func (m *RTMPManager) Start(cfg RTMPConfig) (RTMPStatus, error) {
 		status: RTMPStatus{RTMPConfig: cfg, Active: true, URL: target.String()},
 		ctx:    ctx, cancel: cancel, listener: listen, served: make(chan struct{}), plan: plan,
 		clients: make(map[*rtmpWire]bool),
+	}
+	if cfg.Fault == "publish_relay" {
+		source.relay = &rtmpRelay{start: time.Now(), viewers: make(map[*rtmpWire]*relayViewer)}
 	}
 	source.server = rtmp.NewServer(&rtmp.ServerConfig{OnConnect: source.accept})
 	m.source = source
@@ -164,7 +171,11 @@ func (m *RTMPManager) stopLocked() RTMPStatus {
 func (s *rtmpSource) snapshot() RTMPStatus {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.status
+	status := s.status
+	if s.relay != nil {
+		status.Ingest = s.relay.snapshot()
+	}
+	return status
 }
 
 func (s *rtmpSource) accept(conn net.Conn) (io.ReadWriteCloser, *rtmp.ConnConfig) {
@@ -212,6 +223,7 @@ func (w *rtmpWire) Write(data []byte) (int, error) {
 func (w *rtmpWire) Close() error {
 	w.source.mu.Lock()
 	delete(w.source.clients, w)
+	w.source.dropRelayWire(w)
 	w.source.mu.Unlock()
 	return w.Conn.Close()
 }
@@ -232,6 +244,8 @@ func (s *rtmpSource) record(stage string, fault, played bool) {
 }
 
 type rtmpFixtureHandler struct {
+	publishID uint32
+	playID    uint32
 	rtmp.DefaultHandler
 	source *rtmpSource
 	wire   *rtmpWire
@@ -240,21 +254,75 @@ type rtmpFixtureHandler struct {
 
 func (h *rtmpFixtureHandler) OnServe(conn *rtmp.Conn) { h.conn = conn }
 
+func (h *rtmpFixtureHandler) OnClose() {
+	h.source.mu.Lock()
+	defer h.source.mu.Unlock()
+	h.source.dropRelayWire(h.wire)
+}
+
 func (h *rtmpFixtureHandler) OnConnect(_ uint32, cmd *message.NetConnectionConnect) error {
 	reject := h.source.status.Fault == "app_reject" || cmd.Command.App != "live"
 	h.source.record("app_connect", reject, false)
 	if reject {
 		return errors.New("fixture app rejected")
 	}
+	if h.source.relay != nil {
+		_ = h.wire.SetDeadline(time.Time{})
+	}
 	return nil
 }
 
-func (h *rtmpFixtureHandler) OnPublish(_ *rtmp.StreamContext, _ uint32, _ *message.NetStreamPublish) error {
-	return errors.New("fixture accepts PLAY")
+func (h *rtmpFixtureHandler) OnPublish(stream *rtmp.StreamContext, _ uint32, command *message.NetStreamPublish) error {
+	if h.source.relay == nil || command.PublishingName != "test" || h.playID != 0 || h.publishID != 0 {
+		return errors.New("RTMP publish is unavailable for this stream")
+	}
+	if err := h.source.reservePublisher(h.wire); err != nil {
+		return err
+	}
+	h.publishID = stream.StreamID
+	return nil
+}
+
+func (h *rtmpFixtureHandler) OnPublishStarted(_ *rtmp.StreamContext) {
+	h.source.publisherStarted(h.wire)
+}
+
+func (h *rtmpFixtureHandler) OnAudio(timestamp uint32, payload io.Reader) error {
+	return h.relayMedia(relayAudio, timestamp, payload)
+}
+
+func (h *rtmpFixtureHandler) OnVideo(timestamp uint32, payload io.Reader) error {
+	return h.relayMedia(relayVideo, timestamp, payload)
+}
+
+func (h *rtmpFixtureHandler) OnDeleteStream(_ uint32, command *message.NetStreamDeleteStream) error {
+	if h.source.relay != nil {
+		h.source.mu.Lock()
+		defer h.source.mu.Unlock()
+		if command.StreamID == h.publishID {
+			h.source.releasePublisher(h.wire)
+			h.publishID = 0
+		}
+		if command.StreamID == h.playID {
+			h.source.releaseViewer(h.wire)
+			h.playID = 0
+		}
+	}
+	return nil
+}
+
+func (h *rtmpFixtureHandler) OnFCUnpublish(_ uint32, command *message.NetStreamFCUnpublish) error {
+	if h.source.relay != nil && command.StreamName == "test" {
+		h.source.mu.Lock()
+		h.source.releasePublisher(h.wire)
+		h.source.mu.Unlock()
+		h.publishID = 0
+	}
+	return nil
 }
 
 func (h *rtmpFixtureHandler) OnPlay(_ *rtmp.StreamContext, _ uint32, play *message.NetStreamPlay) error {
-	reject := h.source.status.Fault == "stream_not_found" || play.StreamName != "test"
+	reject := h.source.status.Fault == "stream_not_found" || play.StreamName != "test" || h.source.relay != nil && (h.playID != 0 || h.publishID != 0)
 	h.source.record("play", reject, false)
 	if reject {
 		return rtmp.ErrStreamNotFound
@@ -270,6 +338,11 @@ func (h *rtmpFixtureHandler) OnPlayStarted(stream *rtmp.StreamContext) {
 		return
 	}
 	id := stream.StreamID
+	if s.relay != nil {
+		h.playID = id
+		h.playRelay(id)
+		return
+	}
 	go func() {
 		defer h.wire.Close()
 		start := time.Now()

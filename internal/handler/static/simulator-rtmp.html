@@ -19,7 +19,7 @@
     <p id="notice" class="error" role="alert" hidden></p>
     <div class="simulator-grid">
       <section class="panel">
-        <div class="panel-heading"><h2>拉流场景</h2></div>
+        <div class="panel-heading"><h2>推流与拉流场景</h2></div>
         <form id="form" class="panel-body">
           <fieldset id="config" disabled>
             <div class="sim-fields">
@@ -30,7 +30,9 @@
                 <option value="app_reject">应用拒绝连接</option>
                 <option value="stream_not_found">找不到流</option>
                 <option value="no_media">播放协商成功但无媒体</option>
+                <option value="publish_relay">接收本机推流并转发</option>
               </select></div>
+              <div id="keyframe-field" hidden><label for="keyframe-delay">延迟首个可转发关键帧（毫秒）</label><input id="keyframe-delay" type="number" min="0" max="15000" value="0" required></div>
               <div><label for="port">本机端口</label><input id="port" type="number" min="0" max="65535" value="0" required></div>
             </div>
           </fieldset>
@@ -46,6 +48,11 @@
             <div><dt>故障触发</dt><dd id="hits">0</dd></div>
           </dl>
           <dl class="onvif-addresses"><div><dt>播放地址</dt><dd id="url">—</dd></div><div><dt>最近阶段</dt><dd id="stage">—</dd></div></dl>
+          <div id="ingest" hidden>
+            <p class="field-hint">FFmpeg 可推送到同一地址。OBS 的服务器填写 <code id="ingest-server"></code>，串流密钥填 <code>test</code>。</p>
+            <p id="ingest-status" class="field-hint"></p>
+            <ol id="publication-list" class="session-timeline"></ol>
+          </div>
           <div class="sim-controls"><a class="button" id="open" href="/diagnostics?rtmp_simulator=1" hidden>打开排障工作台</a></div>
         </div>
       </section>
