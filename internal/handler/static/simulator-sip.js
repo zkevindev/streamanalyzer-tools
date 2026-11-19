@@ -127,6 +127,15 @@ function render(next) {
     clipCall = call?.call_id || '';
   }
   renderEvents(status.events || []);
+  const timer = status?.call?.session_timer;
+  const timerLabels = {negotiated:'已协商', refreshed:'已刷新', refresh_rejected:'刷新被拒', refresh_unanswered:'已忽略刷新',
+    refresh_timeout:'刷新超时', refresh_invalid:'刷新应答无效', refresh_withheld:'已暂缓主动刷新'};
+  el('session-timer-status').hidden = !timer;
+  el('session-timer-status').textContent = timer ? [
+    'Session-Expires ' + timer.interval_seconds + ' s', timer.refresher === 'local' ? '本机刷新' : '对端刷新',
+    timerLabels[timer.state], timer.sip_code && 'SIP ' + timer.sip_code, timer.expired && '会话已到期', timer.bye_at && (timer.bye_confirmed ? 'BYE 已确认' : '尝试发送 BYE'),
+    timer.last_refresh && '最近刷新 ' + new Date(timer.last_refresh).toLocaleTimeString(),
+  ].filter(Boolean).join(' · ') : '';
   updateButtons();
 }
 
@@ -223,6 +232,7 @@ el('registration-form').addEventListener('submit', event => {
   event.preventDefault();
   const config = Object.fromEntries(new FormData(event.currentTarget));
   config.port = Number(config.port);
+  config.session_seconds = Number(config.session_seconds);
   config.local_port = Number(config.local_port);
   config.simulate_nat_port = el('simulate-nat-port').checked;
   config.reliable_early = el('offer-reliable').checked;

@@ -77,6 +77,10 @@
             <label class="sim-check"><input id="simulate-nat-port" type="checkbox"> 本机 RTP 使用不同于 SDP 声明的端口</label>
             <label class="sim-check"><input id="offer-reliable" type="checkbox"> 对支持 100rel 的呼入等待 PRACK</label>
             <label class="sim-check"><input id="offer-early" type="checkbox"> 呼入振铃时发送 183 和早期测试音</label>
+            <div class="sim-fields">
+              <div><label for="session-timer">SIP 会话刷新</label><select id="session-timer" name="session_timer"><option value="">关闭</option><option value="normal">正常 UPDATE</option><option value="reject">拒绝对端 UPDATE</option><option value="timeout">忽略对端 UPDATE</option></select></div>
+              <div><label for="session-seconds">最短周期（秒）</label><input id="session-seconds" name="session_seconds" type="number" min="2" max="3600" value="90" required></div>
+            </div>
           </fieldset>
           <div class="sim-controls">
             <button id="register" type="submit" disabled>注册分机</button>
@@ -96,6 +100,7 @@
             <span id="call-state" class="status" role="status">空闲</span>
           </div>
           <div class="panel-body">
+            <p id="session-timer-status" class="field-hint" hidden></p>
             <form id="call-form" autocomplete="off">
               <label for="sip-target">被叫</label>
               <input id="sip-target" placeholder="分机号或 sip:用户@主机" maxlength="384" required disabled>
