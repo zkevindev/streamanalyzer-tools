@@ -165,6 +165,31 @@ func (m *Manager) Hangup() error {
 	return ErrConflict
 }
 
+func (m *Manager) SetAudioFault(direction string) error {
+	var mode audioFault
+	switch direction {
+	case "off":
+		mode = audioFaultOff
+	case "send":
+		mode = audioFaultSend
+	case "receive":
+		mode = audioFaultReceive
+	default:
+		return fmt.Errorf("%w，未知的 RTP 故障方向", ErrConfig)
+	}
+	a := m.current()
+	if a == nil {
+		return ErrConflict
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.ctx.Err() != nil || a.call == nil || a.call.status.State != "incall" {
+		return ErrConflict
+	}
+	a.call.audio.fault.Store(uint32(mode))
+	return nil
+}
+
 func (m *Manager) ReceivedAudio() ([]byte, error) {
 	if a := m.current(); a != nil {
 		a.mu.Lock()
@@ -225,8 +250,11 @@ func (a *agent) snapshot() Status {
 	status.Events = slices.Clone(status.Events)
 	if a.call != nil {
 		call := a.call.status
-		call.PacketsSent = a.call.audio.sent.Load()
-		call.PacketsReceived = a.call.audio.received.Load()
+		call.SendRTP = a.call.audio.sent.snapshot()
+		call.ReceiveRTP = a.call.audio.received.snapshot()
+		call.PacketsSent = call.SendRTP.Packets
+		call.PacketsReceived = call.ReceiveRTP.Packets
+		call.AudioFault = audioFault(a.call.audio.fault.Load()).String()
 		status.Call = &call
 	}
 	return status

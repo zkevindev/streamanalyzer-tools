@@ -51,6 +51,21 @@ func registerSIPRoutes(r *gin.Engine, simulator *sipphone.Manager) {
 	})
 	api.POST("/answer", sipCallAction(simulator, simulator.Answer))
 	api.POST("/hangup", sipCallAction(simulator, simulator.Hangup))
+	api.POST("/audio-fault", func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1024)
+		var input struct {
+			Direction string `json:"direction"`
+		}
+		if err := c.ShouldBindJSON(&input); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "RTP 故障配置格式无效"})
+			return
+		}
+		if err := simulator.SetAudioFault(input.Direction); err != nil {
+			sipActionError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, simulator.Status())
+	})
 	api.GET("/received.wav", func(c *gin.Context) {
 		wav, err := simulator.ReceivedAudio()
 		if err != nil {
