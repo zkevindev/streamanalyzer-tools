@@ -1,7 +1,7 @@
 'use strict';
 const api = '/api/simulators/rtmp';
 const el = id => document.getElementById(id);
-const stages = {tls: 'TLS', handshake: 'RTMP 握手', app_connect: '应用连接', play: '播放协商', receive: '媒体接收', publish: '发布成功', publisher_media: '收到发布媒体', publisher_keyframe: '关键帧可转发', publisher_disconnected: '推流端断开'};
+const stages = {tls: 'TLS', handshake: 'RTMP 握手', app_connect: '应用连接', play: '播放协商', receive: '媒体接收', publish: '发布成功', publisher_media: '收到发布媒体', publisher_keyframe: '关键帧可转发', publisher_disconnected: '推流端断开', publisher_stalled: '主路媒体停发'};
 let source;
 let busy = false;
 let generation = 0;
@@ -9,6 +9,8 @@ let generation = 0;
 function updateFields() {
   el('keyframe-field').hidden = el('fault').value !== 'publish_relay';
   el('keyframe-delay').disabled = el('keyframe-field').hidden;
+  el('primary-stall-field').hidden = el('fault').value !== 'publish_failover';
+  el('primary-stall').disabled = el('primary-stall-field').hidden;
 }
 
 function render() {
@@ -30,6 +32,13 @@ function render() {
   if (!ingest) return;
   el('ingest-server').textContent = (source.url || '').replace(/\/test$/, '');
   el('ingest-status').textContent = (ingest.publishing ? '正在接收推流' : '等待推流') + ' · ' + ingest.viewers + ' 路拉流';
+  const failover = ingest.failover;
+  el('backup-status').hidden = !failover;
+  el('backup-status').textContent = failover ? [
+    '备路推流 ' + failover.backup_url, failover.backup_published_at ? '备路已发布' : '等待备路发布',
+    failover.primary_connected && '主路连接仍在', failover.stall_detected_at && '已检测到主路停发',
+    failover.switched_at && '已转发备路首个关键帧，转发空窗 ' + failover.gap_ms + ' ms',
+  ].filter(Boolean).join(' · ') : '';
   el('publication-list').replaceChildren(...(ingest.sessions || []).slice().reverse().map(session => {
     const row = document.createElement('li');
     const start = new Date(session.published_at);
@@ -89,6 +98,7 @@ el('fault').addEventListener('change', updateFields);
 el('form').addEventListener('submit', event => {
   event.preventDefault();
   void change('/start', {fault: el('fault').value, port: Number(el('port').value),
+    stall_ms: el('fault').value === 'publish_failover' ? Number(el('primary-stall').value) : 0,
     delay_keyframe_ms: el('fault').value === 'publish_relay' ? Number(el('keyframe-delay').value) : 0});
 });
 el('stop').addEventListener('click', () => void change('/stop'));

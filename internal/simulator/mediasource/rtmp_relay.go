@@ -25,9 +25,10 @@ type RTMPPublication struct {
 }
 
 type RTMPIngestStatus struct {
-	Publishing bool              `json:"publishing"`
-	Viewers    int               `json:"viewers"`
-	Sessions   []RTMPPublication `json:"sessions"`
+	Failover   *RTMPFailoverStatus `json:"failover,omitempty"`
+	Publishing bool                `json:"publishing"`
+	Viewers    int                 `json:"viewers"`
+	Sessions   []RTMPPublication   `json:"sessions"`
 }
 
 type relayPacket struct {
@@ -56,6 +57,7 @@ type relayViewer struct {
 
 // Relay state is guarded by rtmpSource.mu.
 type rtmpRelay struct {
+	failover             *rtmpFailover
 	start                time.Time
 	publisher            *rtmpWire
 	viewers              map[*rtmpWire]*relayViewer
@@ -68,7 +70,13 @@ type rtmpRelay struct {
 }
 
 func (r *rtmpRelay) snapshot() *RTMPIngestStatus {
-	return &RTMPIngestStatus{Publishing: r.publisher != nil && r.currentPublication() != nil, Viewers: len(r.viewers), Sessions: slices.Clone(r.sessions)}
+	status := &RTMPIngestStatus{Publishing: r.publisher != nil && r.currentPublication() != nil, Viewers: len(r.viewers), Sessions: slices.Clone(r.sessions)}
+	if f := r.failover; f != nil {
+		report := f.report
+		report.PrimaryConnected = f.demoted != nil || (report.SwitchedAt.IsZero() && r.publisher != nil)
+		status.Failover = &report
+	}
+	return status
 }
 
 func (r *rtmpRelay) currentPublication() *RTMPPublication {
@@ -78,13 +86,21 @@ func (r *rtmpRelay) currentPublication() *RTMPPublication {
 	return &r.sessions[len(r.sessions)-1]
 }
 
-func (s *rtmpSource) reservePublisher(wire *rtmpWire) error {
+func (s *rtmpSource) reservePublisher(wire *rtmpWire, name string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.relay.publisher != nil || s.ctx.Err() != nil {
+	r := s.relay
+	if name == "backup" {
+		if f := r.failover; f != nil && f.standby == nil && f.report.SwitchedAt.IsZero() && s.ctx.Err() == nil {
+			f.standby = wire
+			return nil
+		}
+		return errors.New("the relay does not have an available standby slot")
+	}
+	if r.publisher != nil || s.ctx.Err() != nil {
 		return errors.New("the relay already has a publisher or has stopped")
 	}
-	s.relay.publisher = wire
+	r.publisher = wire
 	return nil
 }
 
@@ -92,22 +108,48 @@ func (s *rtmpSource) publisherStarted(wire *rtmpWire) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r := s.relay
+	if f := r.failover; f != nil && f.standby == wire && s.ctx.Err() == nil {
+		f.report.BackupPublishedAt = time.Now()
+		return
+	}
 	if r.publisher != wire || s.ctx.Err() != nil {
 		return
 	}
+	r.appendPublication(time.Now())
+	s.status.LastStage = "publish"
+}
+
+func (r *rtmpRelay) appendPublication(at time.Time) {
 	if len(r.sessions) == 8 {
 		r.sessions = slices.Delete(r.sessions, 0, 1)
 	}
 	r.publications++
-	r.sessions = append(r.sessions, RTMPPublication{Number: r.publications, PublishedAt: time.Now()})
-	s.status.LastStage = "publish"
+	r.sessions = append(r.sessions, RTMPPublication{Number: r.publications, PublishedAt: at})
 }
 
 func (s *rtmpSource) releasePublisher(wire *rtmpWire) {
 	r := s.relay
+	if f := r.failover; f != nil {
+		switch wire {
+		case f.standby:
+			f.standby, f.backupAudio, f.backupVideo = nil, nil, nil
+			f.report.BackupPublishedAt = time.Time{}
+		case f.demoted:
+			f.demoted = nil
+			for i := range r.sessions {
+				if r.sessions[i].Number == f.oldNumber {
+					r.sessions[i].DisconnectedAt = time.Now()
+					break
+				}
+			}
+		}
+	}
 	if r.publisher == wire {
 		if p := r.currentPublication(); p != nil {
 			p.DisconnectedAt = time.Now()
+		}
+		if f := r.failover; f != nil && f.report.SwitchedAt.IsZero() {
+			f.report.PrimaryLastMediaAt, f.report.StallDetectedAt = time.Time{}, time.Time{}
 		}
 		r.publisher, r.firstStamp, r.initAudio, r.initVideo = nil, nil, nil, nil
 		if s.status.Active {
@@ -198,12 +240,24 @@ func (s *rtmpSource) forwardMedia(wire *rtmpWire, kind byte, stamp uint32, data 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	r := s.relay
+	now := time.Now()
+	config, key := relayHeader(kind, data)
+	if f := r.failover; f != nil {
+		if f.demoted == wire {
+			return nil
+		}
+		if f.standby == wire && !s.standbyMedia(wire, kind, stamp, data, now, config, key) {
+			return nil
+		}
+		if f.report.SwitchedAt.IsZero() && r.publisher == wire && !config {
+			f.report.PrimaryLastMediaAt = now
+			f.report.StallDetectedAt = time.Time{}
+		}
+	}
 	p := r.currentPublication()
 	if r.publisher != wire || p == nil {
 		return errors.New("RTMP publisher is unavailable")
 	}
-	now := time.Now()
-	config, key := relayHeader(kind, data)
 	if !config && p.FirstMediaAt.IsZero() {
 		p.FirstMediaAt = now
 		s.status.LastStage = "publisher_media"
@@ -223,6 +277,12 @@ func (s *rtmpSource) forwardMedia(wire *rtmpWire, kind byte, stamp uint32, data 
 		p.RelayKeyframeAt = now
 		s.status.LastStage = "publisher_keyframe"
 	}
+	s.forwardPacket(kind, stamp, data, now, config)
+	return nil
+}
+
+func (s *rtmpSource) forwardPacket(kind byte, stamp uint32, data []byte, now time.Time, config bool) {
+	r := s.relay
 	if r.firstStamp == nil {
 		r.firstStamp = &stamp
 		r.bridgeStamp = max(r.lastRelayStamp+1, uint32(now.Sub(r.start).Milliseconds()))
@@ -249,7 +309,6 @@ func (s *rtmpSource) forwardMedia(wire *rtmpWire, kind byte, stamp uint32, data 
 		viewer.pending += len(data)
 		viewer.frames <- packet
 	}
-	return nil
 }
 
 func relayHeader(kind byte, data []byte) (config, key bool) {

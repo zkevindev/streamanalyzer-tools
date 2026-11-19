@@ -22,6 +22,7 @@ import (
 )
 
 type RTMPConfig struct {
+	StallMS         int    `json:"stall_ms,omitempty"`
 	DelayKeyframeMS int    `json:"delay_keyframe_ms,omitempty"`
 	Fault           string `json:"fault"`
 	Port            int    `json:"port"`
@@ -61,8 +62,15 @@ func (m *RTMPManager) Start(cfg RTMPConfig) (RTMPStatus, error) {
 	switch cfg.Fault {
 	case "":
 		cfg.Fault = "normal"
-	case "normal", "tls_untrusted", "handshake_stall", "app_reject", "stream_not_found", "no_media", "publish_relay":
+	case "normal", "tls_untrusted", "handshake_stall", "app_reject", "stream_not_found", "no_media", "publish_relay", "publish_failover":
 	default:
+		return RTMPStatus{}, ErrInvalid
+	}
+	if cfg.Fault == "publish_failover" && cfg.StallMS == 0 {
+		cfg.StallMS = 1500
+	}
+	if cfg.Fault == "publish_failover" && (cfg.StallMS < 500 || cfg.StallMS > 10000) ||
+		cfg.Fault != "publish_failover" && cfg.StallMS != 0 {
 		return RTMPStatus{}, ErrInvalid
 	}
 	if cfg.Port < 0 || cfg.Port > 65535 || cfg.DelayKeyframeMS < 0 || cfg.DelayKeyframeMS > 15000 ||
@@ -108,8 +116,13 @@ func (m *RTMPManager) Start(cfg RTMPConfig) (RTMPStatus, error) {
 		ctx:    ctx, cancel: cancel, listener: listen, served: make(chan struct{}), plan: plan,
 		clients: make(map[*rtmpWire]bool),
 	}
-	if cfg.Fault == "publish_relay" {
+	if cfg.Fault == "publish_relay" || cfg.Fault == "publish_failover" {
 		source.relay = &rtmpRelay{start: time.Now(), viewers: make(map[*rtmpWire]*relayViewer)}
+	}
+	if cfg.Fault == "publish_failover" {
+		backup := target
+		backup.Path = "/live/backup"
+		source.relay.failover = &rtmpFailover{report: RTMPFailoverStatus{StallMS: cfg.StallMS, BackupURL: backup.String()}}
 	}
 	source.server = rtmp.NewServer(&rtmp.ServerConfig{OnConnect: source.accept})
 	m.source = source
@@ -273,10 +286,10 @@ func (h *rtmpFixtureHandler) OnConnect(_ uint32, cmd *message.NetConnectionConne
 }
 
 func (h *rtmpFixtureHandler) OnPublish(stream *rtmp.StreamContext, _ uint32, command *message.NetStreamPublish) error {
-	if h.source.relay == nil || command.PublishingName != "test" || h.playID != 0 || h.publishID != 0 {
+	if h.source.relay == nil || (command.PublishingName != "test" && command.PublishingName != "backup") || h.playID != 0 || h.publishID != 0 {
 		return errors.New("RTMP publish is unavailable for this stream")
 	}
-	if err := h.source.reservePublisher(h.wire); err != nil {
+	if err := h.source.reservePublisher(h.wire, command.PublishingName); err != nil {
 		return err
 	}
 	h.publishID = stream.StreamID
@@ -312,7 +325,7 @@ func (h *rtmpFixtureHandler) OnDeleteStream(_ uint32, command *message.NetStream
 }
 
 func (h *rtmpFixtureHandler) OnFCUnpublish(_ uint32, command *message.NetStreamFCUnpublish) error {
-	if h.source.relay != nil && command.StreamName == "test" {
+	if h.source.relay != nil && (command.StreamName == "test" || command.StreamName == "backup") {
 		h.source.mu.Lock()
 		h.source.releasePublisher(h.wire)
 		h.source.mu.Unlock()
