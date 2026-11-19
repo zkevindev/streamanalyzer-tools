@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"time"
 )
 
 const maxReportExplanationBytes = 256 << 10
@@ -115,6 +116,10 @@ func canonicalReportJSONValue(decoder *json.Decoder, typ reflect.Type) bool {
 	}
 	if token == nil {
 		return true
+	}
+	if typ == reflect.TypeFor[time.Time]() {
+		_, ok := token.(string)
+		return ok
 	}
 	switch typ.Kind() {
 	case reflect.Struct:

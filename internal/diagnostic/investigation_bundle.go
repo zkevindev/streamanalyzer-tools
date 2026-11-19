@@ -144,6 +144,10 @@ func importedStallEvidence(dir string, report *Report, entries map[string]*zip.F
 		}
 		switch item.ModelState {
 		case "pending", "complete", "unconfigured", "failed", "changed":
+		case "not_requested":
+			if report.Manifest.AutomaticInvestigation == nil || item.Explanation != nil {
+				return fmt.Errorf("%w: 单次模型未请求状态缺少自动补查记录", ErrInvalid)
+			}
 		default:
 			return ErrInvalid
 		}

@@ -218,3 +218,10 @@ td:not(:first-child) { font-family: var(--font-data); }
 .model-priority { display: inline-block; padding: .1rem .4rem; margin-right: .4rem; border: 1px solid var(--border); border-radius: .25rem; font-size: .8rem; font-weight: 650; background: var(--surface-inset); }
 
 .model-input-evidence .timing-note { overflow-wrap: anywhere; }
+
+.automatic-investigation { border: 1px solid var(--border); background: var(--surface-inset); border-radius: .375rem; padding: .85rem; margin-block: 1rem; min-width: 0; }
+.automatic-investigation .report-title { margin-top: 0; }
+.automatic-investigation .timing-note { overflow-wrap: anywhere; }
+.automatic-stage { font-weight: 650; margin-bottom: .5rem; }
+.automatic-option { margin-top: 0; }
+.automatic-actions { margin-top: .65rem; }

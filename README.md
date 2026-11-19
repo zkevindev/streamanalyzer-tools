@@ -52,11 +52,17 @@ HTTP-FLV、HTTP MPEG-TS 和 HLS 的每次请求可以展开查看请求头、响
 
 播放器原始事件和缓冲样本写入证据包的 `player.json` 并校验 SHA-256，导入后离线重算播放器指标和卡顿区间，无需重新播放源流。HTML/JSON 报告包含相同结果；模型解读按需接收播放器指标、卡顿区间及对应证据。页面退出或网络中断前已保存的部分记录会保留，并标明采集状态。
 
+勾选「同时分析播放器体验」后，默认开启「采样后自动补查并汇总」，也可取消并保留手动流程。自动任务等待采样结束和播放器完整记录，最多等待 30 秒；随后按区间与采样窗口重合的时长选择关键缓冲卡顿或呈帧回调间隔，优先长区间，排除互相重合的候选，最多补查三次。相同长度优先缓冲卡顿，再按起点和序号排序。自动案例与手动案例共享八个上限，候选数不是新的卡顿次数。
+
+自动案例关联时序并提取片段、截图，不逐次请求模型，界面显示「未单独解读 · 见整体汇总」。证据提取完成后只发起一次整体汇总流程，沿用自动图文或仅文本策略；图文不支持时仍可单次回退文本。未选出可补查的同期异常时，继续按报告指标生成文本汇总；未配置模型时保留媒体产物并单独标明汇总未配置。播放器记录缺失、媒体提取不完整、队列已满或模型失败均显示具体状态，原始采样证据保留。
+
+「自动补查与整体汇总」分别展示任务阶段、候选与选择数量、原始观测区间、采样内重合时长、各案例媒体状态和整体汇总状态，可停止或按当前配置重新运行。`automatic-investigation.json` 随报告和证据包保存；导入只复盘原任务快照，不自动续跑或访问模型，本机重启也不会自动恢复未完成任务。显式重新运行会复用已持久化的证据，按当前模型配置处理。仍可手动补查其他区间，或对某个案例单独请求解读。
+
 采样和播放器记录保存完成后，可以在卡顿区间中选择一次卡顿，点击「补查证据」。后台任务关联卡顿前后 3 秒的音视频接收间隔、缓冲样本、最近的可确认关键帧、相关 HTTP 请求及已有异常，并给每条关联证据分配独立 ID。HLS 的独立连接仅作同时段参考；TS 等未确认到关键帧时会明确说明。每份报告最多补查 8 次卡顿，支持查看状态、停止任务、重试尚无媒体产物的任务和重新请求模型建议。
 
 媒体提取需要本机 FFmpeg 和 ffprobe，可放在程序旁边或加入 PATH；macOS 还会检查常见的 Homebrew/MacPorts 安装目录。工具只读取采样文件，在本地生成最多 15 秒的 H.264/AAC MP4 和异常前、附近、后的三张 JPEG。片段和截图来自源流，位置按播放器媒体时钟估算；HLS 使用采样分片的接收窗口定位。它们用于复核媒体内容，原网络等待保留在时序证据中。缺少工具、无可用时钟、纯音频、加密分片或解码失败时会显示具体原因，时序证据仍保留。原始 dump 不会被改写。
 
-已配置大模型时，补查会自动请求带证据引用的排查建议。「自动图文」会将选中异常的可用 JPEG 截图与关联时序发送给所选模型服务，最多三张，每张最多 512 KiB；不发送视频或原始流。「仅文本」只发送关联时序、媒体重建记录和证据 ID。未配置、连接失败或切换模型时，可以保留结果并稍后重新解读。
+已配置大模型时，手动补查会请求带证据引用的排查建议；自动流程只在证据收集后统一汇总。「自动图文」会将选中异常的可用 JPEG 截图与关联时序发送给所选模型服务，最多三张，每张最多 512 KiB；不发送视频或原始流。「仅文本」只发送关联时序、媒体重建记录和证据 ID。未配置、连接失败或切换模型时，可以保留结果并稍后重新解读。
 
 补查卡片与 HTML/JSON 报告记录本次请求设置、最终采用图文还是文本、回退原因，以及截图编号、媒体时间、大小和 SHA-256。例如 `S001-I001` 可作为图文建议的可信截图引用。图片请求被明确拒绝后，会区分「已尝试发送」与「最终文本」，不会声称从未发送截图。旧解读缺少这些记录时显示「该历史结果未记录截图输入方式」。输入记录和原有 JPEG 随证据包保存，导入会离线校验引用，无需再次调用模型。
 
@@ -98,11 +104,13 @@ JSON 报告及 SQLite 任务索引位于数据目录下的 `diagnostics/`。基�
 
 | 方法与路径 | 用途 |
 | --- | --- |
-| `POST /api/diagnostics/runs` | 用 `{"protocol":"hls","url":"https://live.example.com/index.m3u8","seconds":60,"playback":true}` 发起采样。协议可选 `http-flv`、`rtmp`、`rtsp`、`rtsps`、`hls`、`http-ts`、`udp-ts`、`rtp-ts`，省略时默认 `http-flv`。`playback` 可选；RTSP/RTSPS 使用同次原生采样重组的本机预览，编码能力和本机转码状态在报告中展示 |
+| `POST /api/diagnostics/runs` | 用 `{"protocol":"hls","url":"https://live.example.com/index.m3u8","seconds":60,"playback":true}` 发起采样。协议可选 `http-flv`、`rtmp`、`rtsp`、`rtsps`、`hls`、`http-ts`、`udp-ts`、`rtp-ts`，省略时默认 `http-flv`。`playback` 可选；RTSP/RTSPS 使用同次原生采样重组的本机预览，编码能力和本机转码状态在报告中展示；`"playback":true,"auto_investigate":true` 显式启用自动补查；API 省略 `auto_investigate` 时保持手动行为 |
 | `GET /api/diagnostics/runs` | 查看最近的采样和复盘记录 |
 | `GET /api/diagnostics/runs/:id` | 查询状态、规则报告和已生成的模型解读 |
 | `POST /api/diagnostics/runs/:id/stop` | 停止采样并保存已获取的数据 |
 | `POST /api/diagnostics/runs/:id/player` | 用会话授权头 `X-StreamAnalyzer-Player` 保存追加的播放器事件和缓冲样本；`complete` 后记录不可更改 |
+| `POST /api/diagnostics/runs/:id/automatic/retry` | 用 `{}` 显式重新运行已有自动流程，复用已保存证据；可在导入或服务中断后按当前模型配置处理 |
+| `POST /api/diagnostics/runs/:id/automatic/stop` | 用 `{}` 停止自动证据提取与汇总，保留已获得的产物 |
 | `POST /api/diagnostics/runs/:id/stalls` | 用 `{"stall_index":1}` 补查第 1 次缓冲卡顿，或 `{"interval_kind":"presentation_gap","interval_index":1}` 补查第 1 个呈帧回调间隔；无媒体产物的终态任务可加 `"retry":true` 重试 |
 | `POST /api/diagnostics/runs/:id/stalls/:caseID/explain` | 补全旧记录的本地分层方向，并使用当前模型重新生成该次卡顿的时序证据建议 |
 | `POST /api/diagnostics/runs/:id/stalls/:caseID/stop` | 停止正在进行的补查 |
@@ -624,3 +632,5 @@ Opus 预览回归可构建 `./cmd/server` 和 `./internal/diagnostic/testdata/op
 RTSP 卡顿媒体补查的真实浏览器回归：构建 `./cmd/server` 与 `./internal/diagnostic/testdata/rtsp-stall-fixture`，设置 `STREAMANALYZER_TEST_SERVER` 和 `STREAMANALYZER_RTSP_STALL_FIXTURE` 后执行 `node internal/handler/testdata/rtsp_stall_e2e.cjs`。测试使用同一 RTSP 会话发送 H.264/AAC，先播放三秒、暂停 RTP 四秒、再恢复连续媒体时间，分别验证 TCP/UDP 实际卡顿、停止源站后的 MP4/JPEG 生成、模型数字摘要、证据包导入后重新补查及四份产物逐字节一致。需要 Chrome、FFmpeg 与 FFprobe。
 
 多模态补查回归：使用上述服务器和 RTSP 暂停源二进制执行 `node internal/handler/testdata/model_images_e2e.cjs`。只采集一次原始流，停止源后验证真实 JPEG 与时序同时发送、整份报告图文汇总、DeepSeek 文本回退、显式仅文本、图片不支持后的单次文本重试，以及每种输入记录的报告和证据包离线一致性。`node internal/handler/testdata/model_images_ui.cjs` 使用隔离的设置 HTTP 服务验证桌面热更新、连接测试与图文/回退记录，不访问系统凭据库。
+
+自动补查端到端回归：使用同一服务器和 RTSP 暂停源二进制执行 `node internal/handler/testdata/auto_investigation_e2e.cjs`。真实浏览器通过表单提交默认自动选项，等待播放器最终记录；测试先停止源端，再提交未修改的最终记录，全程不手动调用补查或汇总 API，验证自动案例、真实 MP4/JPEG、一次整体模型汇总及完整证据包离线一致性。`automatic_ui.cjs` 单独验证默认联动、阶段/媒体/汇总分开展示、停止/重试、导入历史快照不轮询和显式重试后的运行状态。

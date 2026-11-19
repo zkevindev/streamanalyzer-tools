@@ -35,21 +35,23 @@ type Service struct {
 	modelMu sync.Mutex
 	model   *modelSelection
 
-	mu                 sync.Mutex
-	active             map[string]context.CancelFunc
-	closed             bool
-	workers            sync.WaitGroup
-	close              sync.Once
-	closeErr           error
-	imports            chan struct{}
-	flvReplaySlots     chan struct{}
-	flvReplayContext   context.Context
-	cancelFLVReplays   context.CancelFunc
-	persistence        sync.RWMutex
-	players            map[string]*playerSessionState
-	investigationJobs  map[string]context.CancelFunc
-	investigationSlots chan struct{}
-	investigationModel sync.Mutex
+	mu                  sync.Mutex
+	active              map[string]context.CancelFunc
+	closed              bool
+	workers             sync.WaitGroup
+	close               sync.Once
+	closeErr            error
+	imports             chan struct{}
+	flvReplaySlots      chan struct{}
+	flvReplayContext    context.Context
+	cancelFLVReplays    context.CancelFunc
+	persistence         sync.RWMutex
+	players             map[string]*playerSessionState
+	investigationJobs   map[string]context.CancelFunc
+	investigationSlots  chan struct{}
+	investigationModel  sync.Mutex
+	automaticJobs       map[string]*automaticInvestigationJob
+	automaticPlayerWait time.Duration
 }
 
 type modelSelection struct {
@@ -77,6 +79,7 @@ func Open(baseDir string, model Explainer) (*Service, error) {
 		root: root, db: db, client: captureClient(), rtspReplays: make(map[string]*rtspReplayOrigin),
 		active: make(map[string]context.CancelFunc), imports: make(chan struct{}, 2), flvReplaySlots: make(chan struct{}, 8),
 		players:           make(map[string]*playerSessionState),
+		automaticJobs:     make(map[string]*automaticInvestigationJob),
 		investigationJobs: make(map[string]context.CancelFunc), investigationSlots: make(chan struct{}, 2),
 	}
 	s.SetModel(model)
@@ -85,6 +88,10 @@ func Open(baseDir string, model Explainer) (*Service, error) {
 		return nil, err
 	}
 	if err := s.recoverInvestigations(); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err := s.recoverAutomaticInvestigations(); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -128,6 +135,7 @@ func initRunIndex(db *sql.DB) error {
 
 func (s *Service) Close() error {
 	s.close.Do(func() {
+		s.interruptAutomaticJobs()
 		s.StopFLVReplays()
 		s.StopRTSPReplays()
 		s.SetModel(nil)
@@ -142,6 +150,11 @@ func (s *Service) Close() error {
 		for _, cancel := range s.investigationJobs {
 			cancel()
 		}
+		for _, job := range s.automaticJobs {
+			job.interrupted = true
+			job.cancel()
+		}
+
 		s.mu.Unlock()
 		s.workers.Wait()
 		s.persistence.Lock()
@@ -162,6 +175,9 @@ func (s *Service) Close() error {
 			if err == nil && previousNetwork != playerNetworkRevision(report) {
 				if removeErr := os.Remove(filepath.Join(dir, explanationName)); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
 					err = removeErr
+				}
+				if err == nil {
+					err = invalidateAutomaticSummary(dir, &report)
 				}
 			}
 			if err == nil {
@@ -207,6 +223,9 @@ func (s *Service) ModelIdentity() ModelIdentity {
 }
 
 func (s *Service) Start(req SampleRequest) (Run, error) {
+	if req.AutoInvestigate && !req.Playback {
+		return Run{}, fmt.Errorf("%w: 自动补查需要启用播放器观测", ErrInvalid)
+	}
 	protocol := req.Protocol
 	if protocol == "" {
 		protocol = ProtocolHTTPFLV
@@ -229,7 +248,7 @@ func (s *Service) Start(req SampleRequest) (Run, error) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closed || len(s.active) >= maxSamples {
+	if s.closed || len(s.active) >= maxSamples || req.AutoInvestigate && len(s.automaticJobs) >= maxAutomaticJobs {
 		return Run{}, ErrBusy
 	}
 	run := newRun("sample", protocol, origin(target))
@@ -237,7 +256,14 @@ func (s *Service) Start(req SampleRequest) (Run, error) {
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		return Run{}, err
 	}
+	if req.AutoInvestigate {
+		if err := writeAutomaticRequest(dir, run.CreatedAt); err != nil {
+			_ = os.Remove(dir)
+			return Run{}, err
+		}
+	}
 	if err := s.insertRun(run); err != nil {
+		_ = os.Remove(filepath.Join(dir, automaticRequestName))
 		_ = os.Remove(dir)
 		return Run{}, err
 	}
@@ -265,6 +291,9 @@ func (s *Service) Start(req SampleRequest) (Run, error) {
 			s.mu.Lock()
 			delete(s.active, run.ID)
 			s.mu.Unlock()
+			if req.AutoInvestigate {
+				s.maybeStartAutomaticInvestigation(run.ID)
+			}
 		}()
 
 		if player != nil && player.Transport() != "hls" {
@@ -274,6 +303,13 @@ func (s *Service) Start(req SampleRequest) (Run, error) {
 		if err == nil {
 			s.persistence.Lock()
 			err = s.attachPlayerReport(dir, &report, run.ID)
+			if err == nil && req.AutoInvestigate {
+				state := initialAutomaticInvestigation(report, run.CreatedAt)
+				if automaticRequestCanceled(dir) {
+					finishAutomaticState(&state, "canceled", "canceled", "canceled", "自动补查已停止")
+				}
+				err = attachAutomaticInvestigation(dir, &report, state)
+			}
 			if err == nil {
 				err = persistReport(dir, report)
 				if err == nil && report.Player != nil {
@@ -390,8 +426,14 @@ func (s *Service) Import(source io.Reader) (Run, error) {
 
 func (s *Service) Detail(id string) (Detail, error) {
 	s.persistence.RLock()
-	defer s.persistence.RUnlock()
-	return s.detail(id)
+	detail, err := s.detail(id)
+	s.persistence.RUnlock()
+	if err == nil {
+		s.mu.Lock()
+		detail.AutomaticRunning = s.automaticJobs[id] != nil
+		s.mu.Unlock()
+	}
+	return detail, err
 }
 
 func (s *Service) detail(id string) (Detail, error) {
@@ -535,6 +577,10 @@ func (s *Service) WriteBundle(id string, w io.Writer) error {
 	if err == nil {
 		explanation, err = readReportBundleExplanation(dir, *detail.Report)
 	}
+	var automatic []byte
+	if err == nil && detail.Report.Manifest.AutomaticInvestigation != nil {
+		automatic, err = readAutomaticInvestigation(dir, *detail.Report.Manifest.AutomaticInvestigation)
+	}
 	// Snapshot the bounded recording before its revision can be cleaned up.
 	// A slow download must not hold up other recordings or capture reports.
 	s.persistence.RUnlock()
@@ -542,9 +588,9 @@ func (s *Service) WriteBundle(id string, w io.Writer) error {
 		return err
 	}
 	if player != nil {
-		return writeBundleSnapshotExplanation(w, dir, *detail.Report, bytes.NewReader(player), ledger, explanation, network)
+		return writeBundleSnapshotAutomatic(w, dir, *detail.Report, bytes.NewReader(player), ledger, explanation, automatic, player, network)
 	}
-	return writeBundleSnapshotExplanation(w, dir, *detail.Report, nil, ledger, explanation, network)
+	return writeBundleSnapshotAutomatic(w, dir, *detail.Report, nil, ledger, explanation, automatic, nil, network)
 }
 
 func (s *Service) OpenDump(id string) (*os.File, error) {

@@ -3,6 +3,7 @@ package diagnostic
 import (
 	"archive/zip"
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -74,6 +75,39 @@ func writeBundleSnapshot(w io.Writer, dir string, report Report, player io.Reade
 }
 
 func writeBundleSnapshotExplanation(w io.Writer, dir string, report Report, player io.Reader, ledger []byte, explanation *Explanation, networkSnapshot ...[]byte) error {
+	var playerSnapshot []byte
+	if report.Manifest.Player != nil {
+		var err error
+		if player != nil {
+			playerSnapshot, err = io.ReadAll(io.LimitReader(player, maxPlayerBytes+1))
+		} else if report.Player != nil {
+			playerSnapshot, err = os.ReadFile(filepath.Join(dir, playerVersionName(report.Player.Revision)))
+		} else {
+			return ErrInvalid
+		}
+		if err != nil || len(playerSnapshot) > maxPlayerBytes {
+			return fmt.Errorf("%w: 播放器快照无效", ErrInvalid)
+		}
+		player = bytes.NewReader(playerSnapshot)
+	}
+	var automatic []byte
+	if report.Manifest.AutomaticInvestigation != nil {
+		var err error
+		automatic, err = readAutomaticInvestigation(dir, *report.Manifest.AutomaticInvestigation)
+		if err != nil {
+			return err
+		}
+	}
+	return writeBundleSnapshotAutomatic(w, dir, report, player, ledger, explanation, automatic, playerSnapshot, networkSnapshot...)
+}
+
+func writeBundleSnapshotAutomatic(w io.Writer, dir string, report Report, player io.Reader, ledger []byte, explanation *Explanation, automatic, playerSnapshot []byte, networkSnapshot ...[]byte) error {
+	if err := validateAutomaticSnapshot(dir, report, automatic, playerSnapshot); err != nil {
+		return err
+	}
+	if err := validateAutomaticSummary(report, explanation); err != nil {
+		return err
+	}
 	if explanation != nil {
 		if err := validateReportBundleExplanation(dir, report, *explanation); err != nil {
 			return err
@@ -100,6 +134,9 @@ func writeBundleSnapshotExplanation(w io.Writer, dir string, report Report, play
 	}
 	archive := zip.NewWriter(w)
 	names := []string{manifestName, name, timelineName, reportName}
+	if report.Manifest.AutomaticInvestigation != nil {
+		names = append(names, automaticInvestigationName)
+	}
 	if explanation != nil {
 		names = append(names, explanationName)
 	}
@@ -123,6 +160,10 @@ func writeBundleSnapshotExplanation(w io.Writer, dir string, report Report, play
 			return err
 		}
 		switch filename {
+		case automaticInvestigationName:
+			if _, err := entry.Write(automatic); err != nil {
+				return err
+			}
 		case explanationName:
 			if err := json.NewEncoder(entry).Encode(explanation); err != nil {
 				return err
@@ -270,7 +311,13 @@ func readBundle(dir string, source io.Reader) (Report, error) {
 	if err := importedStallEvidence(dir, &report, entries); err != nil {
 		return Report{}, err
 	}
+	if err := importedAutomaticInvestigation(dir, &report, entries); err != nil {
+		return Report{}, err
+	}
 	if err := importedReportExplanation(dir, report, entries[explanationName]); err != nil {
+		return Report{}, err
+	}
+	if err := validateImportedAutomaticSummary(dir, report); err != nil {
 		return Report{}, err
 	}
 	return report, nil
@@ -342,7 +389,8 @@ func bundleEntries(files []*zip.File) (map[string]*zip.File, error) {
 		tsStreamName: maxStreamBytes, udpStreamName: maxStreamBytes, rtpStreamName: maxStreamBytes, rtspStreamName: maxStreamBytes,
 		reportName: 8 << 20, htmlName: 20 << 20, investigationName: maxInvestigationBytes,
 		playerName: maxPlayerBytes, playerNetworkName: maxPlayerNetworkBytes,
-		explanationName: maxReportExplanationBytes,
+		explanationName:            maxReportExplanationBytes,
+		automaticInvestigationName: maxAutomaticBytes,
 	}
 	entries := make(map[string]*zip.File, len(limits))
 	for _, file := range files {
@@ -369,7 +417,7 @@ func readManifest(entry *zip.File) (Manifest, error) {
 	}
 	defer reader.Close()
 	data, err := io.ReadAll(io.LimitReader(reader, maxManifestBytes+1))
-	if err != nil || len(data) > maxManifestBytes || json.Unmarshal(data, &manifest) != nil {
+	if err != nil || len(data) > maxManifestBytes || json.Unmarshal(data, &manifest) != nil || !validAutomaticManifestShape(data, manifest) {
 		return manifest, fmt.Errorf("%w: 清单无效", ErrInvalid)
 	}
 	legacyFLV := manifest.Protocol == ProtocolHTTPFLV && manifest.Version == legacyFLVSchemaVersion

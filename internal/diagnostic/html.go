@@ -54,6 +54,7 @@ var reportPage = template.Must(template.New("report").Funcs(template.FuncMap{
 	"reportModelHypotheses":  reportModelHypotheses,
 	"reportModelPriority":    reportModelPriorityLabel,
 	"reportModelHasPriority": reportModelHasPriority,
+	"automaticView":          automaticInvestigationView,
 	"videoSource":            playerVideoQualitySourceLabel,
 	"videoCount":             playerVideoObservedCount,
 	"videoMS":                playerVideoObservedTime,
@@ -86,7 +87,18 @@ var reportPage = template.Must(template.New("report").Funcs(template.FuncMap{
 	"presentationCount":      playerPresentationCountLabel,
 	"intervalName":           playerIntervalLabel,
 	"investigationTitle":     playerInvestigationIntervalTitle,
-}).Parse(`{{define "reportModelInputEvidence"}}
+}).Parse(`{{define "automaticInvestigation"}}
+<article id="automatic-investigation"><h2>自动补查与整体汇总</h2><p><strong>记录阶段 · {{.StateLabel}}</strong></p>
+<p class="timing-note">静态报告保留生成时的任务记录；打开报告或导入证据包不会启动自动任务。</p>{{with .Automatic.Reason}}<p class="timing-note">{{.}}</p>{{end}}
+<dl><dt>候选同期异常区间</dt><dd>{{if .PlanKnown}}{{.Automatic.CandidateCount}}{{else}}尚未记录选择结果{{end}}</dd>
+<dt>自动选择</dt><dd>{{if .PlanKnown}}{{len .Rows}} 个 / 最多 3 个{{else}}尚未记录选择结果{{end}}</dd>
+<dt>播放器记录</dt><dd>{{if gt .Automatic.PlayerRevision 0}}修订 #{{.Automatic.PlayerRevision}}{{else}}未完成{{end}}</dd>
+<dt>整体汇总状态</dt><dd>{{.SummaryLabel}}</dd></dl>
+<p class="timing-note">按采样内重合时长优先选择，跳过与已选区间重合的候选，最多提取 3 个案例；原始观测区间保持不变。候选数与选择数不是新的卡顿次数，单次案例只提取证据，模型统一汇总一次。</p>
+{{if and .PlanKnown (eq .Automatic.CandidateCount 0)}}<p class="timing-note">未选出可补查的同期异常；整体汇总仍可使用本次报告指标与规则证据。</p>{{end}}
+{{if .Rows}}<div class="scroll"><table><thead><tr><th>观测类型</th><th>原始区间 (ms)</th><th>采样内重合 (ms)</th><th>媒体产物</th><th>关联案例</th></tr></thead><tbody>{{range .Rows}}<tr><td>{{.Title}}</td><td>{{.StartMS}}–{{.EndMS}}</td><td>{{.OverlapMS}}</td><td>{{.MediaLabel}}</td><td>{{if .CaseHref}}<a href="{{.CaseHref}}">{{.CaseID}}</a>{{else}}{{if .CaseID}}{{.CaseID}}{{else}}尚未创建{{end}}{{end}}</td></tr>{{end}}</tbody></table></div>{{end}}
+{{if .HasSummary}}<p><a href="#report-model-heading">查看整体汇总</a></p>{{end}}
+</article>{{end}}{{define "reportModelInputEvidence"}}
 <section class="report-input-evidence"><p><strong>{{if eq .Audit.Mode "vision"}}本次为整份报告图文解读 · 全部 {{len .Cases}} 个补查案例的时序，选取 {{.SelectedCases}} 个案例 {{len .Used}} 张截图{{else}}本次为整份报告文本解读 · 全部 {{len .Cases}} 个补查案例的时序{{end}}</strong></p>
 <p class="timing-note">请求设置 {{if eq .Audit.RequestedMode "text"}}仅文本{{else}}自动图文{{end}} · {{if gt .Audit.PlayerRevision 0}}播放器记录修订 #{{.Audit.PlayerRevision}}{{else}}未记录播放器观测{{end}}{{with .Audit.FallbackCode}} · {{modelInputFallback .}}{{end}}</p>
 {{if .Attempted}}<p class="timing-note">已尝试发送 {{len .Attempted}} 张截图（来自 {{.SelectedCases}} 次异常）；图文请求不支持，最终汇总基于文本。</p>{{else if eq .Audit.Mode "text"}}<p class="timing-note">本次仅发送时序文本，未发送截图像素。</p>{{end}}
@@ -305,6 +317,7 @@ thead{color:#52657e;background:#f7f9fc}
 <body><main>
 {{if .BackURL}}<p><a href="{{.BackURL}}">返回排障工作台</a></p>{{end}}
 <h1>{{.Protocol}} 排障报告</h1>
+{{with automaticView .Report .Explanation}}{{template "automaticInvestigation" .}}{{end}}
 <p>规则版本 <code>{{.Report.RuleVersion}}</code></p>
 {{with .Report.Manifest.Observation}}
 <article><h2>采样概况</h2>
@@ -476,10 +489,10 @@ thead{color:#52657e;background:#f7f9fc}
 {{range .Clips}}<p><a href="{{.Href}}">下载源流片段 · {{.Bytes}} 字节</a></p>{{end}}
 {{if .Media.Assets}}<p class="timing-note">媒体文件保存在证据包中；独立 HTML 内嵌可用截图，片段通过下载链接或解压证据包后查看。</p>{{end}}
 <h3>模型建议（{{if modelInputVision .Explanation}}截图与时序证据{{else if .Media.RTSP}}时序与重建证据{{else}}时序证据{{end}}）</h3>
-{{if .Explanation}}{{if .ModelInput}}{{template "modelInputEvidence" .ModelInput}}{{else}}<p class="timing-note">该历史结果未记录截图输入方式。</p>{{end}}{{else}}<p class="timing-note">截图是否发送以实际解读记录为准。</p>{{end}}
+{{if eq .ModelState "not_requested"}}<p class="timing-note">未单独解读 · {{if $.Explanation}}<a href="#report-model-heading">见整体汇总</a>{{else}}整体汇总状态见自动补查任务记录{{end}}。</p>{{else if .Explanation}}{{if .ModelInput}}{{template "modelInputEvidence" .ModelInput}}{{else}}<p class="timing-note">该历史结果未记录截图输入方式。</p>{{end}}{{else}}<p class="timing-note">截图是否发送以实际解读记录为准。</p>{{end}}
 {{with .Explanation}}<p class="timing-note">解读来源 {{modelProvider .Provider}}{{if .Model}} · {{.Model}}{{end}}</p><p>{{.Summary}}</p>
 {{range .Hypotheses}}<h4>待验证 · {{.Claim}}</h4><p>{{range .EvidenceIDs}}<a href="#case-{{.}}">{{.}}</a> {{end}}</p><p>{{.NextCheck}}</p>{{end}}
-{{else}}<p>{{investigationModel .ModelState}}</p>{{end}}
+{{else}}{{if ne .ModelState "not_requested"}}<p>{{investigationModel .ModelState}}</p>{{end}}{{end}}
 {{with .ModelError}}<p class="timing-note">{{.}}</p>{{end}}
 </article>{{end}}{{end}}
 {{if eq .Report.Manifest.Protocol "hls"}}
@@ -577,7 +590,7 @@ thead{color:#52657e;background:#f7f9fc}
 </article>
 {{else}}<p>这次采样暂无规则触发。</p>{{end}}
 {{with .Explanation}}
-<h2>整份报告汇总{{with .ReportInputEvidence}}{{if eq .Mode "vision"}}（图文解读）{{else}}（文本解读）{{end}}{{end}}</h2>
+<h2 id="report-model-heading">整份报告汇总{{with .ReportInputEvidence}}{{if eq .Mode "vision"}}（图文解读）{{else}}（文本解读）{{end}}{{end}}</h2>
 <article><p><small>解读来源 {{modelProvider .Provider}}{{if .Model}} · {{.Model}}{{end}}</small></p>
 {{with $.ReportModelInput}}{{template "reportModelInputEvidence" .}}{{else}}<p class="timing-note">该历史汇总未记录截图输入方式。</p>{{end}}
 <p>{{.Summary}}</p>
@@ -1453,6 +1466,8 @@ func investigationAlignmentLabel(alignment string) string {
 
 func investigationModelLabel(state string) string {
 	switch state {
+	case "not_requested":
+		return "未单独解读 · 见整体汇总"
 	case "pending":
 		return "正在结合时序证据生成建议"
 	case "complete":
