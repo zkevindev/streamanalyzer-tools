@@ -214,10 +214,10 @@ function frameState(video, player) {
   };
 }
 
-async function sampleRTSPTCP(source, video, first, ready) {
+async function sampleRTSPPreview(source, video, first, ready, transport = 'tcp') {
   const startedAt = Date.now();
   const startedAtPerformanceMS = performance.now();
-  const run = await request(runs, {protocol: 'rtsp', url: source.stream_url, transport: 'tcp', seconds: first ? 9 : 5, playback: true});
+  const run = await request(runs, {protocol: 'rtsp', url: source.stream_url, transport, seconds: first ? 9 : 5, playback: true});
   const path = runs + '/' + run.id;
   let player;
   let frameAt = 0;
@@ -230,7 +230,7 @@ async function sampleRTSPTCP(source, video, first, ready) {
     player.start();
     const detail = await waitFor(async () => {
       const sample = await request(path);
-      return (sample.status !== 'running' || (ready ? ready() : !first && frameAt)) ? sample : null;
+      return (sample.status !== 'running' || (ready ? await ready() : !first && frameAt)) ? sample : null;
     }, first ? 9000 : 6500, 'RTSP 会话观测超时。');
     await request(path + '/player', player.finish(), run.player.token);
     player = null;
@@ -246,6 +246,48 @@ async function sampleRTSPTCP(source, video, first, ready) {
     if (player) await request(path + '/player', player.finish(), run.player.token).catch(() => {});
     const latest = await request(path).catch(() => null);
     if (latest?.status === 'running') await request(path + '/stop', null).catch(() => {});
+  }
+}
+
+async function runRTSPSourcePort(entry) {
+  let source;
+  const video = el('scenario-player');
+  if (!video.requestVideoFrameCallback) throw new Error('此场景需要浏览器提供逐帧呈现回调。');
+  let callback;
+  let firstFrame;
+  let recoveredFrame;
+  let restoredAt = 0;
+  const observe = (_, frame) => {
+    const now = Date.now();
+    if (!firstFrame) firstFrame = {at: now, time: frame.mediaTime};
+    if (restoredAt && !recoveredFrame && now > restoredAt && frame.mediaTime > firstFrame.time + 2.3) {
+      recoveredFrame = {at: now, time: frame.mediaTime};
+    }
+    callback = video.requestVideoFrameCallback(observe);
+  };
+  try {
+    source = await request(onvif + '/start', {bind_ip:'127.0.0.1', udp_source_fault_ms:2200});
+    video.hidden = false;
+    callback = video.requestVideoFrameCallback(observe);
+    progress('等待原端口出画、过滤异常端口及恢复…');
+    let fault;
+    const sample = await sampleRTSPPreview(source, video, true, async () => {
+      fault = (await request(onvif)).udp_source_fault;
+      restoredAt ||= Date.parse(fault?.restored_at) || 0;
+      return recoveredFrame;
+    }, 'udp');
+    entry.diagnostic_id = sample.id;
+    const evidence = sample.rtsp?.udp_source_evidence?.find(row => row.observed_port === fault?.alternate_port);
+    entry.evidence = {fault, evidence, first_rtp_ms:sample.first_rtp_ms, first_frame:firstFrame, recovered_frame:recoveredFrame, requests:sample.requests};
+    entry.passed = Boolean(evidence?.same_ip && evidence.negotiated_port === fault.negotiated_port &&
+      evidence.filtered_packets > 0 && Number.isFinite(sample.first_rtp_ms) && sample.first_rtp_ms < evidence.first_ms &&
+      evidence.restored_ms > evidence.last_ms && firstFrame && recoveredFrame);
+    entry.detail = entry.passed ? '过滤 ' + evidence.filtered_packets + ' 个异常来源 RTP · 原端口恢复呈帧 ' +
+      (recoveredFrame.at - restoredAt) + ' ms' : '缺少端口过滤或后续呈帧证据';
+  } finally {
+    if (callback != null) video.cancelVideoFrameCallback(callback);
+    if (source) await stopOwned(onvif, 'device_url', source.device_url).catch(() => {});
+    video.hidden = true;
   }
 }
 
@@ -283,7 +325,7 @@ async function runRTSPFallback(entry) {
     entry.evidence.reason = 'udp_first_rtp_timeout';
     progress('UDP 首包超时，回退到 TCP 并等待呈帧…');
     video.hidden = false;
-    const tcp = await sampleRTSPTCP(source, video, false);
+    const tcp = await sampleRTSPPreview(source, video, false);
     entry.evidence.tcp = tcp;
     entry.diagnostic_id = tcp.id;
     const state = await request(onvif);
@@ -324,7 +366,7 @@ async function runRTSPResolution(entry) {
     video.hidden = false;
     callback = video.requestVideoFrameCallback(observe);
     progress('等待同一 RTSP 会话呈现两种分辨率…');
-    const sample = await sampleRTSPTCP(source, video, true, () => frames.length >= 2);
+    const sample = await sampleRTSPPreview(source, video, true, () => frames.length >= 2);
     const state = await request(onvif);
     const track = sample.rtsp?.tracks?.find(item => item.kind === 'video');
     const configs = sample.rtsp?.preview?.video_configurations || [];
@@ -356,7 +398,7 @@ async function runRTSPReconnect(entry) {
     source = await request(onvif + '/start', {bind_ip: '127.0.0.1', rtsp_disconnect_ms: 3000});
     video.hidden = false;
     entry.evidence = {attempts};
-    const before = await sampleRTSPTCP(source, video, true);
+    const before = await sampleRTSPPreview(source, video, true);
     attempts.push(before);
     const state = await request(onvif);
     const outage = state.rtsp_outages?.find(item => item.profile === source.profiles[0].token);
@@ -367,7 +409,7 @@ async function runRTSPReconnect(entry) {
     progress('旧会话已断开，正在重新建立 RTSP 会话…');
     const recovered = await waitFor(async () => {
       if (attempts.length >= 12) throw new Error('已达到 RTSP 重连次数上限。');
-      const next = await sampleRTSPTCP(source, video, false);
+      const next = await sampleRTSPPreview(source, video, false);
       attempts.push(next);
       if (next.frame_at) return next;
       await new Promise(resolve => setTimeout(resolve, 350));
@@ -641,6 +683,7 @@ el('scenario-form').addEventListener('submit', async event => {
   notice();
   try {
     if (family === 'gb') await runGB(expected, entry);
+    else if (expected === 'source_port') await runRTSPSourcePort(entry);
     else if (expected === 'resolution') await runRTSPResolution(entry);
     else if (expected === 'fallback') await runRTSPFallback(entry);
     else if (family === 'rtsp') await runRTSPReconnect(entry);

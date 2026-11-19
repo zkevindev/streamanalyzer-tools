@@ -30,6 +30,7 @@ var (
 )
 
 type Config struct {
+	UDPSourceFaultMS       int    `json:"udp_source_fault_ms,omitempty"`
 	RecordingGapSeconds    int    `json:"recording_gap_seconds,omitempty"`
 	RTSPResolutionSwitchMS int    `json:"rtsp_resolution_switch_ms,omitempty"`
 	RTCPClockStepMS        int    `json:"rtcp_clock_step_ms,omitempty"`
@@ -106,6 +107,10 @@ func (c *Config) normalize() (net.IP, *net.Interface, error) {
 	if c.RTCPClockStepMS < -2000 || c.RTCPClockStepMS > 2000 || c.RTCPClockStepMS != 0 && (c.VideoGapMS != 0 || c.RTSPDisconnectMS != 0) {
 		return nil, nil, fmt.Errorf("%w，RTCP 时钟跳变需在 ±2000 ms 内并单独启用", ErrConfig)
 	}
+	if c.UDPSourceFaultMS != 0 && (c.UDPSourceFaultMS < 1000 || c.UDPSourceFaultMS > 5000 ||
+		c.SilentUDP || c.VideoGapMS != 0 || c.RTSPDisconnectMS != 0 || c.RTSPResolutionSwitchMS != 0 || c.RTCPClockStepMS != 0) {
+		return nil, nil, fmt.Errorf("%w，UDP 来源端口切换需在 1000–5000 ms 内并单独启用", ErrConfig)
+	}
 	if c.RecordingGapSeconds != 0 && (!c.RecordingFixture || c.RecordingGapSeconds < 2 || c.RecordingGapSeconds > 60) {
 		return nil, nil, fmt.Errorf("%w，录像缺口需为 2–60 秒并启用录像", ErrConfig)
 	}
@@ -146,6 +151,7 @@ func (c *Config) normalize() (net.IP, *net.Interface, error) {
 }
 
 type Status struct {
+	UDPSourceFault     *UDPSourceFaultStatus   `json:"udp_source_fault,omitempty"`
 	ResolutionSwitchAt time.Time               `json:"resolution_switch_at,omitzero"`
 	RTCPClockStepMS    int                     `json:"rtcp_clock_step_ms,omitempty"`
 	Recording          *RecordingFixtureStatus `json:"recording,omitempty"`
@@ -311,6 +317,10 @@ func (m *Manager) StartFiles(ctx context.Context, cfg Config, files [2]LocalVide
 func (c *camera) snapshot() Status {
 	status := c.status
 	status.Events = c.events.snapshot()
+	if c.video.sourceFault != nil {
+		fault := c.video.sourceFault.snapshot()
+		status.UDPSourceFault = &fault
+	}
 	if c.recording != nil {
 		status.Recording = c.recording.snapshot()
 	}
