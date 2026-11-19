@@ -28,6 +28,12 @@ API 中可用 `{"protocol":"rtsp","transport":"udp","url":"rtsp://camera.example
 
 RTSP/RTSPS 原生采样不依赖浏览器。勾选播放器分析后，同一次采样收到的 RTP 可在本机转封装为 FLV 预览，不另建 RTSP 拉流连接；首版支持 H.264（packetization-mode 0/1）和 RFC 3640 AAC-LC（1024 采样、单/双声道），不转码。H.265、Opus、G.711 等仍支持原生采样，预览不支持的音轨明确标记并静音。首屏、缓冲、卡顿、呈帧和页面调度记录沿用 `player.json`，与转封装状态一起保存在报告和证据包中；共同 RTP 时间基准由接收端建立，不等于验证了源端音画同步。原始 dump 仍为 `stream.rtsp.zip`，不替换为派生 FLV；本版 RTSP 补查保留同期 RTP 与播放器证据，源流片段/截图尚不支持。HTML/JSON 与模型只使用受控方法、状态、编码标签及数字证据，不展示 RTSP 地址路径、用户信息、认证头或 SDP 原文；来源只显示协议和主机。原始 ZIP 按上述边界保存服务端字节和 SDP，证据包导入后可离线重算，无需重新连接摄像头。
 
+排障工作台提供「ONVIF 设备发现」：选择本机 IPv4 网卡后搜索摄像头/NVR，选择设备并填写 ONVIF 凭据，读取 Profile，再选择 TCP/UDP 获取 RTSP 地址。地址只回填到采样表单，由用户核对后启动采样。未搜到设备时可手动输入服务地址（如 `http://192.168.1.64/onvif/device_service`）；组播发现通常限于本地网段，跨 VLAN 可使用手动地址。macOS 需允许应用访问本地网络。
+
+ONVIF 支持 WS-Security PasswordDigest、设备 UTC 偏差校正以及一次 HTTP Digest 挑战重试。凭据仅用于当前请求，不写入发现列表或磁盘；默认不把 ONVIF 凭据复制到 RTSP，勾选复用后也只允许相同主机。切换设备、Profile 或传输会取消过期请求，避免旧响应回填到新的选择。
+
+发现 API 位于 `/api/diagnostics/onvif`：`GET /interfaces`；`POST /discoveries`（`bind_ip`、1–10 秒）；`GET /discoveries/:id` 和 `POST /discoveries/:id/stop`；`POST /profiles`（设备或手动服务地址、凭据）；`POST /stream`（Profile、传输、凭据）。任务和选择状态短时保留，退出时关闭扫描及请求。
+
 传输流报告展示 TS 包长度、PID 与编码、PAT/PMT、TEI、连续计数、重复包、同步丢失以及 PCR/PES 时间戳检查。RTP 报告补充序列缺口、重复和乱序统计。序列缺口反映当前采样窗口中的接收结果。原始数据和到达时间同时保留，导入时重新运行这些检查。
 
 连接报告逐次记录 HTTP 请求及跳转响应，分别展示 302、200 等状态、单次请求耗时和首字节时间，并提供可观测的 DNS、TCP、TLS、发送请求、等待首字节和接收响应头的阶段耗时。HLS 的播放列表、初始化段及媒体分片请求也保留这些时序信息。RTMP 单独展示 TCP、TLS、协议握手、应用连接、创建流和播放协商阶段。
