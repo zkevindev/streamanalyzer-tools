@@ -297,7 +297,7 @@ function completePlayback(player, reason) {
     player.deadline = setTimeout(() => stopPlayback(player), 800);
 }
 
-function startPlayback(run, startedAt, startedAtPerformanceMS, seconds, hlsRecovery, hlsABR) {
+function startPlayback(run, startedAt, startedAtPerformanceMS, seconds, hlsRecovery, hlsABR, hlsLowLatency) {
     const grant = run.player;
     if (!grant) return;
     const player = { id: run.id, token: grant.token };
@@ -324,7 +324,7 @@ function startPlayback(run, startedAt, startedAtPerformanceMS, seconds, hlsRecov
         autoplay_blocked: playerStates.autoplay_blocked, unsupported: playerStates.unsupported, error: playerStates.error,
     };
     player.collector = new PlayerDiagnostics(video, grant, {
-        startedAt, startedAtPerformanceMS, hlsRecovery, hlsABR,
+        startedAt, startedAtPerformanceMS, hlsRecovery, hlsABR, hlsLowLatency,
         onQualities(levels, selectQuality) {
             if (activePlayer !== player || levels.length < 2) return;
             quality.replaceChildren(new Option('自动', '-1'), ...levels.map((level, index) => new Option(level.height + 'p', index)));
@@ -912,7 +912,7 @@ function renderPlayerReport(player, elapsed) {
 }
 
 const playerNetworkRowLimit = 200;
-const playerNetworkKinds = { playlist: '播放列表', media: '媒体分片', init: '初始化段', key: '密钥', auxiliary: '辅助资源' };
+const playerNetworkKinds = { playlist: '播放列表', media: '媒体分片', part: '低延迟 Part', init: '初始化段', key: '密钥', auxiliary: '辅助资源' };
 const playerNetworkOutcomes = { complete: '完成', http_error: '上游 HTTP 错误', transport_error: '传输错误', canceled: '已取消', timeout: '超时', incomplete: '未完成' };
 const playerNetworkOffset = (value) => value == null ? '未观测' : String(value);
 const playerNetworkBoundaryNote = '本地代理记录实际播放连接的上游请求：响应头、首段响应体和读取字节均在代理侧观测。结束偏移可能包含向播放器写出数据的时间；写出完成不代表浏览器已接收、解码或可播放。';
@@ -975,7 +975,7 @@ function renderPlayerNetworkRequests(requests, context = 'global') {
     }
     const shown = requests.slice(0, playerNetworkRowLimit);
     const table = renderTable(['请求', '类型', '资源标识', '列表序号', '方法', '开始偏移 (ms)', '上游响应头偏移 (ms)', '上游首段响应体偏移 (ms)', '代理结束 / 截至偏移 (ms)', '上游 HTTP', '上游读取字节', '结果'], shown.map((request) => [
-        `#${request.number}`, (playerNetworkKinds[request.kind] || request.kind || '未标注') + (request.rendition === 'audio' ? ' · 独立音轨' : ''), request.resource_id || '未标注', request.playlist_sequence ?? '—', request.method || '未标注',
+        `#${request.number}`, (playerNetworkKinds[request.kind] || request.kind || '未标注') + (request.blocking_reload ? ' · 请求阻塞式刷新' : '') + (request.rendition === 'audio' ? ' · 独立音轨' : ''), request.resource_id || '未标注', request.playlist_sequence ?? '—', request.method || '未标注',
         playerNetworkOffset(request.start_ms), playerNetworkOffset(request.header_ms), playerNetworkOffset(request.first_body_ms),
         `${playerNetworkOffset(request.end_ms)}${request.outcome === 'incomplete' ? '（截至）' : ''}`,
         request.http_status > 0 ? String(request.http_status) : '未观测', playerNetworkOffset(request.bytes), playerNetworkOutcomes[request.outcome] || request.outcome || '未标注',
@@ -1595,12 +1595,13 @@ bindForm('sample', async () => {
     const localSimulator = Boolean(simulatorURL && simulatorURL === url);
     const hlsRecovery = localSimulator && launchOptions.get('hls_recovery') === '1';
     const hlsABR = localSimulator && launchOptions.get('hls_abr') === '1';
+    const hlsLowLatency = localSimulator && launchOptions.get('hls_ll') === '1';
     const run = await api('/runs', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ protocol: node('protocol').value, transport: protocols[node('protocol').value]?.nativeRTSP ? node('rtsp-transport').value : undefined, url, seconds, playback }),
     });
     stopPlayback(activePlayer);
-    startPlayback(run, startedAt, startedAtPerformanceMS, seconds, hlsRecovery, hlsABR);
+    startPlayback(run, startedAt, startedAtPerformanceMS, seconds, hlsRecovery, hlsABR, hlsLowLatency);
     return run;
 });
 bindForm('import', () => {

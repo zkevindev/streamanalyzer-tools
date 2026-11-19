@@ -41,7 +41,7 @@
         <form id="hls-form" class="panel-body">
           <fieldset id="simulator-fields" disabled>
             <label for="mode">场景</label>
-            <select id="mode" name="mode"><option value="normal">正常点播</option><option value="live">滚动直播</option><option value="abr">双码率 fMP4 直播</option><option value="audio">独立音轨分片故障</option><option value="delay">分片延迟</option><option value="not_found">分片返回 404</option></select>
+            <select id="mode" name="mode"><option value="normal">正常点播</option><option value="live">滚动直播</option><option value="abr">双码率 fMP4 直播</option><option value="audio">独立音轨分片故障</option><option value="ll">低延迟直播 / Part 延迟</option><option value="delay">分片延迟</option><option value="not_found">分片返回 404</option></select>
             <div class="sim-fields">
               <div id="segment-field" hidden><label for="segment">分片序号</label><input id="segment" name="segment" type="number" value="4" min="1" max="12" required></div>
               <div id="delay-field" hidden><label for="delay-ms">延迟（毫秒）</label><input id="delay-ms" name="delay_ms" type="number" value="10000" min="500" max="15000" required></div>
@@ -65,7 +65,14 @@
           </dl>
           <p id="live-summary" class="field-hint" hidden></p>
           <ol id="playlist-samples" class="sim-events" hidden></ol>
-          <form id="live-fault-form" hidden>
+          <form id="part-fault-form" hidden>
+                <div class="sim-fields"><div><label for="part-delay-ms">Part 延迟（毫秒）</label>
+                  <input id="part-delay-ms" type="number" min="400" max="3000" value="1800" required></div>
+                  <div><button id="arm-part" class="secondary">安排下一次 Part 延迟</button></div>
+                </div>
+            </form>
+            <p id="ll-observation" class="muted field-hint" hidden></p>
+            <form id="live-fault-form" hidden>
             <fieldset id="live-fault-fields" disabled>
               <div class="sim-fields">
                 <div><label for="live-fault-kind">直播分片故障</label><select id="live-fault-kind"><option value="not_found">首次 404</option><option value="truncate">首次正文中断（HTTP 200）</option></select></div>

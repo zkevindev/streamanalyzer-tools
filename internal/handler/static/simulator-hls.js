@@ -2,7 +2,7 @@
 
 const api = '/api/simulators/hls';
 const el = id => document.getElementById(id);
-const modes = {normal: '正常点播', live: '滚动直播', abr: '双码率 fMP4 直播', audio: '独立音轨分片故障', delay: '分片延迟', not_found: '分片返回 404'};
+const modes = {normal: '正常点播', live: '滚动直播', abr: '双码率 fMP4 直播', audio: '独立音轨分片故障', ll: '低延迟直播 / Part 延迟', delay: '分片延迟', not_found: '分片返回 404'};
 let current;
 let busy = false;
 let generation = 0;
@@ -18,6 +18,8 @@ function updateFields() {
   el('stop').disabled = busy || !current?.active;
   el('freeze').disabled = busy || !current?.active;
   const fault = current?.live_fault;
+  const partial = current?.low_latency?.fault;
+  el('arm-part').disabled = busy || !current?.active || Boolean(partial && !partial.unblocked_at && Date.now() < Date.parse(partial.release_at) + 6000);
   el('live-fault-fields').disabled = busy || !current?.active || Boolean(fault && !fault.retry_at && !fault.expired);
 }
 
@@ -37,6 +39,17 @@ function render(status) {
   const abr = status.mode === 'abr';
   const audio = status.mode === 'audio';
   const canInject = live || audio;
+  const ll = status.low_latency;
+  el('part-fault-form').hidden = !ll || !status.active;
+  el('ll-observation').hidden = !ll;
+  const partial = ll?.fault;
+  el('ll-observation').textContent = ll ? [
+    '下一个 Part ' + ll.next_sequence + '/' + ll.next_part, '阻塞刷新 ' + ll.blocked_reloads + ' 次',
+    ll.last_reload_wait_ms != null && '最近刷新等待 ' + ll.last_reload_wait_ms + ' ms',
+    partial && ['故障 Part ' + partial.sequence + '/' + partial.part,
+      partial.unblocked_at ? '已返回' : partial.requested_at ? '延迟返回中' : '等待播放请求'].join(' · ')
+  ].filter(Boolean).join(' · ') : '';
+  if (status.active && ll) el('open-workbench').href += '&hls_ll=1';
   if (status.active && audio) el('open-workbench').href += '&hls_recovery=1';
   if (status.active && abr) el('open-workbench').href += '&hls_abr=1';
   el('open-recovery').hidden = !live;
@@ -124,6 +137,10 @@ el('live-fault-form').addEventListener('submit', event => {
     sequence: Number(el('live-fault-seq').value),
     audience: el('live-fault-audience').value,
   });
+});
+el('part-fault-form').addEventListener('submit', event => {
+  event.preventDefault();
+  void change('/part-delay', {delay_ms: Number(el('part-delay-ms').value)});
 });
 el('freeze').addEventListener('click', () => { void change('/freeze', {frozen: !current.frozen}); });
 el('stop').addEventListener('click', () => { void change('/stop'); });

@@ -333,6 +333,66 @@ async function runHLS(kind, entry) {
   }
 }
 
+async function runLLHLS(entry) {
+  const video = el('scenario-player');
+  let source;
+  let run;
+  let player;
+  try {
+    if (!globalThis.Hls?.isSupported()) throw new Error('此浏览器需要支持 hls.js 的媒体扩展。');
+    progress('启动低延迟直播并等待首次呈帧…');
+    source = await request(hls + '/start', {mode: 'll'});
+    run = await request(runs, {protocol: 'hls', url: new URL(source.playlist, location.origin).href, seconds: 22, playback: true});
+    entry.diagnostic_id = run.id;
+    if (!run.player) throw new Error('未返回播放配置。');
+    video.hidden = false;
+    player = new PlayerDiagnostics(video, run.player, {hlsLowLatency: true});
+    player.start();
+    await waitFor(() => frameState(video, player).presented > 0 && player.hlsLatencyMS(), 8500, '未观察到低延迟直播呈帧。');
+    const armed = await request(hls + '/part-delay', {delay_ms: 1800});
+    entry.evidence = {part_delay: armed.low_latency.fault};
+    progress('等待目标 Part 延迟返回并继续呈帧…');
+    const observation = await waitFor(async () => {
+      const state = await request(hls);
+      if (state.id !== source.id) throw new Error('本次直播源已被替换。');
+      entry.evidence.part_delay = state.low_latency?.fault;
+      return state.low_latency?.fault?.unblocked_at ? state.low_latency : null;
+    }, 9000, '未观测到播放器请求并收完目标 Part。');
+    const before = frameState(video, player);
+    const target = ((observation.fault.sequence - 1) * 5 + observation.fault.part) * 0.4;
+    const latency = await waitFor(() => {
+      const frame = frameState(video, player);
+      return frame.presented > before.presented && frame.time > Math.max(before.time + 0.2, target) ? player.hlsLatencyMS() : null;
+    }, 8000, '目标 Part 返回后未观察到继续呈帧和直播延迟。');
+    entry.evidence.live_latency_ms = latency;
+    entry.evidence.blocked_reloads = observation.blocked_reloads;
+    const path = runs + '/' + run.id;
+    await request(path + '/player', player.finish(), run.player.token);
+    player = null;
+    await request(path + '/stop', null);
+    const report = await waitFor(async () => {
+      const detail = await request(path);
+      return detail.report?.player_network ? detail.report : null;
+    }, 6000, '播放器证据生成超时。');
+    const rows = report.player_network.requests || [];
+    const blocked = rows.find(row => row.blocking_reload && row.outcome === 'complete' && row.end_ms - row.start_ms > 25);
+    const delayed = rows.find(row => row.kind === 'part' && row.outcome === 'complete' &&
+      row.header_ms - row.start_ms >= observation.fault.delay_ms - 400);
+    entry.evidence.requests = [blocked, delayed].filter(Boolean);
+    entry.passed = Boolean(blocked && delayed);
+    entry.detail = entry.passed ? '分别观测到阻塞刷新和 Part 等待 · 恢复后直播延迟 ' + latency + ' ms' :
+      '报告缺少阻塞刷新或 Part 延迟证据';
+  } finally {
+    if (player) await request(runs + '/' + run.id + '/player', player.finish(), run.player.token).catch(() => {});
+    if (run) {
+      const result = await request(runs + '/' + run.id).catch(() => null);
+      if (result?.status === 'running') await request(runs + '/' + run.id + '/stop', null).catch(() => {});
+    }
+    if (source) await stopOwned(hls, 'id', source.id).catch(() => {});
+    video.hidden = true;
+  }
+}
+
 el('scenario-form').addEventListener('submit', async event => {
   event.preventDefault();
   if (busy) return;
@@ -346,6 +406,7 @@ el('scenario-form').addEventListener('submit', async event => {
   try {
     if (family === 'gb') await runGB(expected, entry);
     else if (family === 'rtsp') await runRTSPReconnect(entry);
+    else if (expected === 'part_delay') await runLLHLS(entry);
     else await runHLS(expected, entry);
   } catch (error) {
     entry.detail = error.message;

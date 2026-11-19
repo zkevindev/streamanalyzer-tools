@@ -69,6 +69,26 @@ func registerHLSRoutes(r *gin.Engine, source *hlsorigin.Manager) {
 		}
 		c.JSON(http.StatusOK, status)
 	})
+	api.POST("/part-delay", func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1024)
+		var config struct {
+			DelayMS int `json:"delay_ms"`
+		}
+		if err := c.ShouldBindJSON(&config); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": hlsorigin.ErrConfig.Error()})
+			return
+		}
+		status, err := source.ArmPartDelay(config.DelayMS)
+		if err != nil {
+			code := http.StatusConflict
+			if errors.Is(err, hlsorigin.ErrConfig) {
+				code = http.StatusBadRequest
+			}
+			c.JSON(code, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, status)
+	})
 	api.POST("/stop", func(c *gin.Context) { c.JSON(http.StatusOK, source.Stop()) })
 	serve := func(c *gin.Context) { source.Serve(c.Writer, c.Request, c.Param("id"), c.Param("file")) }
 	api.GET("/stream/:id/:file", serve)

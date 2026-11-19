@@ -27,6 +27,7 @@ type PlayerNetworkRequest struct {
 	Number           int                `json:"number"`
 	ResourceID       string             `json:"resource_id"`
 	Kind             string             `json:"kind"`
+	BlockingReload   bool               `json:"blocking_reload,omitempty"`
 	Rendition        string             `json:"rendition,omitempty"`
 	Method           string             `json:"method"`
 	StartMS          int64              `json:"start_ms"`
@@ -89,10 +90,10 @@ func (n *playerNetwork) offset() int64 {
 }
 
 func (n *playerNetwork) begin(resource, kind, method string) *playerNetworkEntry {
-	return n.beginRendition(resource, kind, method, "")
+	return n.beginRendition(resource, kind, method, "", false)
 }
 
-func (n *playerNetwork) beginRendition(resource, kind, method, rendition string) *playerNetworkEntry {
+func (n *playerNetwork) beginRendition(resource, kind, method, rendition string, blockingReload bool) *playerNetworkEntry {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	if n.frozen || n.stopped {
@@ -102,7 +103,7 @@ func (n *playerNetwork) beginRendition(resource, kind, method, rendition string)
 		n.dropped = min(1_000_000_000, n.dropped+1)
 		return nil
 	}
-	e := &playerNetworkEntry{request: PlayerNetworkRequest{Number: len(n.entries) + 1, ResourceID: resource, Kind: kind, Rendition: rendition, Method: method, StartMS: n.offset(), Outcome: "incomplete"}}
+	e := &playerNetworkEntry{request: PlayerNetworkRequest{Number: len(n.entries) + 1, ResourceID: resource, Kind: kind, Rendition: rendition, BlockingReload: blockingReload, Method: method, StartMS: n.offset(), Outcome: "incomplete"}}
 	n.entries = append(n.entries, e)
 	return e
 }
@@ -282,7 +283,7 @@ func validatePlayerNetwork(report *PlayerNetworkReport, player *PlayerReport, pr
 		}
 		previous = request.StartMS
 		switch request.Kind {
-		case "playlist", "media", "init", "key", "auxiliary":
+		case "playlist", "media", "part", "init", "key", "auxiliary":
 		default:
 			return ErrInvalid
 		}
@@ -297,6 +298,9 @@ func validatePlayerNetwork(report *PlayerNetworkReport, player *PlayerReport, pr
 			}
 		}
 		if (request.HeaderMS == nil) != (request.HTTPStatus == 0) || (request.FirstBodyMS != nil && (request.HeaderMS == nil || *request.FirstBodyMS < *request.HeaderMS)) || (request.Bytes > 0 && request.FirstBodyMS == nil) || (request.FirstBodyMS != nil && request.Bytes == 0) || (request.Method == "HEAD" && (request.Bytes != 0 || request.FirstBodyMS != nil)) {
+			return ErrInvalid
+		}
+		if request.BlockingReload && request.Kind != "playlist" {
 			return ErrInvalid
 		}
 		if request.PlaylistSequence != nil && (request.Kind != "playlist" || request.Method != "GET" || request.HTTPStatus != 200 || request.Bytes == 0) {
