@@ -178,6 +178,9 @@ func (h *playerHLS) serve(w http.ResponseWriter, r *http.Request, resource strin
 			if value, ok := strings.CutPrefix(strings.TrimSpace(line), "#EXT-X-MEDIA-SEQUENCE:"); ok {
 				if sequence, err := strconv.ParseUint(value, 10, 64); err == nil {
 					h.network.playlistSequence(evidence, sequence)
+					if age, err := strconv.ParseUint(resp.Header.Get("Age"), 10, 32); err == nil {
+						h.network.playlistCacheAge(evidence, uint32(age))
+					}
 				}
 				break
 			}

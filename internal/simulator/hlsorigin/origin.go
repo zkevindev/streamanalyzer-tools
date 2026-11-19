@@ -49,6 +49,7 @@ type Status struct {
 
 type Manager struct {
 	live   liveClock
+	stale  [2]stalePlaylist
 	mu     sync.Mutex
 	status Status
 	ctx    context.Context
@@ -58,7 +59,7 @@ type Manager struct {
 
 func (m *Manager) Start(cfg Config) (Status, error) {
 	switch cfg.Mode {
-	case "normal", "live", "abr", "audio", "ll":
+	case "normal", "live", "abr", "audio", "ll", "stale":
 		cfg.Segment, cfg.DelayMS = 0, 0
 	case "delay", "not_found":
 		if cfg.Segment < 1 || cfg.Segment > SegmentCount {
@@ -88,6 +89,7 @@ func (m *Manager) Start(cfg Config) (Status, error) {
 		m.status.LowLatency = &LowLatencyStatus{}
 	}
 	m.live = liveClock{started: time.Now(), last: liveWindow}
+	m.stale = [2]stalePlaylist{}
 	return m.snapshot(), nil
 }
 
@@ -112,7 +114,7 @@ func (m *Manager) snapshot() Status {
 		result.MediaSequence = low.NextSequence - liveWindow
 		result.LowLatency = &low
 	}
-	if result.Mode == "live" || result.Mode == "abr" || result.Mode == "audio" {
+	if result.Mode == "live" || result.Mode == "stale" || result.Mode == "abr" || result.Mode == "audio" {
 		result.Frozen = m.live.frozen
 		last := m.live.sequence(time.Now())
 		result.MediaSequence = last - liveWindow + 1
@@ -130,7 +132,7 @@ func (m *Manager) stopLocked() Status {
 		if m.status.LowLatency != nil {
 			m.status.LowLatency.setEdge(llPublished(m.live.started, time.Now()))
 		}
-		if (m.status.Mode == "live" || m.status.Mode == "abr" || m.status.Mode == "audio") && !m.live.frozen {
+		if (m.status.Mode == "live" || m.status.Mode == "stale" || m.status.Mode == "abr" || m.status.Mode == "audio") && !m.live.frozen {
 			m.live.last = m.live.sequence(time.Now())
 			m.live.frozen = true
 		}
@@ -172,11 +174,13 @@ func (m *Manager) Serve(w http.ResponseWriter, r *http.Request, id, name string)
 	kind := "application/vnd.apple.mpegurl"
 	segment := 0
 	liveFault := ""
-	if m.status.Mode == "live" {
+	if m.status.Mode == "live" || m.status.Mode == "stale" {
 		now := time.Now()
 		last := m.live.sequence(now)
 		if playlist {
-			if r.Method == http.MethodGet {
+			if m.status.Mode == "stale" {
+				last = m.serveStalePlaylist(w, r, now, last)
+			} else if r.Method == http.MethodGet {
 				m.recordPlaylist(now, last-liveWindow+1)
 			}
 			m.mu.Unlock()

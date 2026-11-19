@@ -19,9 +19,12 @@ var ErrLiveUnavailable = errors.New("请先启动 HLS 直播源")
 var ErrFaultPending = errors.New("当前故障仍在等待触发或重试")
 
 type PlaylistSample struct {
-	At       time.Time `json:"at"`
-	Sequence uint64    `json:"sequence"`
-	Frozen   bool      `json:"frozen"`
+	Player         bool      `json:"player,omitempty"`
+	At             time.Time `json:"at"`
+	Sequence       uint64    `json:"sequence"`
+	OriginSequence uint64    `json:"origin_sequence,omitempty"`
+	CacheAge       int       `json:"cache_age_seconds,omitempty"`
+	Frozen         bool      `json:"frozen"`
 }
 
 type liveClock struct {
@@ -83,9 +86,13 @@ func liveResourceSequence(name string, last uint64) (uint64, bool) {
 }
 
 func (m *Manager) recordPlaylist(now time.Time, seq uint64) {
+	m.addPlaylistSample(PlaylistSample{At: now, Sequence: seq, Frozen: m.live.frozen})
+}
+
+func (m *Manager) addPlaylistSample(sample PlaylistSample) {
 	if len(m.status.PlaylistSamples) == maxPlaylistSamples {
 		copy(m.status.PlaylistSamples, m.status.PlaylistSamples[1:])
 		m.status.PlaylistSamples = m.status.PlaylistSamples[:maxPlaylistSamples-1]
 	}
-	m.status.PlaylistSamples = append(m.status.PlaylistSamples, PlaylistSample{now, seq, m.live.frozen})
+	m.status.PlaylistSamples = append(m.status.PlaylistSamples, sample)
 }
