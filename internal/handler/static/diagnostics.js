@@ -1221,6 +1221,15 @@ node('protocol').addEventListener('change', () => {
     hint.hidden = !selected.receive;
     hint.textContent = selected.receive ? `填写本机 IPv4 和端口。组播示例 ${protocol.split('-')[0]}://239.1.1.1:5000?interface=en0` : '';
 });
+const simulatedHLS = new URLSearchParams(location.search).get('hls_simulator');
+if (simulatedHLS && /^[a-f0-9-]{36}$/.test(simulatedHLS)) {
+    node('protocol').value = 'hls';
+    node('protocol').dispatchEvent(new Event('change'));
+    node('url').value = new URL('/api/simulators/hls/stream/' + simulatedHLS + '/playlist.m3u8', location.origin).href;
+    node('seconds').value = '30';
+    node('analyze-playback').checked = true;
+}
+
 bindForm('sample', async () => {
     const startedAt = Date.now();
     const startedAtPerformanceMS = performance.now();

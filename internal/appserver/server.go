@@ -13,6 +13,7 @@ import (
 	"streamanalyzer/internal/handler"
 	"streamanalyzer/internal/offline"
 	"streamanalyzer/internal/simulator/gb28181"
+	"streamanalyzer/internal/simulator/hlsorigin"
 	"streamanalyzer/internal/simulator/onvif"
 	"streamanalyzer/internal/simulator/sipphone"
 	"streamanalyzer/internal/storage"
@@ -23,10 +24,12 @@ import (
 type simulators struct {
 	gb28181 gb28181.Manager
 	onvif   onvif.Manager
+	hls     hlsorigin.Manager
 	sip     sipphone.Manager
 }
 
 func (s *simulators) Close() {
+	s.hls.Close()
 	s.sip.Close()
 	s.onvif.Close()
 	s.gb28181.Close()
@@ -70,7 +73,7 @@ func newEngine(cfg *Config, model diagnostic.Explainer, sim *simulators) (*gin.E
 	r := gin.Default()
 	h.RegisterRoutes(r)
 	handler.RegisterDiagnosticRoutes(r, diagnostics)
-	handler.RegisterSimulatorRoutes(r, &sim.gb28181, &sim.onvif, &sim.sip)
+	handler.RegisterSimulatorRoutes(r, &sim.gb28181, &sim.onvif, &sim.sip, &sim.hls)
 	return r, xlsxStorage, diagnostics, nil
 }
 

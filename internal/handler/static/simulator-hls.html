@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HLS 故障源模拟器 · Stream Analyzer</title>
+  <link rel="stylesheet" href="/static/workbench-theme.css">
+  <link rel="stylesheet" href="/static/diagnostics.css">
+  <link rel="stylesheet" href="/static/simulators.css">
+  <script src="/static/simulator-hls.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">跳转到主要内容</a>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="wordmark" href="/"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>Stream Analyzer</a>
+      <nav aria-label="主导航">
+        <a href="/diagnostics">排障工作台</a>
+        <a href="/simulators" aria-current="page">模拟器</a>
+        <a href="/realtime?protocol=rtmp">RTMP 实时分析</a>
+        <a href="/hls-stats">HLS 分析</a>
+      </nav>
+    </div>
+  </header>
+  <main id="main" tabindex="-1">
+    <nav class="simulator-protocols" aria-label="模拟协议">
+      <a href="/simulators">GB28181</a>
+      <a href="/simulators/onvif">ONVIF</a>
+      <a href="/simulators/sip">通用 SIP</a>
+      <a href="/simulators/hls" aria-current="page">HLS</a>
+    </nav>
+    <div class="page-heading">
+      <div><h1>HLS 故障源模拟器</h1><p class="muted">用可重复的分片故障验证播放器卡顿与请求证据。</p></div>
+    </div>
+    <p id="notice" class="error" role="alert" hidden></p>
+    <div class="simulator-grid">
+      <section class="panel" aria-labelledby="config-title">
+        <div class="panel-heading"><h2 id="config-title">播放场景</h2></div>
+        <form id="hls-form" class="panel-body">
+          <fieldset id="simulator-fields" disabled>
+            <label for="mode">场景</label>
+            <select id="mode" name="mode"><option value="normal">正常播放</option><option value="delay">分片延迟</option><option value="not_found">分片返回 404</option></select>
+            <div class="sim-fields">
+              <div id="segment-field" hidden><label for="segment">分片序号</label><input id="segment" name="segment" type="number" value="4" min="1" max="12" required></div>
+              <div id="delay-field" hidden><label for="delay-ms">延迟（毫秒）</label><input id="delay-ms" name="delay_ms" type="number" value="10000" min="500" max="15000" required></div>
+            </div>
+          </fieldset>
+          <p class="muted field-hint">内置 24 秒测试画面，含 12 个 2 秒分片。</p>
+          <div class="sim-controls sip-metrics"><button id="start" type="submit" disabled>启动故障源</button><button id="stop" type="button" class="secondary" disabled>停止</button></div>
+        </form>
+      </section>
+      <section class="panel" aria-labelledby="status-title">
+        <div class="panel-heading"><h2 id="status-title">源站状态</h2><span id="state" class="status" role="status">正在读取</span></div>
+        <div class="panel-body">
+          <dl class="metrics sim-metrics">
+            <div><dt>分片 GET 请求</dt><dd id="requests">0</dd></div>
+            <div><dt>故障触发</dt><dd id="faults">0</dd></div>
+          </dl>
+          <dl class="onvif-addresses" id="source-info" hidden>
+            <div><dt>场景</dt><dd id="scenario"></dd></div>
+            <div><dt>最近触发时间</dt><dd id="last-fault"></dd></div>
+            <div><dt>播放列表地址</dt><dd id="playlist"></dd></div>
+          </dl>
+          <div class="sim-controls sip-metrics" id="actions" hidden>
+            <a id="open-workbench" class="button">打开排障工作台</a>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+</body>
+</html>
