@@ -31,14 +31,18 @@
                 <div><label for="platform-id">平台编号</label><input id="platform-id" name="platform_id" pattern="[0-9]{20}" value="34020000002000000001" required></div>
                 <div><label for="device-id">设备编号</label><input id="device-id" name="device_id" pattern="[0-9]{20}" value="34020000001320000001" required></div>
               </div>
+              <label for="extra-devices">其他设备编号</label>
+              <textarea id="extra-devices" rows="2" maxlength="336" placeholder="每行一个 20 位设备编号"></textarea>
             </fieldset>
             <div class="sim-controls"><button id="start" disabled>启动平台</button><button type="button" id="stop" class="secondary" disabled>停止平台</button></div>
           </form>
           <p class="muted field-hint">将设备的 SIP 平台地址填为下方实际监听地址，使用与测试平台相同的 SIP 传输，密码留空。</p>
           <dl class="onvif-addresses">
             <div><dt>监听地址</dt><dd id="address">—</dd></div>
-            <div><dt>已注册设备地址</dt><dd id="peer">—</dd></div>
+            <div><dt>已注册设备</dt><dd id="peer">—</dd></div>
           </dl>
+          <label for="preview-device">点播与报告所选设备</label>
+          <select id="preview-device" disabled></select>
           <form id="preview-form">
             <fieldset id="preview-config" disabled>
               <div class="sim-fields">
