@@ -44,23 +44,27 @@ func fragmentedVariant(variant string, separateAudio bool) bool {
 func abrEpoch(seq uint64) uint64 { return (seq - 1) / abrSegments }
 
 func abrPlaylist(variant string, last uint64) []byte {
+	return fragmentedPlaylist(variant, last, abrEpoch)
+}
+
+func fragmentedPlaylist(variant string, last uint64, epoch func(uint64) uint64) []byte {
 	first := last - liveWindow + 1
 	var out bytes.Buffer
-	fmt.Fprintf(&out, "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:%d\n#EXT-X-DISCONTINUITY-SEQUENCE:%d\n", first, abrEpoch(first))
+	fmt.Fprintf(&out, "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:%d\n#EXT-X-DISCONTINUITY-SEQUENCE:%d\n", first, epoch(first))
 	for seq := first; seq <= last; seq++ {
-		boundary := (seq-1)%abrSegments == 0
+		boundary := seq == first || epoch(seq) != epoch(seq-1)
 		if boundary && seq > first {
 			out.WriteString("#EXT-X-DISCONTINUITY\n")
 		}
 		if seq == first || boundary {
-			fmt.Fprintf(&out, "#EXT-X-MAP:URI=\"init-%s-%d.mp4\"\n", variant, abrEpoch(seq))
+			fmt.Fprintf(&out, "#EXT-X-MAP:URI=\"init-%s-%d.mp4\"\n", variant, epoch(seq))
 		}
 		fmt.Fprintf(&out, "#EXTINF:2.000,\n%s-%d.m4s\n", variant, seq)
 	}
 	return out.Bytes()
 }
 
-func fragmentedResource(name string, last uint64, separateAudio bool) (file, contentType string, segment uint64) {
+func fragmentedResource(name string, last uint64, separateAudio, boundaryFault bool) (file, contentType string, segment uint64) {
 	stem, extension, ok := strings.Cut(name, ".")
 	if !ok {
 		return "", "", 0
@@ -82,11 +86,21 @@ func fragmentedResource(name string, last uint64, separateAudio bool) (file, con
 			mediaType = "audio"
 		}
 	}
-	if init && extension == "mp4" && seq >= abrEpoch(first) && seq <= abrEpoch(last) {
+	epoch, index := abrEpoch, (seq-1)%abrSegments+1
+	if boundaryFault && variant == "audio" {
+		epoch = audioBoundaryEpoch
+		if seq >= abrSegments+1 && seq <= 2*abrSegments {
+			index = abrSegments + 1
+			if seq > abrSegments+1 {
+				index = seq - (abrSegments + 1)
+			}
+		}
+	}
+	if init && extension == "mp4" && seq >= epoch(first) && seq <= epoch(last) {
 		return root + "/" + variant + "/init.mp4", mediaType + "/mp4", 0
 	}
 	if !init && extension == "m4s" && seq >= first && seq <= last {
-		return fmt.Sprintf("%s/%s/seg-%02d.m4s", root, variant, (seq-1)%abrSegments+1), mediaType + "/iso.segment", seq
+		return fmt.Sprintf("%s/%s/seg-%02d.m4s", root, variant, index), mediaType + "/iso.segment", seq
 	}
 	return "", "", 0
 }
@@ -95,7 +109,8 @@ func fragmentedResource(name string, last uint64, separateAudio bool) (file, con
 func (m *Manager) serveFragmented(w http.ResponseWriter, r *http.Request, name string) {
 	now := time.Now()
 	last := m.live.sequence(now)
-	separateAudio := m.status.Mode == "audio"
+	boundaryFault := m.status.Mode == "audio_boundary"
+	separateAudio := m.status.Mode == "audio" || boundaryFault
 	var file, kind, fault string
 	var data []byte
 	variant, playlist := strings.CutSuffix(name, ".m3u8")
@@ -109,12 +124,21 @@ func (m *Manager) serveFragmented(w http.ResponseWriter, r *http.Request, name s
 		if r.Method == http.MethodGet {
 			m.recordPlaylist(now, last-liveWindow+1)
 		}
-		kind, data = "application/vnd.apple.mpegurl", abrPlaylist(variant, last)
+		kind = "application/vnd.apple.mpegurl"
+		if boundaryFault && variant == "audio" {
+			data = fragmentedPlaylist(variant, last, audioBoundaryEpoch)
+		} else {
+			data = abrPlaylist(variant, last)
+		}
 	default:
 		var segment uint64
-		file, kind, segment = fragmentedResource(name, last, separateAudio)
+		file, kind, segment = fragmentedResource(name, last, separateAudio, boundaryFault)
 		if r.Method == http.MethodGet && segment != 0 {
 			m.status.SegmentRequests++
+			if boundaryFault && segment == abrSegments+1 && strings.HasPrefix(name, "audio-") {
+				m.status.FaultHits++
+				m.status.LastFault = &now
+			}
 			if separateAudio && strings.HasPrefix(name, "audio-") {
 				fault = m.checkLiveFault(r, segment, now)
 			}
@@ -140,4 +164,11 @@ func (m *Manager) serveFragmented(w http.ResponseWriter, r *http.Request, name s
 		return
 	}
 	http.ServeContent(w, r, name, time.Time{}, bytes.NewReader(data))
+}
+
+func audioBoundaryEpoch(seq uint64) uint64 {
+	if seq == abrSegments+1 {
+		return 0
+	}
+	return abrEpoch(seq)
 }

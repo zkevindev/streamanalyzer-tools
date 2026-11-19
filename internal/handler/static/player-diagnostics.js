@@ -585,6 +585,11 @@
                     this.options.onQualityPlaying?.(player.levels[data.level]);
                 });
             }
+            if (this.options.onHLSBuffered) {
+                player.on(Hls.Events.FRAG_BUFFERED, (_event, data) => {
+                    this.options.onHLSBuffered(data.frag);
+                });
+            }
             player.on(Hls.Events.ERROR, (_event, data) => {
                 if (!data.fatal) return;
                 const code = data.type === Hls.ErrorTypes.NETWORK_ERROR ? 'network_error' : 'media_error';
