@@ -54,7 +54,7 @@ func (a *agent) reinvite(req *sip.Request, tx sip.ServerTransaction) {
 	c.pendingMedia, c.peerInviteSeq = change, seq
 	// The session ID is stable, while every answer has a new SDP version.
 	c.sdpVersion++
-	answer := makeAnswerVersion(c.audio.local, c.sdpID, c.sdpVersion, offer, selected, media)
+	answer := makeAnswerVersion(c.audio.advertised, c.sdpID, c.sdpVersion, offer, selected, media)
 	a.mu.Unlock()
 
 	res := sip.NewResponseFromRequest(req, 200, "OK", answer)

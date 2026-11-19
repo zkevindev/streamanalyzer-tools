@@ -107,6 +107,11 @@ function render(next) {
   el('call-peer').textContent = call?.peer || '—';
   el('media-local').textContent = call?.media_local || '—';
   el('media-remote').textContent = call?.media_remote || '—';
+  el('media-advertised').textContent = call?.rtp_path?.advertised_local || '—';
+  el('media-observed').textContent = call?.rtp_path?.observed_source || '—';
+  const reply = call?.rtp_path;
+  const mode = reply?.return_mode === 'source' ? '按 RTP 来源回包' : '按 SDP 回包';
+  el('media-destination').textContent = reply?.destination ? reply.destination + ' · ' + mode : '—';
   const mediaDirections = {sendrecv: '双向音频', sendonly: '本端仅发送', recvonly: '本端仅接收', inactive: '保持中'};
   el('media-change').hidden = !call?.media_changes;
   el('media-change-detail').textContent = call?.media_changes ? [
@@ -219,6 +224,7 @@ el('registration-form').addEventListener('submit', event => {
   const config = Object.fromEntries(new FormData(event.currentTarget));
   config.port = Number(config.port);
   config.local_port = Number(config.local_port);
+  config.simulate_nat_port = el('simulate-nat-port').checked;
   config.reliable_early = el('offer-reliable').checked;
   config.early_media = el('offer-early').checked;
   config.preset_delay_ms = Number(config.preset_delay_ms);
