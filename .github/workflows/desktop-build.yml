@@ -15,7 +15,28 @@ env:
   WAILS_VERSION: v3.1.0
 
 jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      number: ${{ steps.version.outputs.number }}
+    steps:
+      - id: version
+        shell: bash
+        run: |
+          version=dev
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then
+            if [[ ! "$GITHUB_REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]; then
+              echo "::error::Desktop releases use a stable vMAJOR.MINOR.PATCH tag"
+              exit 1
+            fi
+            version="$GITHUB_REF_NAME"
+          fi
+          echo "number=$version" >> "$GITHUB_OUTPUT"
+
   windows:
+    needs: version
+    env:
+      STREAMANALYZER_BUILD_VERSION: ${{ needs.version.outputs.number }}
     name: Windows (amd64)
     runs-on: windows-latest
     steps:
@@ -27,6 +48,8 @@ jobs:
       - name: Install Wails
         shell: pwsh
         run: go install github.com/wailsapp/wails/v3/cmd/wails3@${env:WAILS_VERSION}
+      - name: Verify desktop updates
+        run: go test ./internal/desktop -run 'TestDesktopUpdate'
       - name: Build executable
         shell: pwsh
         run: wails3 build
@@ -37,6 +60,9 @@ jobs:
           if-no-files-found: error
 
   macos:
+    needs: version
+    env:
+      STREAMANALYZER_BUILD_VERSION: ${{ needs.version.outputs.number }}
     name: macOS (${{ matrix.arch }})
     strategy:
       matrix:
@@ -54,15 +80,22 @@ jobs:
           cache: true
       - name: Install Wails
         run: go install github.com/wailsapp/wails/v3/cmd/wails3@"${WAILS_VERSION}"
-      - name: Build application and DMG
+      - name: Verify desktop updates
+        run: go test ./internal/desktop -run 'TestDesktopUpdate'
+      - name: Build desktop packages
         run: wails3 task package:darwin
       - uses: actions/upload-artifact@v4
         with:
           name: streamanalyzer-macos-${{ matrix.arch }}
-          path: build/bin/StreamAnalyzer-${{ matrix.arch }}.dmg
+          path: |
+            build/bin/StreamAnalyzer-${{ matrix.arch }}.dmg
+            build/bin/StreamAnalyzer-macos-${{ matrix.arch }}.zip
           if-no-files-found: error
 
   linux:
+    needs: version
+    env:
+      STREAMANALYZER_BUILD_VERSION: ${{ needs.version.outputs.number }}
     name: Linux (amd64)
     runs-on: ubuntu-24.04
     steps:
@@ -77,6 +110,8 @@ jobs:
           sudo apt-get install -y --no-install-recommends build-essential pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev libpcap-dev
       - name: Install Wails
         run: go install -tags gtk3 github.com/wailsapp/wails/v3/cmd/wails3@"${WAILS_VERSION}"
+      - name: Verify desktop updates
+        run: go test -tags gtk3 ./internal/desktop -run 'TestDesktopUpdate'
       - name: Build executable
         run: wails3 build
       - uses: actions/upload-artifact@v4
@@ -98,11 +133,14 @@ jobs:
         with:
           path: release-assets
           merge-multiple: true
-      - name: Create release if needed and upload files
+      - name: Upload packages before publishing
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1 || \
-            gh release create "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --generate-notes
+            gh release create "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --verify-tag --draft --generate-notes
           gh release upload "${GITHUB_REF_NAME}" release-assets/* \
             --repo "${GITHUB_REPOSITORY}" --clobber
+          if [ "$(gh release view "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --json isDraft --jq '.isDraft')" = true ]; then
+            gh release edit "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --draft=false
+          fi

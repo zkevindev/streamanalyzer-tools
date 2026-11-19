@@ -1,5 +1,8 @@
 version: '3'
 
+env:
+  STREAMANALYZER_VERSION: '{{.STREAMANALYZER_BUILD_VERSION | default "dev"}}'
+
 tasks:
   build:
     desc: Build the desktop application for the current platform
@@ -13,11 +16,11 @@ tasks:
       CGO_LDFLAGS: '-mmacosx-version-min=12.0'
       MACOSX_DEPLOYMENT_TARGET: '12.0'
     cmds:
-      - go build -tags production -o build/bin/streamanalyzer ./cmd/desktop
+      - go build -tags production -ldflags "-X streamanalyzer/internal/desktop.desktopVersion=$STREAMANALYZER_VERSION" -o build/bin/streamanalyzer ./cmd/desktop
 
   build:linux:
     cmds:
-      - go build -tags production,gtk3 -o build/bin/streamanalyzer ./cmd/desktop
+      - go build -tags production,gtk3 -ldflags "-X streamanalyzer/internal/desktop.desktopVersion=$STREAMANALYZER_VERSION" -o build/bin/streamanalyzer ./cmd/desktop
 
   build:windows:
     env:
@@ -26,18 +29,26 @@ tasks:
       - powershell -NoProfile -Command 'New-Item -ItemType Directory -Force -Path build/bin | Out-Null'
       - wails3 generate icons -input build/appicon.png -windowsfilename build/bin/streamanalyzer.ico -macfilename build/bin/iconfile.icns
       - wails3 generate syso -arch {{ARCH}} -icon build/bin/streamanalyzer.ico -manifest build/windows/app.manifest -out cmd/desktop/resource_windows_{{ARCH}}.syso
-      - go build -tags production -ldflags "-H windowsgui" -o build/bin/streamanalyzer.exe ./cmd/desktop
+      - go build -tags production -ldflags "-H windowsgui -X streamanalyzer/internal/desktop.desktopVersion=$STREAMANALYZER_VERSION" -o build/bin/streamanalyzer.exe ./cmd/desktop
 
   package:darwin:
-    desc: Bundle the native macOS build and create a DMG
+    desc: Bundle the native macOS build and create a DMG and update ZIP
     deps: [build:darwin]
     vars:
       APP: build/bin/streamanalyzer.app
       DMG: build/bin/StreamAnalyzer-{{ARCH}}.dmg
+      UPDATE_ZIP: StreamAnalyzer-macos-{{ARCH}}.zip
     cmds:
       - mkdir -p "{{.APP}}/Contents/MacOS" "{{.APP}}/Contents/Resources"
       - cp build/bin/streamanalyzer "{{.APP}}/Contents/MacOS/streamanalyzer"
       - cp build/darwin/Info.plist "{{.APP}}/Contents/Info.plist"
+      - |
+        if [ "$STREAMANALYZER_VERSION" != dev ]; then
+          version="${STREAMANALYZER_VERSION#v}"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $version" "{{.APP}}/Contents/Info.plist"
+          /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $version" "{{.APP}}/Contents/Info.plist"
+        fi
       - wails3 generate icons -input build/appicon.png -macfilename "{{.APP}}/Contents/Resources/iconfile.icns" -windowsfilename build/bin/streamanalyzer.ico
       - codesign --force --sign - "{{.APP}}"
       - hdiutil create -volname StreamAnalyzer -srcfolder "{{.APP}}" -ov -format UDZO "{{.DMG}}"
+      - cd build/bin && rm -f "{{.UPDATE_ZIP}}" && /usr/bin/zip -qry "{{.UPDATE_ZIP}}" streamanalyzer.app
