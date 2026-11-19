@@ -26,14 +26,15 @@
             <fieldset id="platform-config" disabled>
               <div class="sim-fields">
                 <div><label for="ip">本机 IPv4</label><input id="ip" name="ip" value="127.0.0.1" required></div>
-                <div><label for="port">SIP UDP 端口</label><input id="port" name="port" type="number" min="0" max="65535" value="0"></div>
+                <div><label for="port">SIP 端口</label><input id="port" name="port" type="number" min="0" max="65535" value="0"></div>
+                <div><label for="sip-transport">SIP 传输</label><select id="sip-transport" name="sip_transport"><option value="udp">UDP</option><option value="tcp">TCP</option></select></div>
                 <div><label for="platform-id">平台编号</label><input id="platform-id" name="platform_id" pattern="[0-9]{20}" value="34020000002000000001" required></div>
                 <div><label for="device-id">设备编号</label><input id="device-id" name="device_id" pattern="[0-9]{20}" value="34020000001320000001" required></div>
               </div>
             </fieldset>
             <div class="sim-controls"><button id="start" disabled>启动平台</button><button type="button" id="stop" class="secondary" disabled>停止平台</button></div>
           </form>
-          <p class="muted field-hint">将设备的 SIP 平台地址填为下方实际监听地址，选择 UDP，密码留空。</p>
+          <p class="muted field-hint">将设备的 SIP 平台地址填为下方实际监听地址，使用与测试平台相同的 SIP 传输，密码留空。</p>
           <dl class="onvif-addresses">
             <div><dt>监听地址</dt><dd id="address">—</dd></div>
             <div><dt>已注册设备地址</dt><dd id="peer">—</dd></div>
@@ -42,9 +43,11 @@
             <fieldset id="preview-config" disabled>
               <div class="sim-fields">
                 <div><label for="channel">通道编号</label><input id="channel" name="channel_id" pattern="[0-9]{20}" value="34020000001320000002" required></div>
+                <div><label for="media-transport">点播媒体传输</label><select id="media-transport" name="media_transport"><option value="udp">UDP</option><option value="tcp-active">TCP（平台主动连接）</option><option value="tcp-passive">TCP（平台等待连入）</option></select></div>
                 <div><label for="window">观测窗口（毫秒）</label><input id="window" name="window_ms" type="number" min="500" max="15000" value="4000" required></div>
               </div>
               <label class="sim-check"><input id="skip-ack" type="checkbox"> 观测窗口内暂缓 ACK</label>
+              <label id="skip-connect-control" class="sim-check" hidden><input id="skip-connect" type="checkbox"> 观测窗口内暂缓平台侧 TCP 建连</label>
               <div class="sim-controls"><button>点播并收流</button></div>
             </fieldset>
           </form>

@@ -153,3 +153,45 @@ func hasGBPreviewStage(marks []gb28181.SessionMark, want string) bool {
 	}
 	return false
 }
+
+func TestGB28181PlatformTCPMediaRoles(t *testing.T) {
+	server := testDiagnosticServer(t, t.TempDir())
+	status := decodeDiagnostic[gb28181.PlatformStatus](t, diagnosticRequest(t, server, "POST", platformAPI+"/start", http.StatusCreated,
+		[]byte(`{"platform_id":"`+platformTestID+`","device_id":"`+platformDeviceID+`","sip_transport":"tcp"}`)))
+	_, portText, err := net.SplitHostPort(status.Address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(portText)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := json.Marshal(gb28181.Config{PlatformHost: "127.0.0.1", PlatformPort: port, PlatformID: platformTestID, DeviceID: platformDeviceID, ChannelID: platformChannelID, SIPTransport: "tcp"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	diagnosticRequest(t, server, "POST", platformDeviceAPI+"/start", http.StatusAccepted, cfg)
+	waitSimulator(t, server, platformDeviceAPI, "registered")
+	for _, tc := range []struct {
+		role string
+		skip bool
+		want string
+	}{
+		{"udp", false, "passed"}, {"tcp-active", false, "passed"}, {"tcp-passive", false, "passed"}, {"tcp-active", true, "no_media_connection"},
+	} {
+		t.Run(tc.role+"/"+tc.want, func(t *testing.T) {
+			req := []byte(`{"channel_id":"` + platformChannelID + `","window_ms":650,"media_transport":"` + tc.role + `","skip_connect":` + strconv.FormatBool(tc.skip) + `}`)
+			diagnosticRequest(t, server, "POST", platformAPI+"/preview", http.StatusAccepted, req)
+			got := waitGBPlatformPreview(t, server, tc.want)
+			if got.SIPTransport != "tcp" || got.DeviceSession == nil || got.DeviceSession.CallID != got.Preview.CallID {
+				t.Fatalf("unexpected TCP SIP status / correlation: %+v", got)
+			}
+			if (tc.want == "passed") != (got.Preview.Media.Keyframes > 0) ||
+				(tc.role != "udp" && !tc.skip) != hasGBPreviewStage(got.Preview.Timeline, "media_connected") {
+				t.Fatalf("unexpected TCP media evidence: %+v", got.Preview)
+			}
+		})
+	}
+	diagnosticRequest(t, server, "POST", platformDeviceAPI+"/stop", http.StatusAccepted, nil)
+	waitSimulator(t, server, platformDeviceAPI, "stopped")
+}

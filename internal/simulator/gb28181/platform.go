@@ -22,16 +22,19 @@ var (
 )
 
 type PlatformConfig struct {
-	IP         string `json:"ip"`
-	Port       int    `json:"port"`
-	PlatformID string `json:"platform_id"`
-	DeviceID   string `json:"device_id"`
+	SIPTransport string `json:"sip_transport,omitempty"`
+	IP           string `json:"ip"`
+	Port         int    `json:"port"`
+	PlatformID   string `json:"platform_id"`
+	DeviceID     string `json:"device_id"`
 }
 
 type PreviewConfig struct {
-	ChannelID string `json:"channel_id"`
-	WindowMS  int    `json:"window_ms"`
-	SkipACK   bool   `json:"skip_ack"`
+	MediaTransport mediaTransport `json:"media_transport,omitempty"`
+	SkipConnect    bool           `json:"skip_connect,omitempty"`
+	ChannelID      string         `json:"channel_id"`
+	WindowMS       int            `json:"window_ms"`
+	SkipACK        bool           `json:"skip_ack"`
 }
 
 type PlatformMedia struct {
@@ -43,20 +46,22 @@ type PlatformMedia struct {
 }
 
 type PlatformPreview struct {
-	ChannelID  string        `json:"channel_id"`
-	CallID     string        `json:"call_id"`
-	SSRC       uint32        `json:"ssrc"`
-	State      string        `json:"state"`
-	SIPCode    int           `json:"sip_code,omitempty"`
-	Start      time.Time     `json:"start"`
-	WindowMS   int           `json:"window_ms"`
-	RTPAddress string        `json:"rtp_address"`
-	Media      PlatformMedia `json:"media"`
-	Timeline   []SessionMark `json:"timeline"`
-	Error      string        `json:"error,omitempty"`
+	MediaTransport mediaTransport `json:"media_transport"`
+	ChannelID      string         `json:"channel_id"`
+	CallID         string         `json:"call_id"`
+	SSRC           uint32         `json:"ssrc"`
+	State          string         `json:"state"`
+	SIPCode        int            `json:"sip_code,omitempty"`
+	Start          time.Time      `json:"start"`
+	WindowMS       int            `json:"window_ms"`
+	RTPAddress     string         `json:"rtp_address"`
+	Media          PlatformMedia  `json:"media"`
+	Timeline       []SessionMark  `json:"timeline"`
+	Error          string         `json:"error,omitempty"`
 }
 
 type PlatformStatus struct {
+	SIPTransport  string           `json:"sip_transport,omitempty"`
 	Busy          bool             `json:"busy"`
 	Active        bool             `json:"active"`
 	Address       string           `json:"address,omitempty"`
@@ -90,6 +95,13 @@ type platform struct {
 
 func (m *PlatformManager) Start(cfg PlatformConfig) error {
 	cfg.IP, cfg.PlatformID, cfg.DeviceID = strings.TrimSpace(cfg.IP), strings.TrimSpace(cfg.PlatformID), strings.TrimSpace(cfg.DeviceID)
+	cfg.SIPTransport = strings.ToLower(strings.TrimSpace(cfg.SIPTransport))
+	if cfg.SIPTransport == "" {
+		cfg.SIPTransport = "udp"
+	}
+	if cfg.SIPTransport != "udp" && cfg.SIPTransport != "tcp" {
+		return fmt.Errorf("%w，SIP 传输需为 UDP 或 TCP", ErrPlatformConfig)
+	}
 	if cfg.IP == "" {
 		cfg.IP = "127.0.0.1"
 	}
@@ -112,29 +124,39 @@ func (m *PlatformManager) Start(cfg PlatformConfig) error {
 			return ErrActive
 		}
 	}
-	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.ParseIP(cfg.IP), Port: cfg.Port})
+	ctx, cancel := context.WithCancel(context.Background())
+	p := &platform{cfg: cfg, ctx: ctx, cancel: cancel, done: make(chan struct{})}
+	listener, addr, err := p.listen()
 	if err != nil {
-		return fmt.Errorf("无法监听平台 SIP UDP 端口：%w", err)
+		cancel()
+		return fmt.Errorf("无法监听平台 SIP %s 端口：%w", strings.ToUpper(cfg.SIPTransport), err)
 	}
-	ua, err := sipgo.NewUA()
+	p.local = addr
+	var opts []sipgo.UserAgentOption
+	if cfg.SIPTransport == "tcp" {
+		opts = append(opts, sipgo.WithUserAgentTransactionLayerOptions(sip.WithTransactionLayerTerminateOnConnClose()),
+			sipgo.WithUserAgentTransportLayerOptions(sip.WithTransportLayerTransports(sip.TransportsConfig{TCP: &sip.TransportTCP{
+				WriteTimeout: 3 * time.Second,
+				DialerCreate: func(net.Addr) net.Dialer { return net.Dialer{Control: refuseSIPRedial} },
+			}})))
+	}
+	ua, err := sipgo.NewUA(opts...)
 	if err != nil {
-		conn.Close()
+		cancel()
+		listener.Close()
 		return err
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	addr := conn.LocalAddr().(*net.UDPAddr).AddrPort()
-	p := &platform{cfg: cfg, local: netip.AddrPortFrom(addr.Addr().Unmap(), addr.Port()), ctx: ctx, cancel: cancel, done: make(chan struct{})}
 	p.client, err = sipgo.NewClient(ua, sipgo.WithClientAddr(p.local.String()), sipgo.WithClientConnectionAddr(p.local.String()), sipgo.WithClientNAT())
 	if err != nil {
 		cancel()
-		conn.Close()
+		listener.Close()
 		ua.Close()
 		return err
 	}
 	server, err := sipgo.NewServer(ua)
 	if err != nil {
 		cancel()
-		conn.Close()
+		listener.Close()
 		ua.Close()
 		return err
 	}
@@ -145,7 +167,7 @@ func (m *PlatformManager) Start(cfg PlatformConfig) error {
 	m.run = p
 	served := make(chan struct{})
 	go func() {
-		_ = server.ServeUDP(conn)
+		_ = listener.serve(server)
 		close(served)
 		p.cancel()
 	}()
@@ -155,11 +177,19 @@ func (m *PlatformManager) Start(cfg PlatformConfig) error {
 		p.mu.Lock()
 		p.mu.Unlock()
 		p.workers.Wait()
-		conn.Close()
+		listener.Close()
 		<-served
 		ua.Close()
 	}()
 	return nil
+}
+
+func (p *platform) forget(peer netip.AddrPort) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.peer == peer {
+		p.peer, p.expires = netip.AddrPort{}, time.Time{}
+	}
 }
 
 func (p *platform) register(req *sip.Request, tx sip.ServerTransaction) {
@@ -225,7 +255,7 @@ func (m *PlatformManager) Status() PlatformStatus {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	result := PlatformStatus{Busy: p.busy, Active: p.ctx.Err() == nil, Address: p.local.String(), PlatformID: p.cfg.PlatformID, DeviceID: p.cfg.DeviceID}
+	result := PlatformStatus{SIPTransport: p.cfg.SIPTransport, Busy: p.busy, Active: p.ctx.Err() == nil, Address: p.local.String(), PlatformID: p.cfg.PlatformID, DeviceID: p.cfg.DeviceID}
 	if result.Active && time.Now().Before(p.expires) {
 		result.Peer = p.peer.String()
 	}

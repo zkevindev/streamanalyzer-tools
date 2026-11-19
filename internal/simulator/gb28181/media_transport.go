@@ -26,6 +26,7 @@ type mediaOffer struct {
 	start, end int64
 	target     netip.AddrPort
 	transport  mediaTransport
+	setup      string
 	payload    byte
 	ssrc       uint32
 	y          string
@@ -104,7 +105,8 @@ func parseOffer(body []byte) (mediaOffer, error) {
 		if videoSetup == "" {
 			videoSetup = sessionSetup
 		}
-		switch strings.ToLower(strings.TrimSpace(videoSetup)) {
+		offer.setup = strings.ToLower(strings.TrimSpace(videoSetup))
+		switch offer.setup {
 		case "passive":
 			offer.transport = mediaTCPActive
 		case "", "active", "actpass":
