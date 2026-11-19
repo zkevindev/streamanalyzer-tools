@@ -7,8 +7,17 @@ import (
 
 type modelRTSPMetrics struct {
 	RTSPMetrics
-	OmittedRequests int `json:"omitted_requests"`
-	OmittedTracks   int `json:"omitted_tracks"`
+	OmittedRequests int           `json:"omitted_requests"`
+	OmittedTracks   int           `json:"omitted_tracks"`
+	UDP             *modelRTSPUDP `json:"udp_receive,omitempty"`
+}
+
+type modelRTSPUDP struct {
+	Datagrams int   `json:"datagrams"`
+	Bytes     int64 `json:"bytes"`
+	Accepted  int   `json:"accepted_datagrams"`
+	Filtered  int   `json:"filtered_datagrams"`
+	Oversize  int   `json:"oversize_datagrams"`
 }
 
 // RTSP's local archive contains raw SDP and authentication challenges. Only
@@ -20,6 +29,14 @@ func modelRTSP(source *RTSPMetrics) *modelRTSPMetrics {
 	result := &modelRTSPMetrics{RTSPMetrics: *source}
 	result.Boundary = "native_rtsp_tcp_receive"
 	result.Transport = "tcp_interleaved"
+	if source.Transport == "udp" {
+		result.Boundary = "native_rtsp_udp_receive"
+		result.Transport = "udp"
+		result.UDP = &modelRTSPUDP{source.UDPDatagrams, source.UDPBytes, source.AcceptedDatagrams, source.FilteredDatagrams, source.UDPOversizeDatagrams}
+	}
+	if result.RequestedTransport != "tcp" && result.RequestedTransport != "udp" {
+		result.RequestedTransport = ""
+	}
 	result.Requests = append([]RTSPRequestTiming(nil), source.Requests...)
 	const requestLimit = 32
 	if len(result.Requests) > requestLimit {

@@ -24,17 +24,21 @@ import (
 )
 
 type rtspCapture struct {
-	mu             sync.Mutex
-	start          time.Time
-	ctx            context.Context
-	cancel         context.CancelFunc
-	wire, timeline *artifactWriter
-	metadata       rtspArchiveMetadata
-	sdp            []byte
-	stages         []CaptureStage
-	connections    []net.Conn
-	reason         string
-	err            error
+	mu                sync.Mutex
+	start             time.Time
+	ctx               context.Context
+	cancel            context.CancelFunc
+	wire, timeline    *artifactWriter
+	metadata          rtspArchiveMetadata
+	sdp               []byte
+	stages            []CaptureStage
+	connections       []net.Conn
+	reason            string
+	err               error
+	udpData, udpIndex *artifactWriter
+	packetConnections []net.PacketConn
+	udpClientPorts    map[int][2]int
+	udpSources        map[string]net.IPAddr
 }
 
 type rtspCaptureConn struct {
@@ -67,6 +71,9 @@ func (capture *rtspCapture) keep(data []byte, id int) (int, error) {
 		return 0, capture.err
 	}
 	remaining := maxStreamBytes - (1 << 20) - capture.wire.bytes
+	if capture.udpData != nil {
+		remaining -= capture.udpData.bytes + capture.udpIndex.bytes
+	}
 	n := min(len(data), int(max(0, remaining)))
 	if n == 0 {
 		capture.reason = "size_limit"
@@ -183,6 +190,11 @@ func (capture *rtspCapture) dial(ctx context.Context, network, address string, c
 	capture.connections = append(capture.connections, connection)
 	id := len(capture.connections)
 	capture.metadata.Connections = id
+	if capture.metadata.Version == 2 {
+		if address, ok := connection.RemoteAddr().(*net.TCPAddr); ok {
+			capture.metadata.ControlPeerIP = address.IP.String()
+		}
+	}
 	capture.mu.Unlock()
 	return &rtspCaptureConn{Conn: connection, capture: capture, id: id}, nil
 }
@@ -221,11 +233,17 @@ func rtspMethodStage(method string) string {
 func (capture *rtspCapture) onRequest(request *base.Request) {
 	capture.mu.Lock()
 	defer capture.mu.Unlock()
+	cseq, _ := strconv.Atoi(rtspHeader(request.Header, "CSeq"))
+	if capture.metadata.Version == 2 && request.Method == base.Setup {
+		var transport headers.Transport
+		if transport.Unmarshal(request.Header["Transport"]) == nil && transport.ClientPorts != nil {
+			capture.udpClientPorts[cseq] = *transport.ClientPorts
+		}
+	}
 	if len(capture.metadata.Requests) == maxRTSPRequests {
 		capture.metadata.RequestsTruncated++
 		return
 	}
-	cseq, _ := strconv.Atoi(rtspHeader(request.Header, "CSeq"))
 	capture.metadata.Requests = append(capture.metadata.Requests, RTSPRequestTiming{Number: len(capture.metadata.Requests) + 1, ConnectionID: len(capture.connections), Method: rtspMethod(request.Method), CSeq: cseq, StartMS: capture.now()})
 }
 
@@ -269,6 +287,18 @@ func sampleRTSP(ctx context.Context, dir string, target *url.URL, seconds int, p
 }
 
 func sampleRTSPWithTLS(ctx context.Context, dir string, target *url.URL, seconds int, protocol string, config *tls.Config) (Report, error) {
+	return sampleRTSPTransportWithTLS(ctx, dir, target, seconds, protocol, "tcp", config)
+}
+
+func sampleRTSPTransport(ctx context.Context, dir string, target *url.URL, seconds int, protocol, transport string) (Report, error) {
+	return sampleRTSPTransportWithTLS(ctx, dir, target, seconds, protocol, transport, nil)
+}
+
+func sampleRTSPTransportWithTLS(ctx context.Context, dir string, target *url.URL, seconds int, protocol, selected string, config *tls.Config) (Report, error) {
+	selected, err := rtspTransportArgument(protocol, selected)
+	if err != nil {
+		return Report{}, err
+	}
 	wire, err := newArtifact(dir, rtspWireName)
 	if err != nil {
 		return Report{}, err
@@ -282,11 +312,29 @@ func sampleRTSPWithTLS(ctx context.Context, dir string, target *url.URL, seconds
 	defer cancel()
 	start := time.Now()
 	capture := &rtspCapture{ctx: ctx, cancel: cancel, start: start, wire: wire, timeline: timeline, metadata: rtspArchiveMetadata{Version: 1, Requests: []RTSPRequestTiming{}, Channels: []rtspChannel{}}}
+	if selected == "udp" {
+		capture.metadata.Version, capture.metadata.Transport = 2, "udp"
+		capture.udpClientPorts = map[int][2]int{}
+		capture.udpData, err = newArtifact(dir, rtspUDPDataName)
+		if err == nil {
+			capture.udpIndex, err = newArtifact(dir, rtspUDPIndexName)
+		}
+		if err != nil {
+			wire.close()
+			timeline.close()
+			closeRTSPArtifact(capture.udpData)
+			return Report{}, err
+		}
+	}
 	stop := context.AfterFunc(ctx, func() {
 		capture.mu.Lock()
 		connections := append([]net.Conn(nil), capture.connections...)
+		packets := append([]net.PacketConn(nil), capture.packetConnections...)
 		capture.mu.Unlock()
 		for _, connection := range connections {
+			connection.Close()
+		}
+		for _, connection := range packets {
 			connection.Close()
 		}
 	})
@@ -295,15 +343,24 @@ func sampleRTSPWithTLS(ctx context.Context, dir string, target *url.URL, seconds
 	if err != nil {
 		wire.close()
 		timeline.close()
+		closeRTSPArtifact(capture.udpData)
+		closeRTSPArtifact(capture.udpIndex)
 		return Report{}, ErrInvalid
 	}
 	transport := gortsplib.ProtocolTCP
+	if selected == "udp" {
+		transport = gortsplib.ProtocolUDP
+	}
 	client := &gortsplib.Client{Scheme: u.Scheme, Host: u.Host, Protocol: &transport, ReadTimeout: 10 * time.Second, WriteTimeout: 5 * time.Second, UserAgent: "StreamAnalyzer-Diagnostic/1.0", OnRequest: capture.onRequest, OnResponse: capture.onResponse, OnPacketsLost: func(uint64) {}, OnDecodeError: func(error) {}}
 	client.DialContext = func(dialCtx context.Context, network, address string) (net.Conn, error) {
 		return capture.dial(dialCtx, network, address, nil, false)
 	}
 	client.DialTLSContext = func(dialCtx context.Context, network, address string) (net.Conn, error) {
 		return capture.dial(dialCtx, network, address, config, true)
+	}
+	if selected == "udp" {
+		client.ListenPacket = capture.listenUDP
+		client.ResolveIPAddr = capture.resolveUDPSource
 	}
 	observation := Observation{Origin: origin(target), StartedAt: start.UTC(), RequestedSeconds: seconds}
 	failureStage := "rtsp_describe"
@@ -335,7 +392,17 @@ func sampleRTSPWithTLS(ctx context.Context, dir string, target *url.URL, seconds
 					break
 				}
 				var negotiated headers.Transport
-				if negotiated.Unmarshal(response.Header["Transport"]) != nil || negotiated.InterleavedIDs == nil {
+				if negotiated.Unmarshal(response.Header["Transport"]) != nil {
+					err = errors.New("RTSP transport unsupported")
+					break
+				}
+				if selected == "udp" {
+					if err = capture.registerUDPTransport(response, negotiated, mediaIndex+1); err != nil {
+						break
+					}
+					continue
+				}
+				if negotiated.InterleavedIDs == nil {
 					err = errors.New("RTSP transport unsupported")
 					break
 				}
@@ -413,7 +480,7 @@ func sampleRTSPWithTLS(ctx context.Context, dir string, target *url.URL, seconds
 	observation.Stages = append([]CaptureStage(nil), capture.stages...)
 	metadata, sdp, captureErr := capture.metadata, append([]byte(nil), capture.sdp...), capture.err
 	capture.mu.Unlock()
-	if err := errors.Join(captureErr, wire.close(), timeline.close()); err != nil {
+	if err := errors.Join(captureErr, wire.close(), timeline.close(), closeRTSPArtifact(capture.udpData), closeRTSPArtifact(capture.udpIndex)); err != nil {
 		return Report{}, err
 	}
 	artifact, err := writeRTSPArchive(dir, metadata, sdp)
@@ -421,6 +488,10 @@ func sampleRTSPWithTLS(ctx context.Context, dir string, target *url.URL, seconds
 		return Report{}, err
 	}
 	_ = os.Remove(filepath.Join(dir, rtspWireName))
+	if selected == "udp" {
+		_ = os.Remove(filepath.Join(dir, rtspUDPDataName))
+		_ = os.Remove(filepath.Join(dir, rtspUDPIndexName))
+	}
 	manifest := Manifest{Version: multiProtocolSchemaVersion, Protocol: protocol, Observation: observation, Stream: artifact, Timeline: timeline.artifact()}
 	return replayRTSP(dir, manifest)
 }
@@ -441,7 +512,7 @@ func rtspFailure(stage string, err error) (string, string) {
 		return stage, "timeout"
 	case liberrors.ErrClientSDPInvalid, liberrors.ErrClientContentTypeMissing, liberrors.ErrClientContentTypeUnsupported:
 		return stage, "rtsp_parse_error"
-	case liberrors.ErrClientTransportHeaderInvalid, liberrors.ErrClientTransportHeaderNoInterleavedIDs, liberrors.ErrClientTransportHeaderInvalidInterleavedIDs, liberrors.ErrClientTransportHeaderInterleavedIDsInUse, liberrors.ErrClientServerRequestedUDP:
+	case liberrors.ErrClientTransportHeaderInvalid, liberrors.ErrClientTransportHeaderNoInterleavedIDs, liberrors.ErrClientTransportHeaderInvalidInterleavedIDs, liberrors.ErrClientTransportHeaderInterleavedIDsInUse, liberrors.ErrClientServerRequestedUDP, liberrors.ErrClientServerRequestedTCP, liberrors.ErrClientServerPortsNotProvided:
 		return stage, "rtsp_transport_error"
 	}
 	knownStage, code := httpFailure(stage, err)
@@ -462,13 +533,17 @@ func writeRTSPArchive(dir string, metadata rtspArchiveMetadata, sdp []byte) (Art
 		output.close()
 		return Artifact{}, ErrInvalid
 	}
-	for _, name := range []string{rtspWireName, rtspSDPName, rtspMetadataName} {
+	names := []string{rtspWireName, rtspSDPName, rtspMetadataName}
+	if metadata.Version == 2 {
+		names = append(names, rtspUDPDataName, rtspUDPIndexName)
+	}
+	for _, name := range names {
 		entry, createErr := archive.CreateHeader(&zip.FileHeader{Name: name, Method: zip.Store})
 		if createErr != nil {
 			output.close()
 			return Artifact{}, createErr
 		}
-		if name == rtspWireName {
+		if name == rtspWireName || name == rtspUDPDataName || name == rtspUDPIndexName {
 			err = copyFile(entry, filepath.Join(dir, name))
 		} else if name == rtspSDPName {
 			_, err = entry.Write(sdp)

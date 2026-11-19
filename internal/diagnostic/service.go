@@ -202,6 +202,10 @@ func (s *Service) Start(req SampleRequest) (Run, error) {
 	if protocol == "" {
 		protocol = ProtocolHTTPFLV
 	}
+	transport, err := sampleTransport(protocol, req.Transport)
+	if err != nil {
+		return Run{}, err
+	}
 	target, err := parseSampleTarget(req.URL, protocol)
 	if err != nil {
 		return Run{}, err
@@ -257,7 +261,7 @@ func (s *Service) Start(req SampleRequest) (Run, error) {
 		if player != nil && player.Transport() != "hls" {
 			player.WaitForSubscriber(ctx, 500*time.Millisecond)
 		}
-		report, err := s.sampleProtocol(ctx, dir, target, seconds, run.Protocol)
+		report, err := s.sampleProtocolWithTransport(ctx, dir, target, seconds, run.Protocol, transport)
 		if err == nil {
 			s.persistence.Lock()
 			err = s.attachPlayerReport(dir, &report, run.ID)
@@ -289,6 +293,29 @@ func (s *Service) Start(req SampleRequest) (Run, error) {
 }
 
 func (s *Service) sampleProtocol(ctx context.Context, dir string, target *url.URL, seconds int, protocol string) (Report, error) {
+	return s.sampleProtocolWithTransport(ctx, dir, target, seconds, protocol, "tcp")
+}
+
+func sampleTransport(protocol, requested string) (string, error) {
+	if protocol != ProtocolRTSP && protocol != ProtocolRTSPS {
+		if requested != "" {
+			return "", fmt.Errorf("%w: transport 参数仅适用于 RTSP/RTSPS", ErrInvalid)
+		}
+		return "", nil
+	}
+	if requested == "" {
+		requested = "tcp"
+	}
+	if requested != "tcp" && requested != "udp" {
+		return "", fmt.Errorf("%w: RTSP 传输仅支持 tcp 或 udp", ErrInvalid)
+	}
+	if protocol == ProtocolRTSPS && requested == "udp" {
+		return "", fmt.Errorf("%w: RTSPS 当前使用 TLS/TCP，请选择 TCP 交织传输", ErrInvalid)
+	}
+	return requested, nil
+}
+
+func (s *Service) sampleProtocolWithTransport(ctx context.Context, dir string, target *url.URL, seconds int, protocol, transport string) (Report, error) {
 	switch protocol {
 	case ProtocolHTTPFLV:
 		return sample(ctx, s.client, dir, target, seconds)
@@ -299,7 +326,7 @@ func (s *Service) sampleProtocol(ctx context.Context, dir string, target *url.UR
 	case ProtocolHTTPTS, ProtocolUDPTS, ProtocolRTPTS:
 		return sampleTS(ctx, s.client, dir, target, seconds, protocol)
 	case ProtocolRTSP, ProtocolRTSPS:
-		return sampleRTSP(ctx, dir, target, seconds, protocol)
+		return sampleRTSPTransport(ctx, dir, target, seconds, protocol, transport)
 	default:
 		return Report{}, fmt.Errorf("%w: 不支持的采样协议", ErrInvalid)
 	}

@@ -16,7 +16,6 @@ import (
 	"github.com/bluenviron/gortsplib/v5/pkg/conn"
 	"github.com/bluenviron/gortsplib/v5/pkg/headers"
 	"github.com/pion/rtcp"
-	"github.com/pion/rtp"
 )
 
 type rtspCountingReader struct {
@@ -45,13 +44,24 @@ type rtspTrackState struct {
 }
 
 func replayRTSP(dir string, manifest Manifest) (Report, error) {
+	return replayRTSPWithEvents(dir, manifest, nil)
+}
+
+// walkRTSPMediaEvents streams the bounded, accepted RTP analysis prefix from
+// the original native evidence. Callback kinds describe SDP media, not frames.
+func walkRTSPMediaEvents(dir string, manifest Manifest, visit func(Event)) error {
+	_, err := replayRTSPWithEvents(dir, manifest, visit)
+	return err
+}
+
+func replayRTSPWithEvents(dir string, manifest Manifest, visit func(Event)) (Report, error) {
 	archive, archiveFile, err := openEvidenceZIP(filepath.Join(dir, rtspStreamName))
 	if err != nil {
 		return Report{}, fmt.Errorf("%w: RTSP 原始证据不可读", ErrInvalid)
 	}
 	defer archiveFile.Close()
 	entries := map[string]*zip.File{}
-	limits := map[string]uint64{rtspWireName: maxStreamBytes, rtspSDPName: maxRTSPSDPBytes, rtspMetadataName: maxRTSPMetadataBytes}
+	limits := map[string]uint64{rtspWireName: maxStreamBytes, rtspSDPName: maxRTSPSDPBytes, rtspMetadataName: maxRTSPMetadataBytes, rtspUDPDataName: maxStreamBytes, rtspUDPIndexName: maxRTSPUDPIndexBytes}
 	var total uint64
 	for _, entry := range archive.File {
 		limit, ok := limits[entry.Name]
@@ -61,7 +71,7 @@ func replayRTSP(dir string, manifest Manifest) (Report, error) {
 		total += entry.UncompressedSize64
 		entries[entry.Name] = entry
 	}
-	if len(entries) != 3 || total > maxStreamBytes {
+	if (len(entries) != 3 && len(entries) != 5) || entries[rtspWireName] == nil || entries[rtspSDPName] == nil || entries[rtspMetadataName] == nil || total > maxStreamBytes {
 		return Report{}, ErrInvalid
 	}
 	readSmall := func(name string, limit int64) ([]byte, error) {
@@ -83,7 +93,14 @@ func replayRTSP(dir string, manifest Manifest) (Report, error) {
 	var metadata rtspArchiveMetadata
 	decoder := json.NewDecoder(bytes.NewReader(metadataData))
 	decoder.DisallowUnknownFields()
-	if decoder.Decode(&metadata) != nil || decoder.Decode(new(any)) != io.EOF || metadata.Version != 1 || metadata.Connections < 0 || metadata.Connections > 1 || len(metadata.Requests) > maxRTSPRequests || metadata.RequestsTruncated < 0 || metadata.RequestsTruncated > 1_000_000_000 {
+	if decoder.Decode(&metadata) != nil || decoder.Decode(new(any)) != io.EOF || (metadata.Version != 1 && metadata.Version != 2) || metadata.Connections < 0 || metadata.Connections > 1 || len(metadata.Requests) > maxRTSPRequests || metadata.RequestsTruncated < 0 || metadata.RequestsTruncated > 1_000_000_000 {
+		return Report{}, ErrInvalid
+	}
+	if metadata.Version == 1 {
+		if len(entries) != 3 || !validRTSPLegacyArchiveFields(metadata, metadataData) {
+			return Report{}, ErrInvalid
+		}
+	} else if len(entries) != 5 || entries[rtspUDPDataName] == nil || entries[rtspUDPIndexName] == nil || metadata.Transport != "udp" || manifest.Protocol != ProtocolRTSP || len(metadata.Channels) != 0 {
 		return Report{}, ErrInvalid
 	}
 	sdpData, err := readSmall(rtspSDPName, maxRTSPSDPBytes)
@@ -124,6 +141,10 @@ func replayRTSP(dir string, manifest Manifest) (Report, error) {
 	}
 	metrics := &RTSPMetrics{Boundary: "decrypted_rtsp_application", Transport: "tcp_interleaved", Secure: manifest.Protocol == ProtocolRTSPS, SDPAvailable: len(sdpData) != 0, Connections: metadata.Connections, Requests: metadata.Requests, RequestsTruncated: metadata.RequestsTruncated, Tracks: tracks, AnalysisLimited: invalidSDP}
 	report := Report{RuleVersion: "rtsp/1", Manifest: manifest, RTSP: metrics, Metrics: Metrics{MediaTimingUnit: "rtp"}, Findings: []Finding{}}
+	if metadata.Version == 2 {
+		report.RuleVersion = "rtsp/2"
+		metrics.Transport, metrics.RequestedTransport, metrics.Boundary = "udp", "udp", "rtsp_control_and_udp_datagrams"
+	}
 	report.Manifest.Observation.FirstPayloadMS = nil
 	if len(spans) > 0 {
 		first := spans[0].ArrivalMS
@@ -207,81 +228,7 @@ func replayRTSP(dir string, manifest Manifest) (Report, error) {
 				}
 				continue
 			}
-			var packet rtp.Packet
-			if packet.Unmarshal(value.Payload) != nil {
-				metrics.MalformedPackets++
-				if len(events) < 2 {
-					events = append(events, Event{Artifact: rtspWireName, Offset: offset, Size: len(value.Payload), ArrivalMS: at, Kind: "rtp_invalid"})
-				}
-				continue
-			}
-			metrics.RTPPackets++
-			metrics.RTPBytes += int64(len(value.Payload))
-			if metrics.FirstRTPMS == nil {
-				first := at
-				metrics.FirstRTPMS = &first
-			}
-			trackIndex := -1
-			for index := range metrics.Tracks {
-				if metrics.Tracks[index].MediaID == channel.MediaID && metrics.Tracks[index].PayloadType == int(packet.PayloadType) {
-					trackIndex = index
-					break
-				}
-			}
-			if trackIndex < 0 {
-				metrics.UnknownPayloadPackets++
-				continue
-			}
-			track, state := &metrics.Tracks[trackIndex], &states[trackIndex]
-			seq := packet.SequenceNumber
-			event := Event{Artifact: rtspWireName, Offset: offset, Size: len(value.Payload), ArrivalMS: at, Kind: "rtp_packet", Codec: track.Codec, Track: uint8(track.ID), RTPSequence: &seq}
-			if track.Kind == "video" && metrics.FirstVideoRTPMS == nil {
-				first := at
-				metrics.FirstVideoRTPMS = &first
-			}
-			if track.Kind == "audio" && metrics.FirstAudioRTPMS == nil {
-				first := at
-				metrics.FirstAudioRTPMS = &first
-			}
-			track.Received, track.RTPPackets = true, track.RTPPackets+1
-			track.RTPBytes += int64(len(value.Payload))
-			if track.FirstRTPMS == nil {
-				first := at
-				track.FirstRTPMS = &first
-			}
-			if track.LastRTPMS != nil && at-*track.LastRTPMS > track.MaxArrivalGapMS {
-				track.MaxArrivalGapMS = at - *track.LastRTPMS
-				state.gapStart, state.gapEnd = *track.LastRTPMS, at
-				if state.lastEvent != nil {
-					state.gapEvidence = []Event{*state.lastEvent, event}
-				}
-			}
-			last := at
-			track.LastRTPMS = &last
-			if state.received && state.lastSSRC != packet.SSRC {
-				track.SSRCChanges++
-			}
-			state.lastSSRC, state.received = packet.SSRC, true
-			sequence := state.ssrcs[packet.SSRC]
-			if sequence == nil {
-				if len(state.ssrcs) == maxRTSPSSRCs {
-					track.AnalysisLimited = true
-				} else {
-					sequence = &rtspSequenceState{}
-					state.ssrcs[packet.SSRC] = sequence
-				}
-			}
-			if sequence != nil {
-				previousGaps := track.SequenceGaps
-				sequence.observe(packet.SequenceNumber, packet.Timestamp, track)
-				if track.SequenceGaps > previousGaps && len(state.sequenceEvidence) < 4 {
-					if state.lastEvent != nil {
-						state.sequenceEvidence = append(state.sequenceEvidence, *state.lastEvent)
-					}
-					state.sequenceEvidence = append(state.sequenceEvidence, event)
-				}
-			}
-			state.lastEvent = &event
+			observeRTSPRTP(metrics, states, channel.MediaID, value.Payload, rtspWireName, offset, at, &events, visit)
 		}
 	}
 	if _, err := io.Copy(io.Discard, counter); err != nil || counter.readErr != nil {
@@ -329,6 +276,11 @@ func replayRTSP(dir string, manifest Manifest) (Report, error) {
 	for index, channel := range metadata.Channels {
 		if index >= len(expectedMedias) || index >= len(negotiated) || channel.MediaID != expectedMedias[index] || negotiated[index] != [2]int{channel.RTPChannel, channel.RTCPChannel} {
 			return Report{}, ErrInvalid
+		}
+	}
+	if metadata.Version == 2 {
+		if err := replayRTSPUDP(&report, metadata, session, entries, responses, states, &events, visit); err != nil {
+			return Report{}, err
 		}
 	}
 	addRTSPFindings(&report, events, states)
