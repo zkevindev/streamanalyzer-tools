@@ -37,13 +37,22 @@ const (
 	maxEventLease        = time.Hour
 )
 
+type EventRecovery struct {
+	RestartedAt   time.Time `json:"restarted_at"`
+	Invalidated   int       `json:"invalidated"`
+	OldFaults     uint64    `json:"old_faults"`
+	SubscribedAt  time.Time `json:"subscribed_at,omitzero"`
+	FirstMotionAt time.Time `json:"first_motion_at,omitzero"`
+}
+
 type EventStatus struct {
-	Motion        bool   `json:"motion"`
-	Subscriptions int    `json:"subscriptions"`
-	PullRequests  uint64 `json:"pull_requests"`
-	Changes       uint64 `json:"changes"`
-	Delivered     uint64 `json:"delivered"`
-	Dropped       uint64 `json:"dropped"`
+	Recovery      *EventRecovery `json:"recovery,omitempty"`
+	Motion        bool           `json:"motion"`
+	Subscriptions int            `json:"subscriptions"`
+	PullRequests  uint64         `json:"pull_requests"`
+	Changes       uint64         `json:"changes"`
+	Delivered     uint64         `json:"delivered"`
+	Dropped       uint64         `json:"dropped"`
 }
 
 type motionEvent struct {
@@ -65,9 +74,10 @@ func (p *pullPoint) wake() {
 }
 
 type eventBroker struct {
-	mu     sync.Mutex
-	status EventStatus
-	points map[string]*pullPoint
+	mu          sync.Mutex
+	status      EventStatus
+	points      map[string]*pullPoint
+	invalidated map[string]struct{}
 }
 
 func (b *eventBroker) prune(now time.Time) {
@@ -95,7 +105,40 @@ func (b *eventBroker) snapshot() EventStatus {
 	b.prune(time.Now())
 	status := b.status
 	status.Subscriptions = len(b.points)
+	if status.Recovery != nil {
+		result := *status.Recovery
+		status.Recovery = &result
+	}
 	return status
+}
+
+func (m *Manager) RestartEvents() (Status, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.camera == nil {
+		return Status{}, ErrEventsUnavailable
+	}
+	c := m.camera
+	b := &c.events
+	b.mu.Lock()
+	now := time.Now()
+	b.prune(now)
+	b.invalidated = make(map[string]struct{}, len(b.points))
+	b.status.Recovery = &EventRecovery{RestartedAt: now, Invalidated: len(b.points)}
+	for id, point := range b.points {
+		b.invalidated[id] = struct{}{}
+		delete(b.points, id)
+		point.wake()
+	}
+	b.mu.Unlock()
+	return c.snapshot(), nil
+}
+
+func (b *eventBroker) unknown(id string) *soapFault {
+	if _, ok := b.invalidated[id]; ok {
+		b.status.Recovery.OldFaults++
+	}
+	return unknownPullPoint()
 }
 
 func (m *Manager) SetMotion(active bool) (Status, error) {
@@ -168,6 +211,9 @@ func (c *camera) createPullPoint(op operation) (string, *soapFault) {
 	point := &pullPoint{expires: now.Add(lease), update: make(chan struct{})}
 	b.enqueue(point, motionEvent{at: c.deviceTime(now), active: b.status.Motion, operation: "Initialized"})
 	b.points[id] = point
+	if recovery := b.status.Recovery; recovery != nil && recovery.SubscribedAt.IsZero() {
+		recovery.SubscribedAt = time.Now()
+	}
 	address := strings.TrimSuffix(c.status.EventURL, eventPath) + pullPath + id
 	return "<tev:SubscriptionReference><wsa:Address>" + address + "</wsa:Address></tev:SubscriptionReference>" +
 		c.eventTimes("wsnt", now, point.expires), nil
@@ -181,7 +227,7 @@ func (c *camera) updatePullPoint(id string, op operation) (string, *soapFault) {
 	b.prune(now)
 	point := b.points[id]
 	if point == nil {
-		return "", unknownPullPoint()
+		return "", b.unknown(id)
 	}
 	switch op.XMLName.Local {
 	case "Renew":
@@ -217,8 +263,9 @@ func (c *camera) pullMessages(ctx context.Context, id string, op operation) (str
 	b.prune(time.Now())
 	point := b.points[id]
 	if point == nil {
+		fault := b.unknown(id)
 		b.mu.Unlock()
-		return "", unknownPullPoint()
+		return "", fault
 	}
 	if point.pulling {
 		b.mu.Unlock()
@@ -234,7 +281,7 @@ func (c *camera) pullMessages(ctx context.Context, id string, op operation) (str
 		now := time.Now()
 		b.prune(now)
 		if b.points[id] != point {
-			return "", unknownPullPoint()
+			return "", b.unknown(id)
 		}
 		if len(point.events) > 0 || !now.Before(deadline) {
 			n := min(limit, len(point.events))
@@ -242,6 +289,9 @@ func (c *camera) pullMessages(ctx context.Context, id string, op operation) (str
 			body.WriteString(c.eventTimes("tev", now, point.expires))
 			for _, event := range point.events[:n] {
 				body.WriteString(event.xml())
+				if recovery := b.status.Recovery; recovery != nil && recovery.FirstMotionAt.IsZero() && event.operation == "Changed" {
+					recovery.FirstMotionAt = now
+				}
 			}
 			point.events = point.events[n:]
 			b.status.Delivered += uint64(n)

@@ -27,7 +27,7 @@ let motionActive = false;
 function updateButtons() {
   el('simulator-fields').disabled = busy || active || !loaded;
   el('start').disabled = busy || active || !loaded || !network.value;
-  el('motion').disabled = busy || !active;
+  el('motion').disabled = el('restart-events').disabled = busy || !active;
   el('recorded-motion').disabled = el('missing-motion').disabled = busy || !active;
   el('stop').disabled = busy || !active;
 }
@@ -50,6 +50,13 @@ function render(status) {
   el('motion-control').hidden = !active;
   el('motion').textContent = motionActive ? '结束移动侦测' : '触发移动侦测';
   const events = status.events || {};
+  const recovery = events.recovery;
+  el('event-recovery').hidden = !recovery;
+  el('event-recovery-status').textContent = recovery ? [
+    '已失效 ' + recovery.invalidated + ' 个订阅', '旧订阅故障 ' + recovery.old_faults + ' 次',
+    recovery.subscribed_at && '重建订阅 ' + (Date.parse(recovery.subscribed_at) - Date.parse(recovery.restarted_at)) + ' ms',
+    recovery.first_motion_at && '重新送达移动告警 ' + (Date.parse(recovery.first_motion_at) - Date.parse(recovery.restarted_at)) + ' ms',
+  ].filter(Boolean).join(' · ') : '';
   el('event-metrics').textContent = [events.subscriptions + ' 个订阅', events.pull_requests + ' 次拉取',
     events.delivered + ' 条通知', events.dropped ? events.dropped + ' 条队列溢出' : ''].filter(Boolean).join(' · ');
   el('snapshot-hint').hidden = !active;
@@ -181,6 +188,7 @@ for (const [selected, other] of [['rtsp-outage', 'video-gap'], ['video-gap', 'rt
 el('stop').addEventListener('click', () => { void change('/stop'); });
 el('recorded-motion').addEventListener('click', () => { void change('/recording-motion', {recorded: true}); });
 el('missing-motion').addEventListener('click', () => { void change('/recording-motion', {recorded: false}); });
+el('restart-events').addEventListener('click', () => { void change('/restart-events'); });
 el('motion').addEventListener('click', () => { void change('/motion', {active: !motionActive}); });
 void configure();
 void poll();

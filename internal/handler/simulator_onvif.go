@@ -91,6 +91,14 @@ func registerONVIFRoutes(r *gin.Engine, simulator *onvif.Manager) {
 		}
 		c.JSON(http.StatusOK, status)
 	})
+	api.POST("/restart-events", func(c *gin.Context) {
+		status, err := simulator.RestartEvents()
+		if err != nil {
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, status)
+	})
 	api.POST("/motion", func(c *gin.Context) {
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 512)
 		var input struct {
