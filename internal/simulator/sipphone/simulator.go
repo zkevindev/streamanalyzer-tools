@@ -27,6 +27,7 @@ var (
 )
 
 type Config struct {
+	ReliableEarly    bool   `json:"reliable_early,omitempty"`
 	EarlyMedia       bool   `json:"early_media,omitempty"`
 	Preset           string `json:"preset,omitempty"`
 	PresetDelayMS    int    `json:"preset_delay_ms,omitempty"`

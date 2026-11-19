@@ -71,6 +71,7 @@
                 <div><label for="preset-duration">故障持续（毫秒）</label><input id="preset-duration" name="preset_duration_ms" type="number" min="300" max="30000" value="5000"></div>
               </div>
             </details>
+            <label class="sim-check"><input id="offer-reliable" type="checkbox"> 对支持 100rel 的呼入等待 PRACK</label>
             <label class="sim-check"><input id="offer-early" type="checkbox"> 呼入振铃时发送 183 和早期测试音</label>
           </fieldset>
           <div class="sim-controls">
@@ -103,6 +104,7 @@
             <p class="muted field-hint">通话时发送 440 Hz 测试音。收到的音频可试听最近 20 秒。</p>
             <section id="call-metrics" class="sip-metrics" aria-label="RTP 音频" hidden>
               <p id="scenario-result" class="field-hint" role="status" hidden></p>
+              <p id="prack-summary" class="field-hint" hidden></p>
               <p id="early-summary" class="field-hint" hidden></p>
               <p id="audio-summary" class="field-hint"></p>
               <label for="audio-fault">单向无声</label>

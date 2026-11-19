@@ -75,6 +75,16 @@ function render(next) {
   el('early-summary').hidden = !call?.early_media;
   el('early-summary').textContent = call?.early_media ?
     '183 早期媒体 · 发送 ' + (call.early_send_rtp?.packets || 0) + ' 包 · 接收 ' + (call.early_receive_rtp?.packets || 0) + ' 包' : '';
+  const prack = call?.prack;
+  el('prack-summary').hidden = !prack;
+  const prackStates = { waiting: '等待确认', confirmed: '已确认', rejected: '被拒绝', timeout: '超时', failed: '失败', canceled: '已取消', invalid: '临时应答无效' };
+  if (prack) {
+    const times = [['临时应答', prack.provisional_at], ['PRACK', prack.request_at], ['应答', prack.response_at],
+      ['首个早期 RTP（发送）', call.early_send_rtp?.first_at], ['首个早期 RTP（接收）', call.early_receive_rtp?.first_at]];
+    el('prack-summary').textContent = ['PRACK ' + prackStates[prack.state], prack.rseq && 'RSeq ' + prack.rseq,
+      prack.final_code && 'SIP ' + prack.final_code, ...times.filter(([, at]) => at).map(([name, at]) =>
+        name + ' ' + new Date(at).toLocaleTimeString('zh-CN', {fractionalSecondDigits: 3}))].filter(Boolean).join(' · ');
+  }
   const keys = call?.dtmf_keys || '';
   const digits = call?.digit_events || [];
   el('dtmf-panel').hidden = !keys && !digits.length;
@@ -209,6 +219,7 @@ el('registration-form').addEventListener('submit', event => {
   const config = Object.fromEntries(new FormData(event.currentTarget));
   config.port = Number(config.port);
   config.local_port = Number(config.local_port);
+  config.reliable_early = el('offer-reliable').checked;
   config.early_media = el('offer-early').checked;
   config.preset_delay_ms = Number(config.preset_delay_ms);
   config.preset_duration_ms = Number(config.preset_duration_ms);
