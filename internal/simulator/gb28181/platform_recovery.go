@@ -14,22 +14,28 @@ import (
 )
 
 const (
-	recoveryTCP = "sip_tcp_disconnect"
-	recoveryUDP = "udp_keepalive_timeout"
+	mediaIdleTimeout = 3500 * time.Millisecond
+	recoveryMedia    = "media_rtp_timeout"
+	recoveryTCP      = "sip_tcp_disconnect"
+	recoveryUDP      = "udp_keepalive_timeout"
 )
 
 type PlatformRecovery struct {
-	Mode              string           `json:"mode"`
-	State             string           `json:"state"`
-	Before            *PlatformPreview `json:"before"`
-	PreviousSession   *SessionReport   `json:"previous_session,omitempty"`
-	InterruptedAt     time.Time        `json:"interrupted_at,omitzero"`
-	RegisteredAt      time.Time        `json:"registered_at,omitzero"`
-	CatalogAt         time.Time        `json:"catalog_at,omitzero"`
-	FirstKeyframeAt   time.Time        `json:"first_keyframe_at,omitzero"`
-	RecoveryMS        *int64           `json:"recovery_ms,omitempty"`
-	IgnoredKeepalives int              `json:"ignored_keepalives"`
-	Error             string           `json:"error,omitempty"`
+	RegistrationChanges  uint64 `json:"registration_changes,omitempty"`
+	registrationBaseline uint64
+	LastRTPAt            time.Time        `json:"last_rtp_at,omitzero"`
+	KeepaliveAt          time.Time        `json:"keepalive_at,omitzero"`
+	Mode                 string           `json:"mode"`
+	State                string           `json:"state"`
+	Before               *PlatformPreview `json:"before"`
+	PreviousSession      *SessionReport   `json:"previous_session,omitempty"`
+	InterruptedAt        time.Time        `json:"interrupted_at,omitzero"`
+	RegisteredAt         time.Time        `json:"registered_at,omitzero"`
+	CatalogAt            time.Time        `json:"catalog_at,omitzero"`
+	FirstKeyframeAt      time.Time        `json:"first_keyframe_at,omitzero"`
+	RecoveryMS           *int64           `json:"recovery_ms,omitempty"`
+	IgnoredKeepalives    int              `json:"ignored_keepalives"`
+	Error                string           `json:"error,omitempty"`
 }
 
 type recoveryMessage struct {
@@ -50,6 +56,22 @@ type recoveryCatalog struct {
 }
 
 func (p *platform) runRecovery(cfg PreviewConfig, first *PlatformPreview, media previewMedia, peer netip.AddrPort, result *PlatformRecovery) {
+	if cfg.Recovery == recoveryMedia {
+		cfg.watchMedia = true
+		p.runPreview(cfg, first, media, peer, nil)
+		if first.State != "media_timeout" {
+			p.finishRecovery(result, errors.New("未在已收到关键帧的会话中观测到 RTP 超时"))
+			return
+		}
+		p.mu.Lock()
+		result.InterruptedAt, result.State = result.LastRTPAt, "interrupted"
+		p.mu.Unlock()
+		cfg.watchMedia = false
+		ctx, cancel := context.WithTimeout(p.ctx, 8*time.Second)
+		defer cancel()
+		p.recoverPreview(ctx, cfg, peer, result)
+		return
+	}
 	started := false
 	p.runPreview(cfg, first, media, peer, func() bool {
 		p.mu.Lock()
@@ -84,6 +106,10 @@ func (p *platform) runRecovery(cfg PreviewConfig, first *PlatformPreview, media 
 		p.finishRecovery(result, err)
 		return
 	}
+	p.recoverPreview(ctx, cfg, peer, result)
+}
+
+func (p *platform) recoverPreview(ctx context.Context, cfg PreviewConfig, peer netip.AddrPort, result *PlatformRecovery) {
 	if err := p.recoveryCatalog(ctx, peer, cfg.ChannelID); err != nil {
 		p.finishRecovery(result, err)
 		return
@@ -107,7 +133,7 @@ func (p *platform) runRecovery(cfg PreviewConfig, first *PlatformPreview, media 
 		return false
 	})
 	if next.State != "passed" {
-		p.finishRecovery(result, fmt.Errorf("重注册后点播失败（%s）", next.State))
+		p.finishRecovery(result, fmt.Errorf("恢复点播失败（%s）", next.State))
 		return
 	}
 	p.finishRecovery(result, nil)
@@ -116,6 +142,9 @@ func (p *platform) runRecovery(cfg PreviewConfig, first *PlatformPreview, media 
 func (p *platform) finishRecovery(result *PlatformRecovery, err error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	if result.Mode == recoveryMedia {
+		result.RegistrationChanges = p.registrations - result.registrationBaseline
+	}
 	if err != nil {
 		result.State, result.Error = "failed", err.Error()
 		if p.ctx.Err() != nil {
@@ -167,11 +196,11 @@ func (p *platform) recoveryCatalog(parent context.Context, peer netip.AddrPort, 
 	req.SetBody(fmt.Appendf(nil, "%s<Query><CmdType>Catalog</CmdType><SN>%d</SN><DeviceID>%s</DeviceID></Query>", xml.Header, query.sn, p.cfg.DeviceID))
 	answer, err := p.client.Do(ctx, req)
 	if err != nil || answer == nil || !answer.IsSuccess() {
-		return errors.New("重注册后的 Catalog 请求未获成功应答")
+		return errors.New("恢复前的 Catalog 请求未获成功应答")
 	}
 	select {
 	case <-ctx.Done():
-		return errors.New("重注册后未收到匹配的在线通道目录")
+		return errors.New("恢复前未收到匹配的在线通道目录")
 	case <-query.done:
 		return nil
 	}
@@ -179,31 +208,34 @@ func (p *platform) recoveryCatalog(parent context.Context, peer netip.AddrPort, 
 
 // recoveryPeerMessage runs under the platform lock. An unanswered transaction
 // can retransmit several times, so count each heartbeat SN once.
-func (p *platform) recoveryPeerMessage(req *sip.Request) (ignore bool, catalog *recoveryCatalog) {
+func (p *platform) recoveryPeerMessage(req *sip.Request) (ignore bool, catalog *recoveryCatalog, heartbeat *PlatformRecovery) {
 	if req.Method != sip.MESSAGE || p.recovery == nil || !p.busy {
-		return false, nil
+		return false, nil, nil
 	}
 	var msg recoveryMessage
 	if xml.Unmarshal(req.Body(), &msg) != nil || msg.DeviceID != p.cfg.DeviceID {
-		return false, nil
+		return false, nil, nil
 	}
 	r := p.recovery
+	if r.Mode == recoveryMedia && msg.XMLName.Local == "Notify" && msg.Command == "Keepalive" {
+		return false, nil, r
+	}
 	if r.Mode == recoveryUDP && r.State == "interrupted" && r.RegisteredAt.IsZero() &&
 		msg.XMLName.Local == "Notify" && msg.Command == "Keepalive" {
 		if _, already := p.ignoredSN[msg.SN]; !already {
 			p.ignoredSN[msg.SN] = struct{}{}
 			r.IgnoredKeepalives++
 		}
-		return true, nil
+		return true, nil, nil
 	}
 	if query := p.catalog; query != nil && msg.XMLName.Local == "Response" && msg.Command == "Catalog" && msg.SN == query.sn {
 		for _, item := range msg.Items {
 			if item.ID == query.channel && strings.EqualFold(item.Status, "ON") {
-				return false, query
+				return false, query, nil
 			}
 		}
 	}
-	return false, nil
+	return false, nil, nil
 }
 
 func (r *PlatformRecovery) snapshot() *PlatformRecovery {
@@ -221,4 +253,11 @@ func clonePlatformPreview(p *PlatformPreview) *PlatformPreview {
 		result.Recording = &recording
 	}
 	return &result
+}
+
+func earlierTime(first, second time.Time) time.Time {
+	if first.Before(second) {
+		return first
+	}
+	return second
 }

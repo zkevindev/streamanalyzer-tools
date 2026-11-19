@@ -14,7 +14,7 @@ const outcomes = {
   connecting: '正在建立 TCP 媒体连接',
   no_media_connection: '未建立 TCP 媒体连接',
   media_negotiation: 'TCP 媒体协商失败',
-  no_rtp: '未收到 RTP',
+  no_rtp: '未收到 RTP', media_timeout: '活动会话 RTP 超时',
   no_keyframe: '收到 RTP，未解析到关键帧',
   passed: '收到并解析出首个关键帧',
   interrupted: '已触发 SIP 中断',
@@ -26,6 +26,7 @@ const stages = {
   invite: 'INVITE', invite_ok: 'INVITE 200 OK', ack: 'ACK',
   ack_withheld: '暂缓 ACK', cleanup_ack: '清理会话时补发 ACK',
   media_connect: '尝试建立媒体连接', media_connected: '媒体就绪', first_rtp: '首个 RTP',
+  media_timeout: '正在点播的会话 RTP 超时', fault_media_silent: '停止发送 RTP',
   fault_injected: '触发 SIP 故障', first_keyframe: '首个关键帧', bye: 'BYE', ended: '会话结束', failed: '失败',
 };
 let pending = false;
@@ -65,7 +66,12 @@ function applyRecoveryOptions() {
   el('recording-range').hidden = !recording;
   el('recording-start').required = el('recording-end').required = recording;
   el('preview-submit').textContent = recording ? '检索并回放' : '点播并收流';
-  el('recovery-hint').hidden = recording || choice.value !== 'udp_keepalive_timeout';
+  const media = choice.value === 'media_rtp_timeout';
+  el('window').min = media ? '8000' : '500';
+  if (media && Number(el('window').value) < 8000) el('window').value = '8500';
+  el('recovery-hint').hidden = recording || (!media && choice.value !== 'udp_keepalive_timeout');
+  el('recovery-hint').textContent = media ? '收到首个关键帧后，匹配的 RTP 停止 3.5 秒即触发重新点播。' :
+    'UDP 场景使用 5 秒设备心跳，最多等待 30 秒重新注册。';
 }
 
 function render() {
@@ -82,12 +88,13 @@ function render() {
   const recovery = status?.recovery;
   const recoveryLabels = {waiting_media: '等待首次关键帧', interrupted: '等待设备重新注册', registered: '核对重新注册后的目录',
     previewing: '正在重新点播', passed: '恢复点播成功', failed: '恢复失败', stopped: '观测已停止'};
-  const label = recovery ? recoveryLabels[recovery.state] : preview ? outcomes[preview.state] : '等待点播';
+  const label = recovery ? (recovery.mode === 'media_rtp_timeout' && recovery.state === 'interrupted' ? '核对当前在线目录' : recoveryLabels[recovery.state]) : preview ? outcomes[preview.state] : '等待点播';
   if (badge.textContent !== label) badge.textContent = label;
   badge.dataset.status = (recovery?.state || preview?.state) === 'passed' ? 'done' : (recovery?.error || preview?.error ? 'failed' : '');
   const recoveryDetails = recovery ? [recovery.before.call_id && '原会话 ' + recovery.before.call_id,
     recovery.ignored_keepalives > 0 && '忽略 ' + recovery.ignored_keepalives + ' 次心跳',
     recovery.previous_session?.timeline?.some(mark => mark.stage === 'ended') && '旧会话已释放',
+    recovery.keepalive_at && Date.parse(recovery.keepalive_at) > Date.parse(recovery.last_rtp_at) && '停流后收到并应答心跳',
     recovery.catalog_at && '已收到恢复后的在线目录',
     recovery.recovery_ms != null && '恢复到关键帧 ' + recovery.recovery_ms + ' ms', recovery.error].filter(Boolean) : [];
   el('recovery-result').hidden = !recoveryDetails.length;

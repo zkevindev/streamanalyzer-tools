@@ -16,6 +16,7 @@ import (
 )
 
 type device struct {
+	silenceUsed   atomic.Bool
 	outputID      string
 	broadcast     *broadcastSession
 	voice         BroadcastStatus

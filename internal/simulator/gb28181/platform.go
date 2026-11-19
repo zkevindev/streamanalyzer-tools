@@ -29,6 +29,7 @@ type PlatformConfig struct {
 }
 
 type PreviewConfig struct {
+	watchMedia     bool
 	Recording      *PlaybackRange `json:"recording,omitempty"`
 	Recovery       string         `json:"recovery,omitempty"`
 	MediaTransport mediaTransport `json:"media_transport,omitempty"`
@@ -82,23 +83,24 @@ type PlatformManager struct {
 }
 
 type platform struct {
-	playback  *platformPlayback
-	interrupt func(netip.AddrPort) bool
-	recovery  *PlatformRecovery
-	catalog   *recoveryCatalog
-	ignoredSN map[uint32]struct{}
-	cfg       PlatformConfig
-	local     netip.AddrPort
-	client    *sipgo.Client
-	ctx       context.Context
-	cancel    context.CancelFunc
-	done      chan struct{}
-	mu        sync.Mutex
-	peer      netip.AddrPort
-	expires   time.Time
-	preview   *PlatformPreview
-	busy      bool
-	workers   sync.WaitGroup
+	registrations uint64
+	playback      *platformPlayback
+	interrupt     func(netip.AddrPort) bool
+	recovery      *PlatformRecovery
+	catalog       *recoveryCatalog
+	ignoredSN     map[uint32]struct{}
+	cfg           PlatformConfig
+	local         netip.AddrPort
+	client        *sipgo.Client
+	ctx           context.Context
+	cancel        context.CancelFunc
+	done          chan struct{}
+	mu            sync.Mutex
+	peer          netip.AddrPort
+	expires       time.Time
+	preview       *PlatformPreview
+	busy          bool
+	workers       sync.WaitGroup
 }
 
 func (m *PlatformManager) Start(cfg PlatformConfig) error {
@@ -243,7 +245,8 @@ func (p *platform) register(req *sip.Request, tx sip.ServerTransaction) {
 	}
 	if tx.Respond(res) == nil && expires > 0 {
 		p.mu.Lock()
-		if r := p.recovery; r != nil && r.State == "interrupted" && r.RegisteredAt.IsZero() &&
+		p.registrations++
+		if r := p.recovery; r != nil && r.Mode != recoveryMedia && r.State == "interrupted" && r.RegisteredAt.IsZero() &&
 			!registeredAt.Before(r.InterruptedAt) && (r.Mode != recoveryUDP || r.IgnoredKeepalives >= 3) {
 			r.RegisteredAt = time.Now()
 			r.State = "registered"
@@ -257,8 +260,9 @@ func (p *platform) peerRequest(req *sip.Request, tx sip.ServerTransaction) {
 	valid := p.peer.String() == req.Source() && time.Now().Before(p.expires)
 	var ignored bool
 	var catalog *recoveryCatalog
+	var heartbeat *PlatformRecovery
 	if valid {
-		ignored, catalog = p.recoveryPeerMessage(req)
+		ignored, catalog, heartbeat = p.recoveryPeerMessage(req)
 		p.recordingPeerMessage(req)
 	}
 	p.mu.Unlock()
@@ -269,7 +273,17 @@ func (p *platform) peerRequest(req *sip.Request, tx sip.ServerTransaction) {
 	if ignored {
 		return
 	}
-	if tx.Respond(sip.NewResponseFromRequest(req, 200, "OK", nil)) == nil && catalog != nil {
+	if tx.Respond(sip.NewResponseFromRequest(req, 200, "OK", nil)) != nil {
+		return
+	}
+	if heartbeat != nil {
+		p.mu.Lock()
+		if heartbeat.State == "waiting_media" {
+			heartbeat.KeepaliveAt = time.Now()
+		}
+		p.mu.Unlock()
+	}
+	if catalog != nil {
 		select {
 		case catalog.done <- struct{}{}:
 		default:

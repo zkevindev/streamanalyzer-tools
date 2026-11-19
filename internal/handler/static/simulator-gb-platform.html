@@ -44,7 +44,7 @@
               <div class="sim-fields">
                 <div><label for="channel">通道编号</label><input id="channel" name="channel_id" pattern="[0-9]{20}" value="34020000001320000002" required></div>
                 <div><label for="media-transport">点播媒体传输</label><select id="media-transport" name="media_transport"><option value="udp">UDP</option><option value="tcp-active">TCP（平台主动连接）</option><option value="tcp-passive">TCP（平台等待连入）</option></select></div>
-                <div><label for="recovery-mode">恢复场景</label><select id="recovery-mode" name="recovery"><option value="">常规点播</option><option value="sip_tcp_disconnect" data-transport="tcp">收到关键帧后断开 SIP TCP</option><option value="udp_keepalive_timeout" data-transport="udp">收到关键帧后忽略 UDP 心跳</option></select></div>
+                <div><label for="recovery-mode">恢复场景</label><select id="recovery-mode" name="recovery"><option value="">常规点播</option><option value="media_rtp_timeout">在线断流后恢复点播</option><option value="sip_tcp_disconnect" data-transport="tcp">收到关键帧后断开 SIP TCP</option><option value="udp_keepalive_timeout" data-transport="udp">收到关键帧后忽略 UDP 心跳</option></select></div>
                 <div><label for="window">观测窗口（毫秒）</label><input id="window" name="window_ms" type="number" min="500" max="15000" value="4000" required></div>
               </div>
               <label class="sim-check"><input id="recording-mode" type="checkbox"> 检索指定时段并回放录像</label>

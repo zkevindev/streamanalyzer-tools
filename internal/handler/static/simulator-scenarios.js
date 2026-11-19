@@ -149,7 +149,8 @@ async function stopOwned(path, field, value) {
 async function runGB(expected, entry) {
   let bridge;
   let device;
-  const recovery = {tcp_recovery: 'sip_tcp_disconnect', udp_recovery: 'udp_keepalive_timeout'}[expected];
+  const recovery = {tcp_recovery: 'sip_tcp_disconnect', udp_recovery: 'udp_keepalive_timeout', media_recovery: 'media_rtp_timeout'}[expected];
+  const mediaRecovery = expected === 'media_recovery';
   const sipTransport = expected === 'tcp_recovery' ? 'tcp' : 'udp';
   try {
     progress('启动测试平台和设备…');
@@ -158,6 +159,7 @@ async function runGB(expected, entry) {
     device = await request(gb + '/start', {
       ...ids, platform_host: host, platform_port: Number(port), sip_transport: sipTransport,
       ...(recovery && {heartbeat_seconds: 5}),
+      ...(mediaRecovery && {faults: {silence_after_ms: 3200}}),
       ...(expected === 'no_rtp' ? {faults: {first_delay_ms: 3000}} : {}),
     });
     await waitFor(async () => {
@@ -165,9 +167,9 @@ async function runGB(expected, entry) {
       if (state.state === 'failed') throw new Error(state.error || '设备注册失败');
       return state.state === 'registered' && (await request(platform)).peer;
     }, 6000, '设备未在观测窗口内完成注册。');
-    progress(recovery ? '首次出画后注入 SIP 故障，等待重注册和恢复出画…' : '点播并观察 ACK、RTP 和关键帧…');
+    progress(mediaRecovery ? '首次出画后停发 RTP，等待媒体超时和重新点播…' : recovery ? '首次出画后注入 SIP 故障，等待重注册和恢复出画…' : '点播并观察 ACK、RTP 和关键帧…');
     await request(platform + '/preview', {
-      channel_id: ids.channel_id, window_ms: 2300, skip_ack: expected === 'no_ack', ...(recovery && {recovery}),
+      channel_id: ids.channel_id, window_ms: mediaRecovery ? 8500 : 2300, skip_ack: expected === 'no_ack', ...(recovery && {recovery}),
     });
     const observed = await waitFor(async () => {
       const state = await request(platform);
@@ -179,6 +181,16 @@ async function runGB(expected, entry) {
       const oldEnded = report?.previous_session?.timeline.some(mark => mark.stage === 'ended');
       entry.passed = Boolean(report?.state === 'passed' && oldEnded && report.before.call_id !== observed.preview.call_id &&
         observed.device_session?.call_id === observed.preview.call_id);
+      if (mediaRecovery) {
+        entry.passed = entry.passed && report.before.state === 'media_timeout' &&
+          report.before.timeline.some(mark => mark.stage === 'bye') &&
+          report.previous_session.timeline.some(mark => mark.stage === 'fault_media_silent') &&
+          report.before.ssrc !== observed.preview.ssrc && report.before.rtp_address !== observed.preview.rtp_address &&
+          !report.registration_changes && Date.parse(report.keepalive_at) > Date.parse(report.last_rtp_at);
+        entry.detail = entry.passed ? '心跳正常 · RTP 超时后恢复关键帧 ' + report.recovery_ms + ' ms' :
+          (report?.error || '断流恢复缺少心跳或媒体会话证据');
+        return;
+      }
       entry.detail = entry.passed ? '重注册、目录和新点播均通过 · 首个关键帧恢复 ' + report.recovery_ms + ' ms' :
         (report?.error || '恢复证据缺少旧会话释放或新会话');
       return;

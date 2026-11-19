@@ -21,7 +21,7 @@ const sessionStages = {
   invite: '收到 INVITE', invite_ok: '发送 INVITE 200 OK', ack: '收到 ACK',
   media_connected: '媒体就绪', first_rtp: '发出首个 RTP 包', first_keyframe: '发完首个视频关键帧',
   bye: '收到 BYE', ended: '会话结束', failed: '会话失败',
-  fault_delay: '注入起播延迟', fault_loss: '注入 UDP 丢包', fault_reorder: '注入 UDP 乱序',
+  fault_delay: '注入起播延迟', fault_media_silent: '会话保持，停止发送 RTP', fault_loss: '注入 UDP 丢包', fault_reorder: '注入 UDP 乱序',
   playback_pause: '暂停回放', playback_play: '继续回放', playback_seek: '定位录像', playback_recording: '开始录像段', playback_gap: '跳过录像缺口', playback_done: '录像回放结束',
   fault_timestamp: '注入时间戳跳变', fault_mute: '中断音频', fault_udp_only: '跳过 UDP 包故障',
 };
@@ -375,12 +375,13 @@ form.addEventListener('submit', (event) => {
   config.capture_rtp = el('capture-rtp').checked;
   config.voice = el('voice-enabled').checked;
   const faults = {
+    silence_after_ms: Number(el('fault-silence').value),
     first_delay_ms: Number(el('fault-delay').value), start_ms: Number(el('fault-start').value),
     window_ms: Number(el('fault-window').value), timestamp_jump_ms: Number(el('fault-jump').value),
     drop_every: Number(el('fault-drop').value), reorder_every: Number(el('fault-reorder').value),
     mute_audio: el('fault-mute').checked,
   };
-  if (faults.first_delay_ms || faults.timestamp_jump_ms || faults.drop_every || faults.reorder_every || faults.mute_audio) {
+  if (faults.silence_after_ms || faults.first_delay_ms || faults.timestamp_jump_ms || faults.drop_every || faults.reorder_every || faults.mute_audio) {
     config.faults = faults;
   }
   const file = videoFile.files[0];

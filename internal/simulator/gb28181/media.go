@@ -355,6 +355,8 @@ func (d *device) stream(session *mediaSession) {
 		}
 	}
 	firstPacket, firstKey := true, true
+	var silenceAt time.Time
+	silenced := false
 	capture := func(packet []byte) {
 		if !firstPacket && !session.evidence.CaptureEnabled {
 			return
@@ -369,6 +371,13 @@ func (d *device) stream(session *mediaSession) {
 	send := func(unit mediaUnit) error {
 		if err := ctx.Err(); err != nil {
 			return err
+		}
+		if !silenceAt.IsZero() && !time.Now().Before(silenceAt) {
+			if !silenced {
+				mark("fault_media_silent", "")
+				silenced = true
+			}
+			return nil
 		}
 		inside, mute := faults.apply(&unit, mark)
 		if mute {
@@ -410,6 +419,10 @@ func (d *device) stream(session *mediaSession) {
 					if unit.key && firstKey {
 						session.evidence.mark("first_keyframe", fmt.Sprintf("PTS=%d, DTS=%d (90 kHz)", unit.pts, unit.dts), time.Now(), true)
 						firstKey = false
+						if session.playback == nil && faults.config != nil && faults.config.SilenceAfterMS > 0 &&
+							d.silenceUsed.CompareAndSwap(false, true) {
+							silenceAt = time.Now().Add(time.Duration(faults.config.SilenceAfterMS) * time.Millisecond)
+						}
 					}
 				} else {
 					session.status.AudioPackets++
