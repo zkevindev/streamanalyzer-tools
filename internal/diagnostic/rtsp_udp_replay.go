@@ -15,7 +15,7 @@ import (
 )
 
 func validRTSPUDPMetadata(metadata rtspArchiveMetadata, session *description.Session, responses map[int]*base.Response) (map[int]rtspUDPTransport, error) {
-	if (metadata.Version != 2 && metadata.Version != rtspPreviewArchiveVersion) || metadata.Transport != "udp" || len(metadata.Channels) != 0 || len(metadata.UDPSockets) > maxRTSPUDPSockets || len(metadata.UDPTransports) > maxRTSPTracks {
+	if (metadata.Version != 2 && metadata.Version != rtspLegacyPreviewArchiveVersion && metadata.Version != rtspPreviewArchiveVersion) || metadata.Transport != "udp" || len(metadata.Channels) != 0 || len(metadata.UDPSockets) > maxRTSPUDPSockets || len(metadata.UDPTransports) > maxRTSPTracks {
 		return nil, ErrInvalid
 	}
 	if metadata.Connections == 0 {

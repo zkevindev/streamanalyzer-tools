@@ -258,7 +258,7 @@ func TestRTSPPreviewUnsupportedAndSetupFailureRemainReviewable(t *testing.T) {
 		status        int
 		state, reason string
 	}{
-		{"h265", rtspIntegrationSDP + "m=video 0 RTP/AVP 96\r\na=rtpmap:96 H265/90000\r\na=control:trackID=0\r\n", 0, "unsupported", "codec_unsupported"},
+		{"vp8", rtspIntegrationSDP + "m=video 0 RTP/AVP 96\r\na=rtpmap:96 VP8/90000\r\na=control:trackID=0\r\n", 0, "unsupported", "codec_unsupported"},
 		{"setup", rtspIntegrationVideoSDP(), 461, "failed", "capture_setup_failed"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

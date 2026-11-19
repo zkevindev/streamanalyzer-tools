@@ -144,7 +144,7 @@ func validatePlayerRecording(record PlayerRecording, reference time.Time) error 
 			return invalid()
 		}
 		switch event.Code {
-		case "", "blocked", "unsupported", "media_error", "network_error", "no_stream", "stopped", "preview_unsupported", "preview_failed", "preview_queue_limit":
+		case "", "blocked", "unsupported", "media_error", "network_error", "no_stream", "stopped", "preview_unsupported", "preview_failed", "preview_queue_limit", "browser_codec_unsupported":
 		default:
 			return invalid()
 		}
