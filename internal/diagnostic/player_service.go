@@ -129,6 +129,12 @@ func (s *Service) SavePlayerRecording(id, token string, record PlayerRecording) 
 
 	report, err := readJSONFile[Report](dir, reportName)
 	if errors.Is(err, os.ErrNotExist) {
+		if session.hls != nil {
+			pending := Report{Manifest: Manifest{Protocol: run.Protocol, Observation: Observation{StartedAt: run.CreatedAt}}}
+			if err := persistPlayerNetwork(dir, &pending, session.hls.network.snapshot(record.Revision, record.Complete), run.CreatedAt); err != nil {
+				return nil, err
+			}
+		}
 		return analyzePlayer(record, Observation{StartedAt: run.CreatedAt}), nil
 	}
 	if err != nil {
@@ -140,6 +146,11 @@ func (s *Service) SavePlayerRecording(id, token string, record PlayerRecording) 
 	if err := attachPlayerArtifact(dir, &report); err != nil {
 		return nil, err
 	}
+	if session.hls != nil {
+		if err := persistPlayerNetwork(dir, &report, session.hls.network.snapshot(record.Revision, record.Complete), run.CreatedAt); err != nil {
+			return nil, err
+		}
+	}
 	// Invalidate the regenerable cache before publishing new finding IDs.
 	if err := os.Remove(filepath.Join(dir, explanationName)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
@@ -148,6 +159,9 @@ func (s *Service) SavePlayerRecording(id, token string, record PlayerRecording) 
 		return nil, err
 	}
 	cleanupPlayerVersions(dir, record.Revision)
+	if report.Manifest.PlayerNetwork != nil {
+		cleanupPlayerNetwork(dir, report.Manifest.PlayerNetwork.SHA256)
+	}
 	return report.Player, nil
 }
 
@@ -171,7 +185,19 @@ func (s *Service) attachPlayerReport(dir string, report *Report, id string) erro
 	if err != nil {
 		return err
 	}
-	return attachPlayerArtifact(dir, report)
+	if err := attachPlayerArtifact(dir, report); err != nil {
+		return err
+	}
+	if state.session.hls != nil {
+		n := state.session.hls.network
+		n.mu.Lock()
+		value := clonePlayerNetwork(n.last)
+		n.mu.Unlock()
+		if value != nil {
+			return persistPlayerNetwork(dir, report, value, state.created)
+		}
+	}
+	return nil
 }
 
 func attachPlayerArtifact(dir string, report *Report) error {

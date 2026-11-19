@@ -64,7 +64,22 @@ func writeBundleWithPlayer(w io.Writer, dir string, report Report, player io.Rea
 	return writeBundleSnapshot(w, dir, report, player, ledger)
 }
 
-func writeBundleSnapshot(w io.Writer, dir string, report Report, player io.Reader, ledger []byte) error {
+func writeBundleSnapshot(w io.Writer, dir string, report Report, player io.Reader, ledger []byte, networkSnapshot ...[]byte) error {
+	var network []byte
+	if report.Manifest.PlayerNetwork != nil {
+		if len(networkSnapshot) > 0 {
+			network = networkSnapshot[0]
+		} else {
+			var err error
+			network, err = readPlayerNetworkArtifact(dir, *report.Manifest.PlayerNetwork)
+			if err != nil {
+				return err
+			}
+		}
+		if len(network) == 0 {
+			return ErrInvalid
+		}
+	}
 	name := dumpName(report.Manifest.Protocol)
 	if name == "" {
 		return fmt.Errorf("%w: 不支持的采样协议", ErrInvalid)
@@ -73,6 +88,9 @@ func writeBundleSnapshot(w io.Writer, dir string, report Report, player io.Reade
 	names := []string{manifestName, name, timelineName, reportName}
 	if report.Manifest.Player != nil {
 		names = append(names, playerName)
+	}
+	if report.Manifest.PlayerNetwork != nil {
+		names = append(names, playerNetworkName)
 	}
 	if report.Manifest.StallEvidence != nil {
 		names = append(names, investigationName)
@@ -88,6 +106,10 @@ func writeBundleSnapshot(w io.Writer, dir string, report Report, player io.Reade
 			return err
 		}
 		switch filename {
+		case playerNetworkName:
+			if _, err := entry.Write(network); err != nil {
+				return err
+			}
 		case investigationName:
 			if len(ledger) == 0 {
 				return fmt.Errorf("%w: 卡顿补查记录缺失", ErrInvalid)
@@ -219,6 +241,9 @@ func readBundle(dir string, source io.Reader) (Report, error) {
 			return Report{}, err
 		}
 	}
+	if err := importedPlayerNetwork(dir, &report, entries); err != nil {
+		return Report{}, err
+	}
 	if err := importedStallEvidence(dir, &report, entries); err != nil {
 		return Report{}, err
 	}
@@ -288,7 +313,7 @@ func bundleEntries(files []*zip.File) (map[string]*zip.File, error) {
 		streamName: maxStreamBytes, rtmpStreamName: maxStreamBytes, hlsStreamName: maxStreamBytes,
 		tsStreamName: maxStreamBytes, udpStreamName: maxStreamBytes, rtpStreamName: maxStreamBytes,
 		reportName: 8 << 20, htmlName: 20 << 20, investigationName: maxInvestigationBytes,
-		playerName: maxPlayerBytes,
+		playerName: maxPlayerBytes, playerNetworkName: maxPlayerNetworkBytes,
 	}
 	entries := make(map[string]*zip.File, len(limits))
 	for _, file := range files {
@@ -319,10 +344,12 @@ func readManifest(entry *zip.File) (Manifest, error) {
 		return manifest, fmt.Errorf("%w: 清单无效", ErrInvalid)
 	}
 	legacyFLV := manifest.Protocol == ProtocolHTTPFLV && manifest.Version == legacyFLVSchemaVersion
-	if dumpName(manifest.Protocol) == "" || (manifest.Version != multiProtocolSchemaVersion && manifest.Version != playerSchemaVersion && manifest.Version != investigationSchemaVersion && !legacyFLV) ||
-		(manifest.Player != nil && manifest.Version != playerSchemaVersion && manifest.Version != investigationSchemaVersion) ||
-		(manifest.StallEvidence != nil && (manifest.Version != investigationSchemaVersion || manifest.Player == nil)) ||
-		(manifest.Version == investigationSchemaVersion && manifest.StallEvidence == nil) {
+	if dumpName(manifest.Protocol) == "" || (manifest.Version != multiProtocolSchemaVersion && manifest.Version != playerSchemaVersion && manifest.Version != investigationSchemaVersion && manifest.Version != playerNetworkSchemaVersion && !legacyFLV) ||
+		(manifest.Player != nil && manifest.Version != playerSchemaVersion && manifest.Version != investigationSchemaVersion && manifest.Version != playerNetworkSchemaVersion) ||
+		(manifest.StallEvidence != nil && (manifest.Version < investigationSchemaVersion || manifest.Player == nil)) ||
+		(manifest.Version == investigationSchemaVersion && manifest.StallEvidence == nil) ||
+		(manifest.PlayerNetwork != nil && (manifest.Version != playerNetworkSchemaVersion || manifest.Protocol != ProtocolHLS || manifest.Player == nil)) ||
+		(manifest.Version == playerNetworkSchemaVersion && manifest.PlayerNetwork == nil) {
 		return manifest, fmt.Errorf("%w: 证据包版本或协议不受支持", ErrInvalid)
 	}
 	obs := manifest.Observation

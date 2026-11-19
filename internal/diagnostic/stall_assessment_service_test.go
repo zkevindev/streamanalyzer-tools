@@ -58,7 +58,7 @@ func TestStallAssessmentLegacyUpgradeWithoutModelAndScopedCitations(t *testing.T
 			t.Fatal("model did not receive the selected assessment")
 		}
 		input, err := modelInput(scoped)
-		if err != nil || !bytes.Contains(input, []byte(`"assessment":{"version":"stall-assessment/1"`)) || !bytes.Contains(input, []byte(`"image_pixels_provided":false`)) {
+		if err != nil || !bytes.Contains(input, []byte(`"assessment":{"version":"`+stallAssessmentVersion+`"`)) || !bytes.Contains(input, []byte(`"image_pixels_provided":false`)) {
 			t.Fatalf("assessment missing from numeric model input: %s %v", input, err)
 		}
 		findingID := assessment.Findings[0].ID

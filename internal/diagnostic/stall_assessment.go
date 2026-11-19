@@ -5,7 +5,7 @@ import (
 	"slices"
 )
 
-const stallAssessmentVersion = "stall-assessment/1"
+const stallAssessmentVersion = "stall-assessment/2"
 
 type StallDirection struct {
 	Code        string   `json:"code"`
@@ -24,8 +24,9 @@ type StallAssessment struct {
 	Limitations []string         `json:"limitations"`
 }
 
-func assessStall(item StallInvestigation) *StallAssessment {
-	result := &StallAssessment{Version: stallAssessmentVersion, Directions: []StallDirection{}, Findings: []Finding{},
+// Preserve the original rule set so archived assessments remain reproducible.
+func assessStallV1(item StallInvestigation) *StallAssessment {
+	result := &StallAssessment{Version: "stall-assessment/1", Directions: []StallDirection{}, Findings: []Finding{},
 		Limitations: []string{"时间相关性用于选择验证方向，根因仍需对照源端、链路或客户现场记录。", "缓冲和帧质量是离散观测；缺少字段表示未观测，不能按零处理。"}}
 	findIDs := func(code string) []string {
 		var ids []string
