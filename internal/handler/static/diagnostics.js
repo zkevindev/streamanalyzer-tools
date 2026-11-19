@@ -1667,7 +1667,7 @@ async function changeRTSPReplay(start) {
         }
         node('protocol').value = 'rtsp';
         node('protocol').dispatchEvent(new Event('change'));
-        node('rtsp-transport').value = 'tcp';
+        node('rtsp-transport').value = source.transport === 'udp' ? 'udp' : 'tcp';
         node('url').value = source.url;
         node('seconds').value = Math.min(300, Math.max(1, Math.ceil((source.duration_ms + 1500) / 1000)));
         node('url').focus();

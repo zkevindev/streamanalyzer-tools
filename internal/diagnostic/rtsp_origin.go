@@ -16,13 +16,16 @@ import (
 )
 
 type RTSPReplayStatus struct {
-	URL        string `json:"url,omitempty"`
-	Packets    int    `json:"packets"`
-	DurationMS int64  `json:"duration_ms"`
-	Plays      uint64 `json:"plays"`
+	Transport     string `json:"transport,omitempty"`
+	SenderReports int    `json:"sender_reports,omitempty"`
+	URL           string `json:"url,omitempty"`
+	Packets       int    `json:"packets"`
+	DurationMS    int64  `json:"duration_ms"`
+	Plays         uint64 `json:"plays"`
 }
 
 type rtspReplayFrame struct {
+	rtcp       bool
 	offset, at int64
 	size       int
 	media      int
@@ -35,25 +38,27 @@ type replayRTPStart struct {
 }
 
 type rtspReplayOrigin struct {
-	ctx           context.Context
-	cancel        context.CancelFunc
-	listener      *net.TCPListener
-	done          chan struct{}
-	workers       sync.WaitGroup
-	sdp           []byte
-	url           string
-	file          *os.File
-	fileName      string
-	frames        []rtspReplayFrame
-	tracks        map[int]bool
-	startPacket   map[int]replayRTPStart
-	playbackStart int64
-	duration      int64
-	plays         atomic.Uint64
+	transport              string
+	packets, senderReports int
+	ctx                    context.Context
+	cancel                 context.CancelFunc
+	listener               *net.TCPListener
+	done                   chan struct{}
+	workers                sync.WaitGroup
+	sdp                    []byte
+	url                    string
+	file                   *os.File
+	fileName               string
+	frames                 []rtspReplayFrame
+	tracks                 map[int]bool
+	startPacket            map[int]replayRTPStart
+	playbackStart          int64
+	duration               int64
+	plays                  atomic.Uint64
 }
 
 func canReplayRTSP(report Report) bool {
-	if report.RTSP == nil || report.RTSP.Transport != "tcp_interleaved" || report.RTSP.RTPPackets == 0 || !report.RTSP.SDPAvailable {
+	if report.RTSP == nil || (report.RTSP.Transport != "tcp_interleaved" && report.RTSP.Transport != "udp") || report.RTSP.RTPPackets == 0 || !report.RTSP.SDPAvailable {
 		return false
 	}
 	for _, track := range report.RTSP.Tracks {
@@ -81,7 +86,7 @@ func (s *Service) StartRTSPReplay(ctx context.Context, id string) (RTSPReplaySta
 		return RTSPReplayStatus{}, ErrPending
 	}
 	if !canReplayRTSP(*detail.Report) {
-		return RTSPReplayStatus{}, fmt.Errorf("%w: 该记录缺少可回放的 RTSP TCP 音视频 RTP", ErrInvalid)
+		return RTSPReplayStatus{}, fmt.Errorf("%w: 该记录缺少可回放的 RTSP 音视频 RTP", ErrInvalid)
 	}
 	source, err := startRTSPOrigin(ctx, s.root, s.runDir(detail.ID), detail.Report.Manifest)
 	if err != nil {
@@ -137,36 +142,47 @@ func startRTSPOrigin(ctx context.Context, root, dir string, manifest Manifest) (
 		}
 	}()
 
-	export := &rtspWireExport{
-		describe: source.setDescription,
-		packet: func(media int, data []byte, arrival int64) error {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-			if !source.tracks[media] {
-				return nil
-			}
+	appendFrame := func(media int, data []byte, arrival int64, rtcp bool) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if !source.tracks[media] {
+			return nil
+		}
+		if !rtcp {
 			if _, known := source.startPacket[media]; !known {
 				source.startPacket[media] = replayRTPStart{ssrc: binary.BigEndian.Uint32(data[8:]), seq: binary.BigEndian.Uint16(data[2:]), timestamp: binary.BigEndian.Uint32(data[4:])}
 			}
-			var offset int64
-			if n := len(source.frames); n > 0 {
-				last := source.frames[n-1]
-				offset = last.offset + int64(last.size)
-			}
-			if _, err := file.Write(data); err != nil {
-				return err
-			}
-			source.frames = append(source.frames, rtspReplayFrame{offset: offset, at: arrival, size: len(data), media: media})
-			return nil
-		},
+			source.packets++
+		} else {
+			source.senderReports++
+		}
+		var offset int64
+		if n := len(source.frames); n > 0 {
+			last := source.frames[n-1]
+			offset = last.offset + int64(last.size)
+		}
+		if _, err := file.Write(data); err != nil {
+			return err
+		}
+		source.frames = append(source.frames, rtspReplayFrame{offset: offset, at: arrival, size: len(data), media: media, rtcp: rtcp})
+		return nil
 	}
+	export := &rtspWireExport{describe: source.setDescription, packet: func(media int, data []byte, at int64) error {
+		return appendFrame(media, data, at, false)
+	}, senderReport: func(media int, data []byte, at int64) error {
+		return appendFrame(media, data, at, true)
+	}}
 	report, err := readRTSPWire(dir, manifest, nil, export)
 	if err != nil {
 		return nil, err
 	}
-	if len(source.frames) == 0 {
+	if source.packets == 0 {
 		return nil, fmt.Errorf("%w: 未找到可回放的音视频 RTP 包", ErrInvalid)
+	}
+	source.transport = "tcp"
+	if report.RTSP.Transport == "udp" {
+		source.transport = "udp"
 	}
 	for _, request := range report.RTSP.Requests {
 		if request.Method == "PLAY" && request.StatusCode == 200 {
@@ -222,7 +238,7 @@ func (o *rtspReplayOrigin) setDescription(captured *description.Session) error {
 }
 
 func (o *rtspReplayOrigin) snapshot() RTSPReplayStatus {
-	return RTSPReplayStatus{URL: o.url, Packets: len(o.frames), Plays: o.plays.Load(), DurationMS: o.duration}
+	return RTSPReplayStatus{URL: o.url, Transport: o.transport, Packets: o.packets, SenderReports: o.senderReports, Plays: o.plays.Load(), DurationMS: o.duration}
 }
 
 func (o *rtspReplayOrigin) close() {
