@@ -59,8 +59,8 @@ func planTS(raw []byte, fault string) ([]chunk, error) {
 	if len(raw) < tsPacketBytes || len(raw)%tsPacketBytes != 0 {
 		return nil, errors.New("TS 分包长度无效")
 	}
-	if fault == "program_outage" {
-		return planTwoPrograms(raw)
+	if fault == "program_outage" || fault == "program_clock_drift" {
+		return planTwoPrograms(raw, fault == "program_clock_drift")
 	}
 	switchOffset := len(raw)
 	if fault == "pmt_pid_switch" {
@@ -118,8 +118,12 @@ func planTS(raw []byte, fault string) ([]chunk, error) {
 }
 
 func jumpPCR(packet []byte) {
+	shiftFixturePCR(packet, 20*90000)
+}
+
+func shiftFixturePCR(packet []byte, ticks uint64) {
 	base := uint64(packet[6])<<25 | uint64(packet[7])<<17 | uint64(packet[8])<<9 | uint64(packet[9])<<1 | uint64(packet[10]>>7)
-	base = (base + 20*90000) & ((1 << 33) - 1)
+	base = (base + ticks) & ((1 << 33) - 1)
 	packet[6], packet[7], packet[8], packet[9] = byte(base>>25), byte(base>>17), byte(base>>9), byte(base>>1)
 	packet[10] = (packet[10] & 0x7f) | byte(base&1)<<7
 }

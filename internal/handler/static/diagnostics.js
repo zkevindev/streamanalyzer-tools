@@ -690,10 +690,11 @@ function renderTransport(protocol, ts) {
     const programs = ts.programs || [];
     node('ts-programs').hidden = programs.length === 0;
     node('ts-program-table').replaceChildren(...(programs.length ? [renderTable(
-        ['节目 / PMT PID', '媒体 PID', '收到 TS 包', '连续计数错误', '首次切换后收到 TS 包', '首次切换后连续计数错误'],
+        ['节目 / PMT PID', '媒体 PID', '收到 TS 包', '连续计数错误', '首次切换后收到 TS 包', '首次切换后连续计数错误', 'PTS−PCR 首尾偏移'],
         programs.flatMap(program => program.streams.map(stream => [program.number + ' / ' + hexLabel(program.pmt_pid, 4),
             hexLabel(stream.pid, 4), stream.packets, stream.continuity_errors, stream.after_switch_packets ?? '—',
-            stream.after_switch_errors ?? '—'])),
+            stream.after_switch_errors ?? '—', stream.clock ? stream.clock.first_lead_ms + ' → ' + stream.clock.last_lead_ms +
+              ' ms（' + (stream.clock.drift_ms > 0 ? '+' : '') + stream.clock.drift_ms + ' ms）' : '—'])),
     )] : []));
     const maps = ts.program_map_changes || [];
     node('ts-map-changes').hidden = maps.length === 0;

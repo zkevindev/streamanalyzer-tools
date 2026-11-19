@@ -134,5 +134,6 @@ func (a *tsAnalyzer) switchRTPSender(ssrc uint32, event Event) {
 func (a *tsAnalyzer) resetTSContext() {
 	a.generation++
 	clear(a.pmt)
+	clear(a.programClocks)
 	a.patSeen = false
 }

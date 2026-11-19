@@ -53,6 +53,7 @@ type MPEGTSPIDMetrics struct {
 }
 
 type tsAnalyzer struct {
+	programClocks         map[tsClockKey]*tsProgramClock
 	programs              map[uint16]tsProgramState
 	programSwitchBaseline map[uint16]MPEGTSPIDMetrics
 	pendingPMTPackets     map[uint16][]*TSProgramPID
@@ -73,6 +74,7 @@ type tsAnalyzer struct {
 }
 
 type tsPID struct {
+	clockEpoch      uint64
 	mediaKind       string
 	mediaGeneration uint64
 	generation      uint64
@@ -153,6 +155,7 @@ func (a *tsAnalyzer) pid(id uint16) *tsPID {
 }
 
 func (s *tsPID) resetTimeline() {
+	s.clockEpoch++
 	s.psi = s.psi[:0]
 	s.havePCR, s.haveDTS = false, false
 }
@@ -340,6 +343,7 @@ func (a *tsAnalyzer) observePES(s *tsPID, payload []byte, event Event) {
 	}
 	if pts, ok := decodeTSPESClock(payload[9:14], flags); ok {
 		s.metrics.PTSCount++
+		a.observeProgramClock(s, pts, event)
 		event.PTS, event.DTS = int64(pts/90), int64(pts/90)
 	}
 	if flags != 3 || payload[8] < 10 || len(payload) < 19 {
