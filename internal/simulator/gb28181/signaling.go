@@ -25,6 +25,7 @@ func (d *device) routes(server *sipgo.Server, flow *sipFlow) {
 	server.OnInvite(func(req *sip.Request, tx sip.ServerTransaction) {
 		d.onInvite(flow, req, tx)
 	})
+	server.OnRequest(sip.SUBSCRIBE, func(req *sip.Request, tx sip.ServerTransaction) { d.onSubscribe(flow, req, tx) })
 	server.OnRequest(sip.INFO, d.onPlaybackInfo)
 	server.OnAck(d.onAck)
 	server.OnBye(d.onBye)
@@ -131,6 +132,8 @@ func (d *device) onMessage(flow *sipFlow, req *sip.Request, tx sip.ServerTransac
 }
 
 func (d *device) catalogReplies(query simulatorQuery) [][]byte {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	channels := d.channels
 	if query.DeviceID != d.cfg.DeviceID {
 		channels = []string{query.DeviceID}
@@ -147,8 +150,12 @@ func (d *device) catalogReplies(query simulatorQuery) [][]byte {
 		var body strings.Builder
 		fmt.Fprintf(&body, `<SumNum>%d</SumNum><DeviceList Num="%d">`, len(channels), len(page))
 		for _, channel := range page {
-			fmt.Fprintf(&body, `<Item><DeviceID>%s</DeviceID><Name>Test Camera</Name><Manufacturer>Stream Analyzer</Manufacturer><Model>Simulator</Model><Owner>Simulator</Owner><CivilCode>%s</CivilCode><Address>Laboratory</Address><Parental>0</Parental><ParentID>%s</ParentID><SafetyWay>0</SafetyWay><RegisterWay>1</RegisterWay><Secrecy>0</Secrecy><Status>ON</Status></Item>`,
-				channel, channel[:6], d.cfg.DeviceID)
+			status := "ON"
+			if d.offline[channel] {
+				status = "OFF"
+			}
+			fmt.Fprintf(&body, `<Item><DeviceID>%s</DeviceID><Name>Test Camera</Name><Manufacturer>Stream Analyzer</Manufacturer><Model>Simulator</Model><Owner>Simulator</Owner><CivilCode>%s</CivilCode><Address>Laboratory</Address><Parental>0</Parental><ParentID>%s</ParentID><SafetyWay>0</SafetyWay><RegisterWay>1</RegisterWay><Secrecy>0</Secrecy><Status>%s</Status></Item>`,
+				channel, channel[:6], d.cfg.DeviceID, status)
 		}
 		body.WriteString("</DeviceList>")
 		replies = append(replies, queryResponse(query.Command, query.SN, query.DeviceID, body.String()))

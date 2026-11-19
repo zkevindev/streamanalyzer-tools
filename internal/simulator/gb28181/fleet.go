@@ -121,6 +121,7 @@ type DeviceSummary struct {
 }
 
 type ChannelStatus struct {
+	Online    bool   `json:"online"`
 	ChannelID string `json:"channel_id"`
 	MediaStatus
 }
@@ -213,7 +214,7 @@ func (m *Manager) start(specs []deviceSpec, file *localMedia) {
 		}
 		d := &device{
 			cfg: cfg, ctx: ctx, cancel: cancel, done: make(chan struct{}), file: file, fleet: f,
-			channels: spec.channels, media: make(map[string]*mediaSession), channelStatus: make(map[string]*MediaStatus, len(spec.channels)),
+			channels: spec.channels, offline: make(map[string]bool), media: make(map[string]*mediaSession), channelStatus: make(map[string]*MediaStatus, len(spec.channels)),
 			status: Status{State: state, Platform: net.JoinHostPort(cfg.PlatformHost, strconv.Itoa(cfg.PlatformPort)),
 				SIPTransport: cfg.SIPTransport, DeviceID: cfg.DeviceID, MediaSource: source},
 		}
@@ -284,9 +285,14 @@ func (m *Manager) StatusFor(deviceID, channelID string) (Status, bool) {
 		if d == selected {
 			result = d.status
 			result.ChannelID, result.MediaStatus = channelID, *d.channelStatus[channelID]
+			result.ChannelOnline = !d.offline[channelID]
+			if d.flow != nil && d.flow.ctx.Err() == nil {
+				d.flow.pruneCatalog(time.Now())
+				result.CatalogSubscriptions = len(d.flow.catalog)
+			}
 			result.Events = append([]Event{}, d.status.Events...)
 			for _, id := range d.channels {
-				result.Channels = append(result.Channels, ChannelStatus{ChannelID: id, MediaStatus: *d.channelStatus[id]})
+				result.Channels = append(result.Channels, ChannelStatus{ChannelID: id, Online: !d.offline[id], MediaStatus: *d.channelStatus[id]})
 			}
 			for i := len(d.evidence) - 1; i >= 0; i-- {
 				if channelID == d.evidence[i].ChannelID {

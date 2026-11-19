@@ -31,6 +31,31 @@ func RegisterSimulatorRoutes(r *gin.Engine, simulator *gb28181.Manager, onvifSim
 		}
 		c.JSON(http.StatusOK, status)
 	})
+	api.POST("/channel-state", func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1024)
+		var request struct {
+			DeviceID  string `json:"device_id"`
+			ChannelID string `json:"channel_id"`
+			Online    *bool  `json:"online"`
+		}
+		if err := c.ShouldBindJSON(&request); err != nil || request.Online == nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "通道状态配置无效"})
+			return
+		}
+		if err := simulator.SetChannelOnline(request.DeviceID, request.ChannelID, *request.Online); err != nil {
+			code := http.StatusServiceUnavailable
+			switch {
+			case errors.Is(err, gb28181.ErrChannelNotFound):
+				code = http.StatusNotFound
+			case errors.Is(err, gb28181.ErrChannelUnavailable):
+				code = http.StatusConflict
+			}
+			c.JSON(code, gin.H{"error": err.Error()})
+			return
+		}
+		status, _ := simulator.StatusFor(request.DeviceID, request.ChannelID)
+		c.JSON(http.StatusOK, status)
+	})
 	api.GET("/trace.json", func(c *gin.Context) {
 		snapshot, ok := simulator.StatusFor(c.Query("device_id"), c.Query("channel_id"))
 		if !ok || len(snapshot.Events) == 0 {

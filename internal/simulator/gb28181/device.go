@@ -16,6 +16,8 @@ import (
 )
 
 type device struct {
+	offline       map[string]bool
+	flow          *sipFlow
 	cfg           Config
 	ctx           context.Context
 	cancel        context.CancelFunc

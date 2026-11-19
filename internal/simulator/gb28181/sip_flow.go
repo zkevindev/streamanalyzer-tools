@@ -16,16 +16,18 @@ import (
 )
 
 type sipFlow struct {
-	local      netip.AddrPort
-	client     *sipgo.Client
-	ctx        context.Context
-	registered chan struct{}
+	catalog     map[string]*catalogSubscription
+	catalogJobs chan catalogJob
+	local       netip.AddrPort
+	client      *sipgo.Client
+	ctx         context.Context
+	registered  chan struct{}
 }
 
 func (d *device) serveSIPFlow() (bool, error) {
 	ctx, cancel := context.WithCancel(d.ctx)
 	defer cancel()
-	flow := &sipFlow{ctx: ctx, registered: make(chan struct{})}
+	flow := &sipFlow{ctx: ctx, registered: make(chan struct{}), catalog: make(map[string]*catalogSubscription), catalogJobs: make(chan catalogJob, 64)}
 
 	options := []sipgo.UserAgentOption{
 		sipgo.WithUserAgent("Stream Analyzer"), sipgo.WithUserAgentHostname(d.cfg.Domain),
@@ -127,11 +129,18 @@ func (d *device) serveSIPFlow() (bool, error) {
 	if err != nil {
 		return false, err
 	}
+	d.mu.Lock()
+	d.flow = flow
+	d.workers.Go(func() { d.sendCatalog(flow) })
+	d.mu.Unlock()
 	d.state("registered", "")
 	close(flow.registered)
 	d.log("system", "设备已注册", "")
 	err = d.keepRegistered(flow, expires)
 	cancel()
+	d.mu.Lock()
+	d.flow = nil
+	d.mu.Unlock()
 	d.closeMedia()
 	d.workers.Wait()
 	if d.ctx.Err() != nil {

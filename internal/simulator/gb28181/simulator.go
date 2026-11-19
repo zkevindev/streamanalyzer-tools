@@ -127,6 +127,8 @@ type MediaStatus struct {
 }
 
 type Status struct {
+	ChannelOnline        bool `json:"channel_online"`
+	CatalogSubscriptions int  `json:"catalog_subscriptions"`
 	MediaStatus
 	State        string          `json:"state"`
 	Active       bool            `json:"active"`
