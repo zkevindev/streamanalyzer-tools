@@ -449,9 +449,25 @@ func (s *Service) explain(ctx context.Context, id string, refresh bool) (Explana
 		}
 		return Explanation{}, ErrUnconfigured
 	}
-	if !refresh && detail.Explanation != nil && model.identity.matches(*detail.Explanation) {
+	// Re-read the cache and its complete numeric scope under the same lock
+	// order used by completion. A policy change or changed image cannot reuse
+	// an old text/vision result solely because the model name is unchanged.
+	s.persistence.RLock()
+	currentDetail, readErr := s.detail(id)
+	if readErr == nil && currentDetail.Report != nil {
+		detail = currentDetail
+	}
+	dir := s.runDir(detail.ID)
+	if readErr == nil && !refresh && detail.Explanation != nil && model.identity.matches(*detail.Explanation) && reportExplanationReusable(dir, *detail.Report, *detail.Explanation, model.explainer) {
+		answer := *detail.Explanation
+		s.persistence.RUnlock()
 		s.modelMu.Unlock()
-		return *detail.Explanation, nil
+		return answer, nil
+	}
+	s.persistence.RUnlock()
+	if readErr != nil {
+		s.modelMu.Unlock()
+		return Explanation{}, readErr
 	}
 	if model.cancel != nil {
 		s.modelMu.Unlock()
@@ -460,33 +476,20 @@ func (s *Service) explain(ctx context.Context, id string, refresh bool) (Explana
 	ctx, cancel := context.WithCancel(ctx)
 	model.cancel = cancel
 	s.modelMu.Unlock()
-	defer func() {
-		cancel()
-		s.modelMu.Lock()
-		model.cancel = nil
-		s.modelMu.Unlock()
-	}()
-
-	dir := s.runDir(detail.ID)
-	if !refresh {
-		existing, err := readJSONFile[Explanation](dir, explanationName)
-		if err == nil && model.identity.matches(existing) {
-			return existing, nil
-		}
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			return Explanation{}, err
-		}
-	}
-	explanation, err := model.explainer.Explain(ctx, *detail.Report)
+	defer func() { cancel(); s.modelMu.Lock(); model.cancel = nil; s.modelMu.Unlock() }()
+	explanation, err := callReportModel(ctx, dir, model.explainer, *detail.Report)
 	s.modelMu.Lock()
 	defer s.modelMu.Unlock()
 	if s.model != model {
 		return Explanation{}, ErrModelChanged
 	}
+	if ctx.Err() != nil {
+		return Explanation{}, ctx.Err()
+	}
 	if err != nil {
 		return Explanation{}, err
 	}
-	if !validExplanation(explanation, detail.Report.Findings) {
+	if !validExplanation(explanation, reportModelFindings(*detail.Report, explanation.ReportInputEvidence)) {
 		return Explanation{}, ErrProvider
 	}
 	s.persistence.Lock()
@@ -495,7 +498,7 @@ func (s *Service) explain(ctx context.Context, id string, refresh bool) (Explana
 	if err != nil {
 		return Explanation{}, err
 	}
-	if playerRevision(current.Player) != playerRevision(detail.Report.Player) || investigationRevision(current) != investigationRevision(*detail.Report) || playerNetworkRevision(current) != playerNetworkRevision(*detail.Report) {
+	if err := validateReportModelInput(dir, current, explanation.ReportInputEvidence); err != nil {
 		return Explanation{}, ErrReportChanged
 	}
 	if err := writeJSONFile(dir, explanationName, explanation); err != nil {
@@ -528,6 +531,10 @@ func (s *Service) WriteBundle(id string, w io.Writer) error {
 	if err == nil && detail.Report.Manifest.PlayerNetwork != nil {
 		network, err = readPlayerNetworkArtifact(dir, *detail.Report.Manifest.PlayerNetwork)
 	}
+	var explanation *Explanation
+	if err == nil {
+		explanation, err = readReportBundleExplanation(dir, *detail.Report)
+	}
 	// Snapshot the bounded recording before its revision can be cleaned up.
 	// A slow download must not hold up other recordings or capture reports.
 	s.persistence.RUnlock()
@@ -535,9 +542,9 @@ func (s *Service) WriteBundle(id string, w io.Writer) error {
 		return err
 	}
 	if player != nil {
-		return writeBundleSnapshot(w, dir, *detail.Report, bytes.NewReader(player), ledger, network)
+		return writeBundleSnapshotExplanation(w, dir, *detail.Report, bytes.NewReader(player), ledger, explanation, network)
 	}
-	return writeBundleSnapshot(w, dir, *detail.Report, nil, ledger, network)
+	return writeBundleSnapshotExplanation(w, dir, *detail.Report, nil, ledger, explanation, network)
 }
 
 func (s *Service) OpenDump(id string) (*os.File, error) {

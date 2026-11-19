@@ -46,7 +46,7 @@ func TestHTTPFLVDiagnosticWorkflow(t *testing.T) {
 			if modelCalls.Add(1) > 1 {
 				id = "F001"
 			}
-			answer := fmt.Sprintf(`{"summary":"测试摘要","hypotheses":[{"claim":"检查编码时间戳","evidence_ids":[%q],"next_check":"对照源站采样"}]}`, id)
+			answer := fmt.Sprintf(`{"summary":"测试摘要","hypotheses":[{"priority":"P1","claim":"检查编码时间戳","evidence_ids":[%q],"next_check":"对照源站采样"}]}`, id)
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"choices": []any{map[string]any{"message": map[string]string{"content": answer}}},
 			})
@@ -85,7 +85,7 @@ func TestHTTPFLVDiagnosticWorkflow(t *testing.T) {
 	}
 	diagnosticRequest(t, server, http.MethodPost, runPath+"/explain", http.StatusBadGateway, nil)
 	explanation := decodeDiagnostic[diagnostic.Explanation](t, diagnosticRequest(t, server, http.MethodPost, runPath+"/explain", http.StatusOK, nil))
-	if explanation.Model != "test-model" || explanation.Hypotheses[0].EvidenceIDs[0] != finding.ID {
+	if explanation.Model != "test-model" || explanation.Hypotheses[0].EvidenceIDs[0] != finding.ID || explanation.Hypotheses[0].Priority != "P1" || explanation.ReportInputEvidence == nil || explanation.ReportInputEvidence.Mode != "text" || explanation.ReportInputEvidence.FallbackCode != "no_images" {
 		t.Fatalf("incorrect saved explanation: %+v", explanation)
 	}
 	diagnosticRequest(t, server, http.MethodPost, runPath+"/explain", http.StatusOK, nil)
@@ -98,12 +98,12 @@ func TestHTTPFLVDiagnosticWorkflow(t *testing.T) {
 	}
 	bundle := diagnosticRequest(t, server, http.MethodGet, runPath+"/evidence.zip", http.StatusOK, nil)
 
-	// Replay with the playback and model server offline. Both the rule report and
-	// the original dump must be recoverable from the uploaded ZIP alone.
+	// Replay with the playback and model server offline. The rule report, global
+	// explanation with priorities, and original dump all come from the ZIP alone.
 	origin.Close()
 	replay := decodeDiagnostic[diagnostic.Run](t, diagnosticRequest(t, server, http.MethodPost, path+"/import", http.StatusCreated, bundle))
 	detail := waitDiagnostic(t, server, path+"/runs/"+replay.ID)
-	if detail.Mode != "replay" || !reflect.DeepEqual(detail.Report, captured.Report) || detail.Explanation != nil {
+	if detail.Mode != "replay" || !reflect.DeepEqual(detail.Report, captured.Report) || !reflect.DeepEqual(detail.Explanation, &explanation) || modelCalls.Load() != 2 {
 		t.Fatalf("offline report differs: %+v", detail)
 	}
 	diagnosticRequest(t, server, http.MethodPost, path+"/import", http.StatusBadRequest, tamperWithDiagnosticBundle(t, bundle))

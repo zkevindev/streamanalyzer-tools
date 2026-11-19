@@ -5,7 +5,7 @@ const {spawn}=require('node:child_process'),{once}=require('node:events'),{creat
 async function until(fn,seconds=25){for(let i=0;i<seconds*10;i++){const v=await fn();if(v)return v;await delay(100);}throw Error('Timed out');}
 async function stop(child){if(!child||child.exitCode!==null)return;child.kill('SIGTERM');await Promise.race([once(child,'exit'),delay(2000)]);if(child.exitCode===null)child.kill('SIGKILL');}
 (async()=>{
- const binary=process.env.STREAMANALYZER_TEST_SERVER,fixtureBinary=process.env.STREAMANALYZER_RTSP_STALL_FIXTURE;assert.ok(binary&&fixtureBinary,'Set server and RTSP fixture binary paths');
+ const binary=process.env.STREAMANALYZER_TEST_SERVER,fixtureBinary=process.env.STREAMANALYZER_RTSP_STALL_FIXTURE;assert.ok(binary&&fixtureBinary,'Set server and RTSP fixture binary paths');await fs.access(binary);await fs.access(fixtureBinary);
  const directory=await fs.mkdtemp(path.join(os.tmpdir(),'streamanalyzer-model-images-'));const calls=[],providerErrors=[],results=[];let phase,app,fixture,chrome,ws,logs='';
  const provider=http.createServer(async(req,res)=>{try{
   let body='';for await(const chunk of req)body+=chunk;const request=JSON.parse(body),content=request.messages.find(v=>v.role==='user').content;
@@ -18,7 +18,7 @@ async function stop(child){if(!child||child.exitCode!==null)return;child.kill('S
   calls.push({phase:phase.name,images:observed,mode:images.length?'vision':'text'});
   if(phase.name==='unsupported'&&images.length){res.writeHead(400,{'Content-Type':'application/json'});res.end(JSON.stringify({error:{code:'unsupported_image_input',message:'This model does not support images.'}}));return;}
   const evidenceID=images.length?input.image_evidence[0].id:input.findings[0].id;
-  const answer={summary:'已结合本次输入核对截图与时序',hypotheses:[{claim:'源流内容仍需结合接收时序验证',evidence_ids:[evidenceID],next_check:'对照源端发送记录'}],input_evidence:{mode:'vision',images:[{id:'invented-image'}]}};
+  const answer={summary:'已结合本次输入核对截图与时序',hypotheses:[{priority:'P3',claim:'补充核对源流内容',evidence_ids:[evidenceID],next_check:'检查后续采样'},{priority:'P1',claim:'优先将画面与接收时序对照',evidence_ids:[evidenceID],next_check:'对照源端发送记录'}],input_evidence:{mode:'vision',images:[{id:'invented-image'}]},report_input_evidence:{mode:'vision',images:[{id:'invented-summary-image'}]}};
   res.setHeader('Content-Type','application/json');res.end(JSON.stringify({choices:[{message:{content:JSON.stringify(answer)}}]}));
  }catch(error){providerErrors.push(error.message);res.writeHead(500,{'Content-Type':'application/json'});res.end(JSON.stringify({error:'fixture assertion failed'}));}});
  provider.listen(0,'127.0.0.1');await once(provider,'listening');
@@ -47,17 +47,22 @@ async function stop(child){if(!child||child.exitCode!==null)return;child.kill('S
    for(const asset of item.media.assets){const data=await bytesAt(`/api/diagnostics/runs/${run.id}/stall-assets/S001/${asset.name.split('/').at(-1)}`);if(next.name==='vision')originalAssets[asset.name]=data;else assert.ok(data.equals(originalAssets[asset.name]));}
    if(next.name==='vision'){
     for(const ref of audit.images){const measured=calls.find(v=>v.phase==='vision'&&v.images.length).images.find(v=>v.id===ref.id);assert.equal(measured.sha256,ref.sha256);assert.ok(originalAssets[ref.name]);const dims=await evaluate(`new Promise((resolve,reject)=>{const i=new Image();i.onload=()=>resolve([i.naturalWidth,i.naturalHeight]);i.onerror=reject;i.src='data:image/jpeg;base64,'+${JSON.stringify(originalAssets[ref.name].toString('base64'))};})`);assert.ok(dims[0]>=160&&dims[1]>=90);}
-    await api('POST',`/api/diagnostics/runs/${run.id}/explain`,{});assert.equal(calls.at(-1).mode,'text','global report unexpectedly sent images');originalRaw=await bytesAt(`/api/diagnostics/runs/${run.id}/dump`);
+    originalRaw=await bytesAt(`/api/diagnostics/runs/${run.id}/dump`);
    }
+   await api('POST',`/api/diagnostics/runs/${run.id}/explain`,{});const summarized=await api('GET','/api/diagnostics/runs/'+run.id),overall=summarized.explanation,summaryAudit=overall?.report_input_evidence;
+   assert.ok(summaryAudit,'global summary input audit missing');assert.equal(summaryAudit.mode,next.mode);assert.equal(summaryAudit.requested_mode,next.input);assert.equal(summaryAudit.fallback_code||'',next.fallback||'');assert.equal(summaryAudit.selection,'critical_stalls_v1');assert.equal(summaryAudit.cases.length,1);assert.equal(summaryAudit.images.length,next.mode==='vision'?3:0);assert.equal(summaryAudit.attempted_images?.length||0,next.name==='unsupported'?3:0);assert.equal(summaryAudit.report_sha256.length,64);assert.equal(overall.hypotheses[0].priority,'P1');
    await evaluate(`selectRun(${JSON.stringify(run.id)})`);
    await until(()=>evaluate(`document.getElementById('stall-investigation-results').textContent.includes(${JSON.stringify(next.mode==='vision'?'本次为图文解读':'本次为时序文本解读')})`));
-   if(next.name==='unsupported'){const text=await evaluate(`document.querySelector('.model-input-evidence').textContent`);assert.ok(text.includes('已尝试发送 3 张截图')&&!text.includes('未发送截图像素'));}
+   if(next.name==='unsupported'){const text=await evaluate(`document.querySelector('.stall-model .model-input-evidence').textContent`);assert.ok(text.includes('已尝试发送 3 张截图')&&!text.includes('未发送截图像素'));}
    for(const ref of audit.images)assert.equal(await evaluate(`document.querySelectorAll('[id="case-${ref.id}"]').length`),1);
    assert.equal(await evaluate(`new Set(Array.from(document.querySelectorAll('[id]')).map(v=>v.id)).size===document.querySelectorAll('[id]').length`),true);
+   await until(()=>evaluate(`document.querySelector('.report-input-evidence').textContent.includes(${JSON.stringify(next.mode==='vision'?'本次为整份报告图文解读':'本次为整份报告文本解读')})`));
+   for(const ref of summaryAudit.images)assert.equal(await evaluate(`document.querySelectorAll('[id="summary-image-${ref.id}"]').length`),1);
+   if(next.name==='unsupported'){const text=await evaluate(`document.querySelector('.report-input-evidence').textContent`);assert.ok(text.includes('已尝试发送 3 张截图')&&!text.includes('未发送截图像素'));}
    const html=await(await fetch(base+`/api/diagnostics/runs/${run.id}/report.html`)).text();assert.ok(html.includes(next.mode==='vision'?'本次为图文解读':'本次为时序文本解读'));if(next.name==='unsupported')assert.ok(html.includes('已尝试发送 3 张截图'));
-   const bundle=await bytesAt(`/api/diagnostics/runs/${run.id}/evidence.zip`);if(next.name==='vision')capturedBundle=bundle;const imported=await importZIP(bundle,next.name+'-output');const replay=await api('GET','/api/diagnostics/runs/'+imported.id);assert.deepEqual(replay.report,detail.report);assert.ok(originalRaw.equals(await bytesAt(`/api/diagnostics/runs/${imported.id}/dump`)));
-   results.push({phase:next.name,input_evidence:audit,source_stopped:true,exact_report_and_assets:true});
+   const bundle=await bytesAt(`/api/diagnostics/runs/${run.id}/evidence.zip`);if(next.name==='vision'){capturedBundle=bundle;const golden=process.env.STREAMANALYZER_GLOBAL_VISION_ARCHIVE||path.join(os.tmpdir(),'streamanalyzer-report-vision-v1-evidence.zip');await fs.writeFile(golden,bundle);}const imported=await importZIP(bundle,next.name+'-output');const replay=await api('GET','/api/diagnostics/runs/'+imported.id);assert.deepEqual(replay.report,detail.report);assert.deepEqual(replay.explanation,overall);assert.ok(originalRaw.equals(await bytesAt(`/api/diagnostics/runs/${imported.id}/dump`)));
+   results.push({phase:next.name,input_evidence:audit,report_input_evidence:summaryAudit,source_stopped:true,exact_report_and_assets:true});
   }
-  assert.equal(providerErrors.length,0,JSON.stringify(providerErrors));assert.equal(errors.length,0,JSON.stringify(errors));assert.equal(calls.length,6);console.log(JSON.stringify({result:'PASS',results,calls}));
+  assert.equal(providerErrors.length,0,JSON.stringify(providerErrors));assert.equal(errors.length,0,JSON.stringify(errors));assert.equal(calls.length,10);console.log(JSON.stringify({result:'PASS',results,calls}));
  }catch(error){console.error(logs);throw error;}finally{ws?.close();await stop(fixture);await stop(chrome);await stop(app);await new Promise(r=>provider.close(r));await fs.rm(directory,{recursive:true,force:true,maxRetries:5,retryDelay:100});}
 })().catch(error=>{console.error(error);process.exitCode=1;});

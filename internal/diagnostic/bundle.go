@@ -66,6 +66,19 @@ func writeBundleWithPlayer(w io.Writer, dir string, report Report, player io.Rea
 }
 
 func writeBundleSnapshot(w io.Writer, dir string, report Report, player io.Reader, ledger []byte, networkSnapshot ...[]byte) error {
+	explanation, err := readReportBundleExplanation(dir, report)
+	if err != nil {
+		return err
+	}
+	return writeBundleSnapshotExplanation(w, dir, report, player, ledger, explanation, networkSnapshot...)
+}
+
+func writeBundleSnapshotExplanation(w io.Writer, dir string, report Report, player io.Reader, ledger []byte, explanation *Explanation, networkSnapshot ...[]byte) error {
+	if explanation != nil {
+		if err := validateReportBundleExplanation(dir, report, *explanation); err != nil {
+			return err
+		}
+	}
 	var network []byte
 	if report.Manifest.PlayerNetwork != nil {
 		if len(networkSnapshot) > 0 {
@@ -87,6 +100,9 @@ func writeBundleSnapshot(w io.Writer, dir string, report Report, player io.Reade
 	}
 	archive := zip.NewWriter(w)
 	names := []string{manifestName, name, timelineName, reportName}
+	if explanation != nil {
+		names = append(names, explanationName)
+	}
 	if report.Manifest.Player != nil {
 		names = append(names, playerName)
 	}
@@ -107,6 +123,10 @@ func writeBundleSnapshot(w io.Writer, dir string, report Report, player io.Reade
 			return err
 		}
 		switch filename {
+		case explanationName:
+			if err := json.NewEncoder(entry).Encode(explanation); err != nil {
+				return err
+			}
 		case playerNetworkName:
 			if _, err := entry.Write(network); err != nil {
 				return err
@@ -149,7 +169,7 @@ func writeBundleSnapshot(w io.Writer, dir string, report Report, player io.Reade
 	if err != nil {
 		return err
 	}
-	if err := RenderHTMLWithAssets(entry, report, nil, "", loadStallImages(dir, report)); err != nil {
+	if err := RenderHTMLWithAssets(entry, report, explanation, "", loadStallImages(dir, report)); err != nil {
 		return err
 	}
 	return archive.Close()
@@ -250,6 +270,9 @@ func readBundle(dir string, source io.Reader) (Report, error) {
 	if err := importedStallEvidence(dir, &report, entries); err != nil {
 		return Report{}, err
 	}
+	if err := importedReportExplanation(dir, report, entries[explanationName]); err != nil {
+		return Report{}, err
+	}
 	return report, nil
 }
 
@@ -319,6 +342,7 @@ func bundleEntries(files []*zip.File) (map[string]*zip.File, error) {
 		tsStreamName: maxStreamBytes, udpStreamName: maxStreamBytes, rtpStreamName: maxStreamBytes, rtspStreamName: maxStreamBytes,
 		reportName: 8 << 20, htmlName: 20 << 20, investigationName: maxInvestigationBytes,
 		playerName: maxPlayerBytes, playerNetworkName: maxPlayerNetworkBytes,
+		explanationName: maxReportExplanationBytes,
 	}
 	entries := make(map[string]*zip.File, len(limits))
 	for _, file := range files {

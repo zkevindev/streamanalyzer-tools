@@ -29,7 +29,7 @@ func TestModelInputHTMLVisionImageAnchorsAndFileIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	body := output.String()
-	for _, value := range []string{"模型建议（截图与时序证据）", "本次为图文解读 · 3 张截图与时序文本", "请求设置 自动图文", "播放器记录修订 #2", "媒体时间 0 ms", "本次采用的截图", refs[0].SHA256, "查看本地截图", "/api/diagnostics/runs/run123/stall-assets/S001/before.jpg", "整份报告文本汇总", "不能据此重现或证明本机画面冻结"} {
+	for _, value := range []string{"模型建议（截图与时序证据）", "本次为图文解读 · 3 张截图与时序文本", "请求设置 自动图文", "播放器记录修订 #2", "媒体时间 0 ms", "本次采用的截图", refs[0].SHA256, "查看本地截图", "/api/diagnostics/runs/run123/stall-assets/S001/before.jpg", "整份报告汇总", "不能据此重现或证明本机画面冻结"} {
 		if !strings.Contains(body, value) {
 			t.Errorf("vision HTML missing %q", value)
 		}
