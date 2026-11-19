@@ -29,6 +29,7 @@ type PlatformConfig struct {
 }
 
 type PreviewConfig struct {
+	Recording      *PlaybackRange `json:"recording,omitempty"`
 	Recovery       string         `json:"recovery,omitempty"`
 	MediaTransport mediaTransport `json:"media_transport,omitempty"`
 	SkipConnect    bool           `json:"skip_connect,omitempty"`
@@ -46,18 +47,19 @@ type PlatformMedia struct {
 }
 
 type PlatformPreview struct {
-	MediaTransport mediaTransport `json:"media_transport"`
-	ChannelID      string         `json:"channel_id"`
-	CallID         string         `json:"call_id"`
-	SSRC           uint32         `json:"ssrc"`
-	State          string         `json:"state"`
-	SIPCode        int            `json:"sip_code,omitempty"`
-	Start          time.Time      `json:"start"`
-	WindowMS       int            `json:"window_ms"`
-	RTPAddress     string         `json:"rtp_address"`
-	Media          PlatformMedia  `json:"media"`
-	Timeline       []SessionMark  `json:"timeline"`
-	Error          string         `json:"error,omitempty"`
+	Recording      *PlatformRecording `json:"recording,omitempty"`
+	MediaTransport mediaTransport     `json:"media_transport"`
+	ChannelID      string             `json:"channel_id"`
+	CallID         string             `json:"call_id"`
+	SSRC           uint32             `json:"ssrc"`
+	State          string             `json:"state"`
+	SIPCode        int                `json:"sip_code,omitempty"`
+	Start          time.Time          `json:"start"`
+	WindowMS       int                `json:"window_ms"`
+	RTPAddress     string             `json:"rtp_address"`
+	Media          PlatformMedia      `json:"media"`
+	Timeline       []SessionMark      `json:"timeline"`
+	Error          string             `json:"error,omitempty"`
 }
 
 type PlatformStatus struct {
@@ -80,6 +82,7 @@ type PlatformManager struct {
 }
 
 type platform struct {
+	playback  *platformPlayback
 	interrupt func(netip.AddrPort) bool
 	recovery  *PlatformRecovery
 	catalog   *recoveryCatalog
@@ -256,6 +259,7 @@ func (p *platform) peerRequest(req *sip.Request, tx sip.ServerTransaction) {
 	var catalog *recoveryCatalog
 	if valid {
 		ignored, catalog = p.recoveryPeerMessage(req)
+		p.recordingPeerMessage(req)
 	}
 	p.mu.Unlock()
 	if !valid {

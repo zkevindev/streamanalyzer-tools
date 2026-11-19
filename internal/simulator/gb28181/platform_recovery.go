@@ -215,5 +215,10 @@ func (r *PlatformRecovery) snapshot() *PlatformRecovery {
 func clonePlatformPreview(p *PlatformPreview) *PlatformPreview {
 	result := *p
 	result.Timeline = slices.Clone(result.Timeline)
+	if p.Recording != nil {
+		recording := *p.Recording
+		recording.Records = slices.Clone(recording.Records)
+		result.Recording = &recording
+	}
 	return &result
 }
