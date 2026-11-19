@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/rand/v2"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/emiago/sipgo"
@@ -15,6 +16,9 @@ import (
 const ringTimeout = 45 * time.Second
 
 type CallStatus struct {
+	MediaDirection  string          `json:"media_direction,omitempty"`
+	PreviousRemote  string          `json:"previous_remote,omitempty"`
+	MediaChanges    int             `json:"media_changes,omitempty"`
 	EarlyMedia      bool            `json:"early_media"`
 	EarlySend       RTPStats        `json:"early_send_rtp,omitzero"`
 	EarlyReceive    RTPStats        `json:"early_receive_rtp,omitzero"`
@@ -39,14 +43,18 @@ type CallStatus struct {
 }
 
 type phoneCall struct {
-	dtmfSend     uint16
-	status       CallStatus
-	audio        *audioSession
-	sdpID        uint32
-	answer       chan struct{}
-	hangup       chan struct{}
-	done         chan struct{}
-	cancelInvite context.CancelFunc
+	pendingMedia  *mediaChange
+	mediaUpdates  chan *mediaChange
+	peerInviteSeq uint32
+	sdpVersion    uint32
+	dtmfSend      uint16
+	status        CallStatus
+	audio         *audioSession
+	sdpID         uint32
+	answer        chan struct{}
+	hangup        chan struct{}
+	done          chan struct{}
+	cancelInvite  context.CancelFunc
 
 	// Dialog identity and pointers are published under agent.mu.
 	dialogID string
@@ -59,7 +67,7 @@ func (a *agent) newCall(direction, peer, state string) (*phoneCall, error) {
 	if err != nil {
 		return nil, fmt.Errorf("绑定 RTP 音频端口失败：%w", err)
 	}
-	return &phoneCall{audio: audio, sdpID: rand.Uint32(), answer: make(chan struct{}), hangup: make(chan struct{}), done: make(chan struct{}),
+	return &phoneCall{audio: audio, sdpID: rand.Uint32(), mediaUpdates: make(chan *mediaChange, 1), answer: make(chan struct{}), hangup: make(chan struct{}), done: make(chan struct{}),
 		status: CallStatus{Active: true, Direction: direction, Peer: peer, State: state, MediaLocal: audio.local.String()}}, nil
 }
 
@@ -264,6 +272,10 @@ func (a *agent) incoming(req *sip.Request, tx sip.ServerTransaction) {
 		respond(req, tx, 404, "Not Found")
 		return
 	}
+	if tag, _ := req.To().Params.Get("tag"); tag != "" {
+		a.reinvite(req, tx)
+		return
+	}
 	offer, selected, media, err := negotiateAudio(req.Body(), true)
 	if err != nil {
 		respond(req, tx, 488, "Not Acceptable Here")
@@ -302,6 +314,7 @@ func (a *agent) incoming(req *sip.Request, tx sip.ServerTransaction) {
 		return
 	}
 	c.dialogID, c.callee, c.status.ID = dialog.ID, dialog, req.CallID().Value()
+	c.peerInviteSeq = req.CSeq().SeqNo
 	c.status.Codec, c.status.MediaRemote = media.codec.name, media.remote.String()
 	a.call = c
 	a.workers.Add(1)
@@ -399,14 +412,22 @@ func (a *agent) ack(req *sip.Request, tx sip.ServerTransaction) {
 	if req.CSeq() == nil {
 		return
 	}
-	id, err := sip.DialogIDFromRequestUAS(req)
-	if err != nil {
-		return
-	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	c := a.call
-	if c != nil && c.status.Active && c.callee != nil && c.dialogID == id && c.callee.LoadState() == sip.DialogStateEstablished {
+	if c == nil || !c.status.Active || !c.matchesDialog(req) {
+		return
+	}
+	if change := c.pendingMedia; change != nil && change.seq == req.CSeq().SeqNo {
+		select {
+		case <-change.acked:
+		default:
+			c.mediaUpdates <- change
+			close(change.acked)
+		}
+		return
+	}
+	if c.callee != nil && c.callee.LoadState() == sip.DialogStateEstablished {
 		_ = c.callee.ReadAck(req, tx)
 	}
 }
@@ -454,14 +475,8 @@ func (a *agent) connected(c *phoneCall, dialog context.Context, media audioParam
 		return a.sendBye(bye)
 	}
 	c.status.State = "incall"
-	if media.send && media.dtmfPT != 0 {
-		c.dtmfSend = media.dtmfEvents
-		for i := range dtmfDigits {
-			if c.dtmfSend&(1<<i) != 0 {
-				c.status.DTMFKeys += string(dtmfDigits[i])
-			}
-		}
-	}
+	c.sdpVersion = c.sdpID
+	a.setCallMedia(c, media)
 	preset := a.cfg.Preset != ""
 	if preset {
 		c.status.Scenario = &ScenarioReport{State: "waiting"}
@@ -471,30 +486,41 @@ func (a *agent) connected(c *phoneCall, dialog context.Context, media audioParam
 	stopAudio := c.audio.run(a.ctx, media, false)
 	presetCtx, cancelPreset := context.WithCancel(a.ctx)
 	defer cancelPreset()
-	var presetDone chan struct{}
+	var presetWorker sync.WaitGroup
 	if preset {
-		presetDone = make(chan struct{})
-		go func() {
-			defer close(presetDone)
-			a.runPreset(presetCtx, c, media)
-		}()
+		presetWorker.Go(func() { a.runPreset(presetCtx, c, media) })
 	}
-	remoteEnded := false
-	select {
-	case <-dialog.Done():
-		remoteEnded = true
-	case <-a.ctx.Done():
-	case <-c.hangup:
+	defer func() { stopAudio() }()
+	stopPreset := func() {
+		cancelPreset()
+		presetWorker.Wait()
 	}
-	cancelPreset()
-	if presetDone != nil {
-		<-presetDone
+	defer stopPreset()
+	for {
+		select {
+		case <-dialog.Done():
+			return nil
+		case <-a.ctx.Done():
+			stopAudio()
+			return a.sendBye(bye)
+		case <-c.hangup:
+			stopAudio()
+			return a.sendBye(bye)
+		case change := <-c.mediaUpdates:
+			stopPreset()
+			stopAudio()
+			a.mu.Lock()
+			for len(c.audio.digits) > 0 {
+				<-c.audio.digits
+			}
+			c.status.PreviousRemote = c.status.MediaRemote
+			c.status.MediaChanges++
+			a.setCallMedia(c, change.media)
+			c.pendingMedia = nil
+			a.mu.Unlock()
+			stopAudio = c.audio.run(a.ctx, change.media, false)
+		}
 	}
-	stopAudio()
-	if remoteEnded {
-		return nil
-	}
-	return a.sendBye(bye)
 }
 
 func (a *agent) sendBye(bye func(context.Context) error) error {

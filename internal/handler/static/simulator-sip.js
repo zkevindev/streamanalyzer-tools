@@ -97,6 +97,12 @@ function render(next) {
   el('call-peer').textContent = call?.peer || '—';
   el('media-local').textContent = call?.media_local || '—';
   el('media-remote').textContent = call?.media_remote || '—';
+  const mediaDirections = {sendrecv: '双向音频', sendonly: '本端仅发送', recvonly: '本端仅接收', inactive: '保持中'};
+  el('media-change').hidden = !call?.media_changes;
+  el('media-change-detail').textContent = call?.media_changes ? [
+    mediaDirections[call.media_direction], '第 ' + call.media_changes + ' 次',
+    call.previous_remote && call.previous_remote !== call.media_remote ? '原对端 ' + call.previous_remote : '',
+  ].filter(Boolean).join(' · ') : '';
   setError('call-error', call?.error);
   el('received-audio').hidden = !call?.audio_ready;
   if (clipCall !== (call?.call_id || '')) {
