@@ -161,6 +161,10 @@ func clonePlayerNetwork(value *PlayerNetworkReport) *PlayerNetworkReport {
 	copy := *value
 	copy.Requests = slices.Clone(value.Requests)
 	for i := range copy.Requests {
+		if p := copy.Requests[i].PlaylistSequence; p != nil {
+			value := *p
+			copy.Requests[i].PlaylistSequence = &value
+		}
 		copy.Requests[i].Hops = clonePlayerNetworkHops(copy.Requests[i].Hops)
 		if p := copy.Requests[i].HeaderMS; p != nil {
 			v := *p

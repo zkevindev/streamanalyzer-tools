@@ -19,6 +19,7 @@ type modelPlayerHop struct {
 }
 
 type modelPlayerRequest struct {
+	PlaylistSequence *uint64          `json:"playlist_sequence,omitempty"`
 	Number           int              `json:"number"`
 	ResourceID       string           `json:"resource_id"`
 	Kind             string           `json:"kind"`
@@ -46,7 +47,7 @@ func modelPlaybackRequests(source []PlayerNetworkRequest, budget *modelPhaseBudg
 	})
 	result := make([]modelPlayerRequest, 0, len(requests))
 	for _, request := range requests {
-		value := modelPlayerRequest{Number: request.Number, ResourceID: request.ResourceID, Kind: request.Kind, Method: request.Method, StartMS: request.StartMS, HeaderMS: request.HeaderMS, FirstBodyMS: request.FirstBodyMS, EndMS: request.EndMS, HTTPStatus: request.HTTPStatus, Bytes: request.Bytes, Outcome: request.Outcome, DroppedHops: request.DroppedHops, FailureStage: request.FailureStage, FailureCode: request.FailureCode}
+		value := modelPlayerRequest{PlaylistSequence: request.PlaylistSequence, Number: request.Number, ResourceID: request.ResourceID, Kind: request.Kind, Method: request.Method, StartMS: request.StartMS, HeaderMS: request.HeaderMS, FirstBodyMS: request.FirstBodyMS, EndMS: request.EndMS, HTTPStatus: request.HTTPStatus, Bytes: request.Bytes, Outcome: request.Outcome, DroppedHops: request.DroppedHops, FailureStage: request.FailureStage, FailureCode: request.FailureCode}
 		hops := slices.Clone(request.Hops)
 		slices.SortStableFunc(hops, func(a, b PlayerNetworkHop) int {
 			priority := func(hop PlayerNetworkHop) int64 {

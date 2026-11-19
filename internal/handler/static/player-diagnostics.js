@@ -10,6 +10,11 @@
     const maxSchedulingIntervals = 256;
     const minLongTaskMS = 50;
     const minTimerDelayMS = 100;
+    const maxPresentationGaps = 128;
+    const minPresentationGapMS = 1000;
+    const maxFramePeriodMS = 5000;
+    const minCadenceSamples = 3;
+    const maxCadenceSamples = 9;
     const socketNormalClose = 1000;
     const socketUnavailable = 1008;
 
@@ -141,6 +146,12 @@
             this.schedulingStopped = false;
             this.longTaskKeys = new Set();
             this.nextSampleDeadline = null;
+            this.presentation = null;
+            this.presentationStopped = false;
+            this.presentationRegistered = false;
+            this.presentationPublished = false;
+            this.presentationMediaMS = null;
+            this.presentationCadence = [];
         }
 
         elapsed() {
@@ -230,6 +241,70 @@
 
         resetFrameBaseline() {
             this.activeFrameElapsed = null;
+            // Keep the earlier same-video cadence, but never measure a media-time
+            // delta or a callback interval across pause, seek, background, or EOF.
+            this.presentationMediaMS = null;
+        }
+
+        observePresentation() {
+            if (this.presentation) return;
+            const at = this.elapsed();
+            this.presentation = {
+                support: typeof this.video.requestVideoFrameCallback === 'function' ? 'supported' : 'unsupported',
+                observation_start_ms: at,
+                observation_end_ms: at,
+                gaps: [],
+                dropped_gaps: 0,
+            };
+        }
+
+        // These are closed callback intervals, not proof of a frozen image.
+        recordPresentationFrame(at, metadata) {
+            const presentation = this.presentation;
+            if (!presentation || presentation.support !== 'supported' || this.presentationStopped) return;
+            if (this.activeFrameElapsed !== null && this.presentationCadence.length >= minCadenceSamples) {
+                // Use only earlier media-time deltas: this frame's possible outlier
+                // must not redefine the expectation for the interval just observed.
+                const cadence = this.presentationCadence.slice().sort((a, b) => a - b);
+                const middle = Math.floor(cadence.length / 2);
+                const median = cadence.length % 2 ? cadence[middle] : (cadence[middle - 1] + cadence[middle]) / 2;
+                const expected = Math.max(1, Math.round(median));
+                if (at - this.activeFrameElapsed >= Math.max(minPresentationGapMS, 3 * expected)) {
+                    if (presentation.gaps.length < maxPresentationGaps) {
+                        presentation.gaps.push({start_ms: this.activeFrameElapsed, end_ms: at, expected_frame_ms: expected});
+                    } else presentation.dropped_gaps = Math.min(maxFrameCounter, presentation.dropped_gaps + 1);
+                }
+            }
+            const time = metadata?.mediaTime;
+            const current = Number.isFinite(time) && time >= 0 && time <= maxCurrentMS / 1000 ? time * 1000 : null;
+            if (this.activeFrameElapsed !== null && current !== null && this.presentationMediaMS !== null) {
+                const delta = current - this.presentationMediaMS;
+                if (delta > 0 && delta <= maxFramePeriodMS) {
+                    this.presentationCadence.push(delta);
+                    if (this.presentationCadence.length > maxCadenceSamples) this.presentationCadence.shift();
+                    if (presentation.ready_at_ms === undefined && this.presentationCadence.length >= minCadenceSamples) {
+                        presentation.ready_at_ms = at;
+                    }
+                }
+            }
+            this.presentationMediaMS = current;
+        }
+
+        presentationSnapshot() {
+            const presentation = this.presentation;
+            if (!presentation) {
+                const at = this.elapsed();
+                return {support: 'unsupported', observation_start_ms: at, observation_end_ms: at, gaps: [], dropped_gaps: 0};
+            }
+            if (!this.presentationStopped) presentation.observation_end_ms = Math.max(presentation.observation_end_ms, this.elapsed());
+            this.presentationPublished = true;
+            return {...presentation, gaps: presentation.gaps.map((gap) => ({...gap}))};
+        }
+
+        stopPresentation() {
+            if (this.presentationStopped) return;
+            if (this.presentation) this.presentation.observation_end_ms = Math.max(this.presentation.observation_end_ms, this.elapsed());
+            this.presentationStopped = true;
         }
 
         resetSchedulingBaseline() {
@@ -351,6 +426,7 @@
                         this.lastFrameElapsed = at;
                         this.presentedFrames = frameCounter(metadata?.presentedFrames);
                         if (this.framePlaybackActive && !this.video.paused && !this.video.seeking && !this.video.ended && !this.video.error && !document.hidden) {
+                            this.recordPresentationFrame(at, metadata);
                             if (this.activeFrameElapsed !== null) {
                                 const gap = Math.max(0, at - this.activeFrameElapsed);
                                 this.maxFrameGapMS = Math.max(this.maxFrameGapMS ?? 0, gap);
@@ -362,11 +438,14 @@
                     }
                     this.observeFrame();
                 });
+                this.presentationRegistered = true;
                 return true;
             } catch {
                 this.frameCallback = null;
                 this.lastFrameElapsed = null;
                 this.presentedFrames = null;
+                if (this.presentation && !this.presentationRegistered && !this.presentationPublished && !this.firstFrame) this.presentation.support = 'unsupported';
+                else if (this.presentation) this.stopPresentation();
                 this.resetFrameBaseline();
                 return false;
             }
@@ -428,6 +507,7 @@
             if (this.active || this.finalRecording) return;
             this.active = true;
             this.observeScheduling();
+            this.observePresentation();
             this.observeVideo();
             this.event('start');
             if (!this.active) return;
@@ -542,8 +622,9 @@
         recording(complete) {
             this.drainLongTasks();
             const scheduling = this.schedulingSnapshot();
+            const presentation = this.presentationSnapshot();
             return {
-                version: 3,
+                version: 4,
                 revision: ++this.revision,
                 started_at: this.startedAt.toISOString(),
                 elapsed_ms: this.elapsed(),
@@ -553,12 +634,14 @@
                 events: this.events.slice(),
                 samples: this.samples.slice(),
                 scheduling,
+                presentation,
             };
         }
 
         cutoff() {
             if (!this.active || this.measurementEnded) return;
             this.stopScheduling();
+            this.stopPresentation();
             // The decoder can still present a buffered first frame after capture ends.
             this.measurementEnded = true;
             this.resetFrameBaseline();

@@ -109,7 +109,10 @@ func assessStallV2(item StallInvestigation) *StallAssessment {
 }
 
 func recomputeStallAssessment(item StallInvestigation, version string) (*StallAssessment, error) {
-	if version != stallAssessmentVersion && hasPlayerPhaseEvidence(item) {
+	if version != stallAssessmentVersion && (item.IntervalKind == IntervalPresentationGap || item.Correlation.Presentation != nil) {
+		return nil, fmt.Errorf("%w: 排查分层版本与呈帧间隔证据不一致", ErrInvalid)
+	}
+	if version != stallAssessmentVersion && version != "stall-assessment/4" && hasPlayerPhaseEvidence(item) {
 		return nil, fmt.Errorf("%w: 排查分层版本与逐跳阶段证据不一致", ErrInvalid)
 	}
 	switch version {
@@ -125,6 +128,8 @@ func recomputeStallAssessment(item StallInvestigation, version string) (*StallAs
 		return assessStallV2(item), nil
 	case "stall-assessment/3":
 		return assessStallV3(item), nil
+	case "stall-assessment/4":
+		return assessStallV4(item), nil
 	case stallAssessmentVersion:
 		return assessStall(item), nil
 	default:

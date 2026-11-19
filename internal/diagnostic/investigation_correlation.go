@@ -26,11 +26,21 @@ const (
 )
 
 func correlateStall(dir string, report Report, id string, stallIndex int) (StallCorrelation, error) {
-	if report.Player == nil || stallIndex < 1 || stallIndex > len(report.Player.Stalls) ||
-		len(id) != 4 || id[0] != 'S' || id[1] != '0' || id[2] != '0' || id[3] < '1' || int(id[3]-'0') > maxStallInvestigations {
+	return correlatePlayerInterval(dir, report, id, IntervalBuffering, stallIndex)
+}
+
+func correlatePlayerInterval(dir string, report Report, id, kind string, index int) (StallCorrelation, error) {
+	if len(id) != 4 || id[0] != 'S' || id[1] != '0' || id[2] != '0' || id[3] < '1' || int(id[3]-'0') > maxStallInvestigations {
 		return StallCorrelation{}, fmt.Errorf("%w: 请选择已记录的卡顿区间", ErrInvalid)
 	}
-	stall := report.Player.Stalls[stallIndex-1]
+	kind, err := normalizePlayerIntervalKind(kind)
+	if err != nil {
+		return StallCorrelation{}, err
+	}
+	stall, err := resolvePlayerInterval(report, kind, index)
+	if err != nil {
+		return StallCorrelation{}, err
+	}
 	if stall.EndMS < stall.StartMS || stall.DurationMS != stall.EndMS-stall.StartMS || report.Manifest.Observation.ElapsedMS < 0 {
 		return StallCorrelation{}, fmt.Errorf("%w: 卡顿区间无效", ErrInvalid)
 	}
@@ -60,8 +70,13 @@ func correlateStall(dir string, report Report, id string, stallIndex int) (Stall
 			Evidence: slices.Clone(evidence),
 		})
 	}
-	add("stall_selected", "info", fmt.Sprintf("选中的播放器卡顿持续 %d ms", stall.DurationMS), stall.StartMS, stall.EndMS,
-		Event{Kind: "player_stall", Artifact: playerName, ArrivalMS: stall.StartMS, DurationMS: stall.DurationMS})
+	if kind == IntervalPresentationGap {
+		gap := report.Player.Presentation.Gaps[index-1]
+		add("presentation_gap_selected", "info", fmt.Sprintf("选中的呈帧回调间隔持续 %d ms，先前回调的媒体时间间隔基线 %d ms；不代表已确认画面冻结。", stall.DurationMS, gap.ExpectedFrameMS), stall.StartMS, stall.EndMS, Event{Kind: "player_presentation_gap", Artifact: playerName, ArrivalMS: stall.StartMS, DurationMS: stall.DurationMS})
+	} else {
+		add("stall_selected", "info", fmt.Sprintf("选中的播放器卡顿持续 %d ms", stall.DurationMS), stall.StartMS, stall.EndMS,
+			Event{Kind: "player_stall", Artifact: playerName, ArrivalMS: stall.StartMS, DurationMS: stall.DurationMS})
+	}
 	if result.Source == "independent_pull" {
 		result.Notes = append(result.Notes, "HLS 播放器与采样使用独立连接；本次收流、关键帧和请求记录仅供同一时间段对照，不能据此证明播放器连接的故障原因。")
 		add("stall_independent_connection", "info", result.Notes[len(result.Notes)-1], result.WindowStartMS, result.WindowEndMS)
@@ -92,6 +107,14 @@ func correlateStall(dir string, report Report, id string, stallIndex int) (Stall
 		result.Notes = append(result.Notes, "所选时间窗口没有播放器缓冲样本，无法补推缓冲变化。")
 	}
 
+	result.Presentation = presentationWindow(report.Player.Presentation, result.WindowStartMS, result.WindowEndMS)
+	if result.Presentation != nil {
+		result.Notes = append(result.Notes, "呈帧回调间隔是已恢复的两次回调之间的观测，阈值按先前回调的媒体时间间隔估算；低帧率或帧率变化需人工核对，不代表画面内容冻结。窗口指标只累计相交部分，行记录保留完整区间。")
+		overlap, evidence := presentationBufferingOverlapEvidence(report, stall)
+		if overlap > 0 {
+			add("presentation_buffering_overlap", "info", fmt.Sprintf("选中区间内，呈帧回调间隔与已有缓冲卡顿重合 %d ms；两类观测独立展示，不增加或重复累计缓冲卡顿次数。", overlap), stall.StartMS, stall.EndMS, evidence...)
+		}
+	}
 	result.Scheduling = schedulingWindow(report.Player.Scheduling, result.WindowStartMS, result.WindowEndMS)
 	for _, finding := range schedulingCaseFindings(result.Scheduling, stall) {
 		add(finding.Code, finding.Severity, finding.Message, finding.StartMS, finding.EndMS, finding.Evidence...)

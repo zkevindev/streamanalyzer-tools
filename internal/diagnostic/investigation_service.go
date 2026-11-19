@@ -43,8 +43,13 @@ func (s *Service) InvestigateStall(id string, request StallInvestigationRequest)
 		return StallInvestigation{}, ErrPending
 	}
 	report := *detail.Report
-	if report.Player == nil || request.StallIndex < 1 || request.StallIndex > len(report.Player.Stalls) {
-		return StallInvestigation{}, fmt.Errorf("%w: 请选择报告中实际观测到的卡顿", ErrInvalid)
+	kind, index, err := normalizePlayerIntervalRequest(request)
+	if err != nil {
+		return StallInvestigation{}, err
+	}
+	interval, err := resolvePlayerInterval(report, kind, index)
+	if err != nil {
+		return StallInvestigation{}, err
 	}
 	record, err := readPlayerRecording(s.runDir(id))
 	if err != nil {
@@ -59,7 +64,11 @@ func (s *Service) InvestigateStall(id string, request StallInvestigationRequest)
 	var item *StallInvestigation
 	for i := range report.StallInvestigations {
 		candidate := &report.StallInvestigations[i]
-		if candidate.StallIndex == request.StallIndex {
+		candidateKind, err := normalizePlayerIntervalKind(candidate.IntervalKind)
+		if err != nil {
+			return StallInvestigation{}, err
+		}
+		if candidateKind == kind && candidate.StallIndex == index {
 			if candidate.PlayerRevision != report.Player.Revision {
 				return StallInvestigation{}, ErrReportChanged
 			}
@@ -72,12 +81,16 @@ func (s *Service) InvestigateStall(id string, request StallInvestigationRequest)
 	}
 	if item == nil {
 		if len(report.StallInvestigations) >= maxStallInvestigations {
-			return StallInvestigation{}, fmt.Errorf("%w: 每份报告最多补查 %d 次卡顿", ErrInvalid, maxStallInvestigations)
+			return StallInvestigation{}, fmt.Errorf("%w: 每份报告最多补查 %d 个异常区间", ErrInvalid, maxStallInvestigations)
 		}
 		now := time.Now().UTC()
+		storedKind := kind
+		if kind == IntervalBuffering {
+			storedKind = ""
+		}
 		report.StallInvestigations = append(report.StallInvestigations, StallInvestigation{
-			ID: fmt.Sprintf("S%03d", len(report.StallInvestigations)+1), StallIndex: request.StallIndex,
-			PlayerRevision: report.Player.Revision, Stall: report.Player.Stalls[request.StallIndex-1], CreatedAt: now,
+			ID: fmt.Sprintf("S%03d", len(report.StallInvestigations)+1), StallIndex: index, IntervalKind: storedKind,
+			PlayerRevision: report.Player.Revision, Stall: interval, CreatedAt: now,
 		})
 		item = &report.StallInvestigations[len(report.StallInvestigations)-1]
 	}
@@ -135,7 +148,7 @@ func (s *Service) runStallInvestigation(ctx context.Context, runID string, item 
 		_ = s.saveStallItem(runID, item)
 		return
 	}
-	correlation, err := correlateStall(s.runDir(runID), report, item.ID, item.StallIndex)
+	correlation, err := correlatePlayerInterval(s.runDir(runID), report, item.ID, item.IntervalKind, item.StallIndex)
 	if err != nil {
 		item.Status, item.ModelState, item.ModelError = "failed", "failed", "无法从原始流和时间线重建补查证据"
 		item.Media.Reason = "时序证据重建失败，已保留原始数据"
@@ -238,12 +251,27 @@ func (s *Service) explainStall(ctx context.Context, runID, caseID string) (Expla
 	scoped.PlayerNetwork = nil
 	player := *scoped.Player
 	player.Scheduling = item.Correlation.Scheduling
-	player.Stalls = []PlayerStall{item.Stall}
-	player.StallCount = 1
-	player.TotalStallMS = item.Stall.DurationMS
-	player.MaxStallMS = item.Stall.DurationMS
+	player.Presentation = item.Correlation.Presentation
+	if item.IntervalKind == IntervalPresentationGap {
+		player.Stalls = []PlayerStall{}
+		for _, stall := range scoped.Player.Stalls {
+			if min(stall.EndMS, item.Stall.EndMS) > max(stall.StartMS, item.Stall.StartMS) {
+				player.Stalls = append(player.Stalls, stall)
+			}
+		}
+		player.StallCount, player.TotalStallMS, player.MaxStallMS = len(player.Stalls), 0, 0
+		for _, stall := range player.Stalls {
+			player.TotalStallMS += stall.DurationMS
+			player.MaxStallMS = max(player.MaxStallMS, stall.DurationMS)
+		}
+	} else {
+		player.Stalls = []PlayerStall{item.Stall}
+		player.StallCount = 1
+		player.TotalStallMS, player.MaxStallMS = item.Stall.DurationMS, item.Stall.DurationMS
+	}
+	player.StallRatio = 0
 	if player.ActiveMS > 0 {
-		player.StallRatio = float64(item.Stall.DurationMS) / float64(player.ActiveMS)
+		player.StallRatio = float64(player.TotalStallMS) / float64(player.ActiveMS)
 	}
 	scoped.Player = &player
 	explanation, err := model.explainer.Explain(ctx, scoped)
