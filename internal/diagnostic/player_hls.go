@@ -168,6 +168,14 @@ func (h *playerHLS) serve(w http.ResponseWriter, r *http.Request, resource strin
 			hlsPlaybackError(w)
 			return
 		}
+		for line := range strings.SplitSeq(rewritten, "\n") {
+			if value, ok := strings.CutPrefix(strings.TrimSpace(line), "#EXT-X-MEDIA-SEQUENCE:"); ok {
+				if sequence, err := strconv.ParseUint(value, 10, 64); err == nil {
+					h.network.playlistSequence(evidence, sequence)
+				}
+				break
+			}
+		}
 		if _, err := io.WriteString(w, rewritten); err != nil {
 			outcome = "canceled"
 			h.network.fail(evidence, "proxy_write", "proxy_write_error")

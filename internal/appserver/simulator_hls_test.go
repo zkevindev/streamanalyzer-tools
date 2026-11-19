@@ -2,6 +2,7 @@ package appserver
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"path"
 	"strings"
@@ -73,4 +74,38 @@ func TestHLSSimulatorServesBaselineAndFaults(t *testing.T) {
 	diagnosticRequest(t, server, "GET", segments[2], http.StatusOK, nil)
 	diagnosticRequest(t, server, "GET", segments[3], http.StatusNotFound, nil)
 	waitDiagnostic(t, server, "/api/diagnostics/runs/"+created.ID)
+}
+
+func TestHLSSimulatorResumesRollingPlaylistAfterFreeze(t *testing.T) {
+	server := testDiagnosticServer(t, t.TempDir())
+	const api = "/api/simulators/hls"
+	live := decodeDiagnostic[hlsorigin.Status](t, diagnosticRequest(t, server, "POST", api+"/start", http.StatusCreated, []byte(`{"mode":"live"}`)))
+	first := diagnosticRequest(t, server, "GET", live.Playlist, http.StatusOK, nil)
+	if strings.Contains(string(first), "ENDLIST") || strings.Count(string(first), "#EXTINF:") != 3 {
+		t.Fatalf("not a rolling media playlist: %s", first)
+	}
+	frozen := decodeDiagnostic[hlsorigin.Status](t, diagnosticRequest(t, server, "POST", api+"/freeze", http.StatusOK, []byte(`{"frozen":true}`)))
+	snapshot := diagnosticRequest(t, server, "GET", live.Playlist, http.StatusOK, nil)
+	time.Sleep(2100 * time.Millisecond)
+	still := diagnosticRequest(t, server, "GET", live.Playlist, http.StatusOK, nil)
+	if !frozen.Frozen || string(snapshot) != string(still) {
+		t.Fatalf("frozen playlist slid: %s vs %s", snapshot, still)
+	}
+	status := decodeDiagnostic[hlsorigin.Status](t, diagnosticRequest(t, server, "GET", api, http.StatusOK, nil))
+	samples := status.PlaylistSamples
+	if len(samples) != 3 || !samples[1].Frozen || !samples[2].Frozen || samples[1].Sequence != samples[2].Sequence {
+		t.Fatalf("missing repeated successful playlist reads: %+v", samples)
+	}
+	latest := decodeDiagnostic[hlsorigin.Status](t, diagnosticRequest(t, server, "POST", api+"/freeze", http.StatusOK, []byte(`{"frozen":false}`)))
+	if latest.Frozen || latest.MediaSequence != frozen.MediaSequence+1 {
+		t.Fatalf("resume did not advance the window: %+v", latest)
+	}
+	resumed := diagnosticRequest(t, server, "GET", live.Playlist, http.StatusOK, nil)
+	if string(resumed) == string(snapshot) {
+		t.Fatal("resume did not update playlist")
+	}
+	last := path.Join(path.Dir(live.Playlist), fmt.Sprintf("live-%d.ts", latest.MediaSequence+2))
+	if data := diagnosticRequest(t, server, "GET", last, http.StatusOK, nil); len(data) == 0 || data[0] != 0x47 {
+		t.Fatal("new segment unavailable")
+	}
 }
