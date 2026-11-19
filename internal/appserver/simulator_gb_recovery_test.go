@@ -85,3 +85,61 @@ func TestGB28181PlatformRecoversAfterSIPInterruption(t *testing.T) {
 		})
 	}
 }
+
+func TestGB28181PlatformConcurrentDeviceIsolation(t *testing.T) {
+	server := testDiagnosticServer(t, t.TempDir())
+	const otherDevice = "34020000001320000003"
+	const otherChannel = "34020000001320000004"
+	start := gb28181.PlatformConfig{PlatformID: platformTestID, DeviceIDs: []string{platformDeviceID, otherDevice}, SIPTransport: "tcp"}
+	input, _ := json.Marshal(start)
+	platform := decodeDiagnostic[gb28181.PlatformStatus](t, diagnosticRequest(t, server, "POST", platformAPI+"/start", 201, input))
+	host, port, err := net.SplitHostPort(platform.Address)
+	if err != nil {
+		t.Fatal(err)
+	}
+	number, err := strconv.Atoi(port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := gb28181.Config{PlatformHost: host, PlatformPort: number, PlatformID: platformTestID, DeviceID: platformDeviceID, ChannelID: platformChannelID,
+		DeviceCount: 2, ChannelsPerDevice: 1, SIPTransport: "tcp"}
+	input, _ = json.Marshal(cfg)
+	diagnosticRequest(t, server, "POST", platformDeviceAPI+"/start", 202, input)
+	wait := func(match func([]gb28181.PlatformDeviceStatus) bool) []gb28181.PlatformDeviceStatus {
+		t.Helper()
+		for deadline := time.Now().Add(12 * time.Second); time.Now().Before(deadline); time.Sleep(40 * time.Millisecond) {
+			s := decodeDiagnostic[gb28181.PlatformStatus](t, diagnosticRequest(t, server, "GET", platformAPI, 200, nil))
+			if len(s.Devices) == 2 && match(s.Devices) {
+				return s.Devices
+			}
+		}
+		t.Fatal("platform devices did not reach expected state")
+		return nil
+	}
+	wait(func(s []gb28181.PlatformDeviceStatus) bool { return s[0].Peer != "" && s[1].Peer != "" })
+	startPlayback := func(c gb28181.PreviewConfig) {
+		input, _ := json.Marshal(c)
+		diagnosticRequest(t, server, "POST", platformAPI+"/preview", 202, input)
+	}
+	startPlayback(gb28181.PreviewConfig{DeviceID: otherDevice, ChannelID: otherChannel, WindowMS: 12000})
+	before := wait(func(s []gb28181.PlatformDeviceStatus) bool {
+		return s[1].Preview != nil && s[1].Preview.Media.Keyframes > 0
+	})[1]
+	startPlayback(gb28181.PreviewConfig{DeviceID: platformDeviceID, ChannelID: platformChannelID, WindowMS: 1800, Recovery: "sip_tcp_disconnect"})
+	after := wait(func(s []gb28181.PlatformDeviceStatus) bool {
+		return s[0].Recovery != nil && s[0].Recovery.State == "passed" && !s[0].Busy &&
+			s[1].Preview.Media.Keyframes > before.Preview.Media.Keyframes
+	})
+	a, b := after[0], after[1]
+	if a.Recovery.Before.CallID == a.Preview.CallID || a.Recovery.PreviousSession == nil ||
+		a.DeviceSession == nil || a.DeviceSession.CallID != a.Preview.CallID || !b.Busy ||
+		b.Peer != before.Peer || b.Preview.CallID != before.Preview.CallID || b.Preview.SSRC != before.Preview.SSRC ||
+		b.Preview.Media.Packets <= before.Preview.Media.Packets || b.Preview.Media.Keyframes <= before.Preview.Media.Keyframes ||
+		b.DeviceSession == nil || b.DeviceSession.CallID != b.Preview.CallID || a.Preview.SSRC == b.Preview.SSRC {
+		t.Fatalf("device activity was not isolated: A=%+v B=%+v", a, b)
+	}
+	export := decodeDiagnostic[gb28181.PlatformStatus](t, diagnosticRequest(t, server, "GET", platformAPI+"/trace.json", 200, nil))
+	if len(export.Devices) != 2 || export.Devices[1].Preview.CallID != b.Preview.CallID {
+		t.Fatal("missing concurrent evidence")
+	}
+}

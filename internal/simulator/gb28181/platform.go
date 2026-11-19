@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,14 +22,16 @@ var (
 )
 
 type PlatformConfig struct {
-	SIPTransport string `json:"sip_transport,omitempty"`
-	IP           string `json:"ip"`
-	Port         int    `json:"port"`
-	PlatformID   string `json:"platform_id"`
-	DeviceID     string `json:"device_id"`
+	DeviceIDs    []string `json:"device_ids,omitempty"`
+	SIPTransport string   `json:"sip_transport,omitempty"`
+	IP           string   `json:"ip"`
+	Port         int      `json:"port"`
+	PlatformID   string   `json:"platform_id"`
+	DeviceID     string   `json:"device_id"`
 }
 
 type PreviewConfig struct {
+	DeviceID       string `json:"device_id,omitempty"`
 	watchMedia     bool
 	Recording      *PlaybackRange `json:"recording,omitempty"`
 	Recovery       string         `json:"recovery,omitempty"`
@@ -64,15 +67,20 @@ type PlatformPreview struct {
 }
 
 type PlatformStatus struct {
-	Recovery      *PlatformRecovery `json:"recovery,omitempty"`
-	SIPTransport  string            `json:"sip_transport,omitempty"`
-	Busy          bool              `json:"busy"`
-	Active        bool              `json:"active"`
-	Address       string            `json:"address,omitempty"`
-	PlatformID    string            `json:"platform_id,omitempty"`
+	PlatformDeviceStatus
+	Devices      []PlatformDeviceStatus `json:"devices,omitempty"`
+	SIPTransport string                 `json:"sip_transport,omitempty"`
+	Active       bool                   `json:"active"`
+	Address      string                 `json:"address,omitempty"`
+	PlatformID   string                 `json:"platform_id,omitempty"`
+}
+
+type PlatformDeviceStatus struct {
 	DeviceID      string            `json:"device_id,omitempty"`
 	Peer          string            `json:"peer,omitempty"`
+	Busy          bool              `json:"busy"`
 	Preview       *PlatformPreview  `json:"preview,omitempty"`
+	Recovery      *PlatformRecovery `json:"recovery,omitempty"`
 	DeviceSession *SessionReport    `json:"device_session,omitempty"`
 }
 
@@ -83,6 +91,9 @@ type PlatformManager struct {
 }
 
 type platform struct {
+	// The listener and workers are shared; all device/dialog state is per peer.
+	devices       map[string]*platform
+	peers         map[netip.AddrPort]*platform
 	registrations uint64
 	playback      *platformPlayback
 	interrupt     func(netip.AddrPort) bool
@@ -95,12 +106,12 @@ type platform struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	done          chan struct{}
-	mu            sync.Mutex
+	mu            *sync.Mutex
 	peer          netip.AddrPort
 	expires       time.Time
 	preview       *PlatformPreview
 	busy          bool
-	workers       sync.WaitGroup
+	workers       *sync.WaitGroup
 }
 
 func (m *PlatformManager) Start(cfg PlatformConfig) error {
@@ -116,9 +127,31 @@ func (m *PlatformManager) Start(cfg PlatformConfig) error {
 		cfg.IP = "127.0.0.1"
 	}
 	if !unicastIP(net.ParseIP(cfg.IP)) || cfg.Port < 0 || cfg.Port > 65535 ||
-		!digits20.MatchString(cfg.PlatformID) || !digits20.MatchString(cfg.DeviceID) || cfg.PlatformID == cfg.DeviceID {
+		!digits20.MatchString(cfg.PlatformID) {
 		return fmt.Errorf("%w，填写本机 IPv4、端口及不同的 20 位平台和设备编号", ErrPlatformConfig)
 	}
+	ids := slices.Clone(cfg.DeviceIDs)
+	for i := range ids {
+		ids[i] = strings.TrimSpace(ids[i])
+	}
+	if cfg.DeviceID != "" {
+		if index := slices.Index(ids, cfg.DeviceID); index > 0 {
+			ids = append([]string{cfg.DeviceID}, slices.Delete(ids, index, index+1)...)
+		} else if index < 0 {
+			ids = append([]string{cfg.DeviceID}, ids...)
+		}
+	}
+	if len(ids) < 1 || len(ids) > maxDevices {
+		return fmt.Errorf("%w，需要 1–%d 个设备编号", ErrPlatformConfig, maxDevices)
+	}
+	seen := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		if seen[id] || !digits20.MatchString(id) || id == cfg.PlatformID {
+			return fmt.Errorf("%w，设备编号必须为不同的 20 位数字", ErrPlatformConfig)
+		}
+		seen[id] = true
+	}
+	cfg.DeviceID, cfg.DeviceIDs = ids[0], ids
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {
@@ -135,7 +168,7 @@ func (m *PlatformManager) Start(cfg PlatformConfig) error {
 		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	p := &platform{cfg: cfg, ctx: ctx, cancel: cancel, done: make(chan struct{})}
+	p := &platform{cfg: cfg, ctx: ctx, cancel: cancel, done: make(chan struct{}), mu: &sync.Mutex{}, workers: &sync.WaitGroup{}, peers: make(map[netip.AddrPort]*platform)}
 	listener, addr, err := p.listen()
 	if err != nil {
 		cancel()
@@ -170,10 +203,17 @@ func (m *PlatformManager) Start(cfg PlatformConfig) error {
 		ua.Close()
 		return err
 	}
-	server.OnRegister(p.register)
-	server.OnMessage(p.peerRequest)
-	server.OnBye(p.peerRequest)
-	server.OnOptions(p.peerRequest)
+	p.devices = make(map[string]*platform, len(ids))
+	p.devices[cfg.DeviceID] = p
+	for _, id := range ids[1:] {
+		child := cfg
+		child.DeviceID = id
+		p.devices[id] = &platform{cfg: child, local: p.local, client: p.client, ctx: p.ctx, interrupt: p.interrupt, mu: p.mu, workers: p.workers, peers: p.peers}
+	}
+	server.OnRegister(p.registerDevice)
+	server.OnMessage(p.requestDevice)
+	server.OnBye(p.requestDevice)
+	server.OnOptions(p.requestDevice)
 	m.run = p
 	served := make(chan struct{})
 	go func() {
@@ -194,19 +234,45 @@ func (m *PlatformManager) Start(cfg PlatformConfig) error {
 	return nil
 }
 
+func (p *platform) device(id string) *platform {
+	if id == "" {
+		return p
+	}
+	return p.devices[id]
+}
+
 func (p *platform) forget(peer netip.AddrPort) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if p.peer == peer {
-		p.peer, p.expires = netip.AddrPort{}, time.Time{}
+	if device := p.peers[peer]; device != nil {
+		device.peer, device.expires = netip.AddrPort{}, time.Time{}
+		delete(p.peers, peer)
 	}
 }
 
-func (p *platform) register(req *sip.Request, tx sip.ServerTransaction) {
-	if req.To() == nil || req.To().Address.User != p.cfg.DeviceID {
-		_ = tx.Respond(sip.NewResponseFromRequest(req, 404, "Not Found", nil))
+func (p *platform) registerDevice(req *sip.Request, tx sip.ServerTransaction) {
+	if to := req.To(); to != nil && to.Address.User != "" {
+		if device := p.device(to.Address.User); device != nil {
+			device.register(req, tx)
+			return
+		}
+	}
+	_ = tx.Respond(sip.NewResponseFromRequest(req, 404, "Not Found", nil))
+}
+
+func (p *platform) requestDevice(req *sip.Request, tx sip.ServerTransaction) {
+	peer, _ := netip.ParseAddrPort(req.Source())
+	p.mu.Lock()
+	device := p.peers[peer]
+	p.mu.Unlock()
+	if device != nil {
+		device.peerRequest(req, tx)
 		return
 	}
+	_ = tx.Respond(sip.NewResponseFromRequest(req, 403, "Forbidden", nil))
+}
+
+func (p *platform) register(req *sip.Request, tx sip.ServerTransaction) {
 	peer, err := netip.ParseAddrPort(req.Source())
 	if err != nil {
 		return
@@ -230,13 +296,23 @@ func (p *platform) register(req *sip.Request, tx sip.ServerTransaction) {
 	}
 	expires = min(expires, defaultExpires)
 	p.mu.Lock()
-	if p.peer.IsValid() && time.Now().Before(p.expires) && p.peer != peer {
+	owner := p.peers[peer]
+	now := time.Now()
+	if (owner != nil && owner != p && now.Before(owner.expires)) ||
+		(p.peer.IsValid() && now.Before(p.expires) && p.peer != peer) {
 		p.mu.Unlock()
 		_ = tx.Respond(sip.NewResponseFromRequest(req, 403, "Forbidden", nil))
 		return
 	}
-	registeredAt := time.Now()
-	p.peer, p.expires = peer, registeredAt.Add(time.Duration(expires)*time.Second)
+	registeredAt := now
+	if p.peers[p.peer] == p {
+		delete(p.peers, p.peer)
+	}
+	p.peer, p.expires = netip.AddrPort{}, time.Time{}
+	if expires > 0 {
+		p.peer, p.expires = peer, registeredAt.Add(time.Duration(expires)*time.Second)
+		p.peers[peer] = p
+	}
 	p.mu.Unlock()
 	res := sip.NewResponseFromRequest(req, 200, "OK", nil)
 	res.AppendHeader(sip.NewHeader("Expires", strconv.Itoa(expires)))
@@ -300,17 +376,27 @@ func (m *PlatformManager) Status() PlatformStatus {
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	result := PlatformStatus{SIPTransport: p.cfg.SIPTransport, Busy: p.busy, Active: p.ctx.Err() == nil, Address: p.local.String(), PlatformID: p.cfg.PlatformID, DeviceID: p.cfg.DeviceID}
-	if result.Active && time.Now().Before(p.expires) {
-		result.Peer = p.peer.String()
+	result := PlatformStatus{SIPTransport: p.cfg.SIPTransport, Active: p.ctx.Err() == nil, Address: p.local.String(), PlatformID: p.cfg.PlatformID}
+	now := time.Now()
+	for _, id := range p.cfg.DeviceIDs {
+		result.Devices = append(result.Devices, p.devices[id].snapshotDevice(now, result.Active))
+	}
+	result.PlatformDeviceStatus = result.Devices[0]
+	return result
+}
+
+func (p *platform) snapshotDevice(now time.Time, active bool) PlatformDeviceStatus {
+	device := PlatformDeviceStatus{DeviceID: p.cfg.DeviceID, Busy: p.busy}
+	if active && now.Before(p.expires) {
+		device.Peer = p.peer.String()
 	}
 	if p.preview != nil {
-		result.Preview = clonePlatformPreview(p.preview)
+		device.Preview = clonePlatformPreview(p.preview)
 	}
 	if p.recovery != nil {
-		result.Recovery = p.recovery.snapshot()
+		device.Recovery = p.recovery.snapshot()
 	}
-	return result
+	return device
 }
 
 func (m *PlatformManager) stop(closeManager bool) {

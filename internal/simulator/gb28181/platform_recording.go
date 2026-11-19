@@ -30,8 +30,9 @@ type PlatformRecording struct {
 }
 
 type PlaybackControl struct {
-	Method string   `json:"method"`
-	Offset *float64 `json:"offset,omitempty"`
+	DeviceID string   `json:"device_id,omitempty"`
+	Method   string   `json:"method"`
+	Offset   *float64 `json:"offset,omitempty"`
 }
 
 type platformPlayback struct {
@@ -165,6 +166,10 @@ func (m *PlatformManager) ControlPlayback(action PlaybackControl) error {
 	m.mu.Unlock()
 	if p == nil {
 		return ErrPlatformPeer
+	}
+	p = p.device(action.DeviceID)
+	if p == nil {
+		return fmt.Errorf("%w，未配置该设备编号", ErrPlatformConfig)
 	}
 	p.mu.Lock()
 	playback := p.playback

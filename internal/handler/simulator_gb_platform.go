@@ -3,6 +3,7 @@ package handler
 import (
 	"errors"
 	"net/http"
+	"slices"
 
 	"streamanalyzer/internal/simulator/gb28181"
 
@@ -14,26 +15,35 @@ func registerGBPlatformRoutes(r *gin.Engine, platform *gb28181.PlatformManager, 
 		serveEmbeddedStaticFile(c, "simulator-gb-platform.html")
 	})
 	api := r.Group("/api/simulators/gb28181/platform", localDiagnostics)
-	status := func() gb28181.PlatformStatus {
-		result := platform.Status()
-		if result.Preview != nil {
-			if device, ok := devices.StatusFor(result.DeviceID, result.Preview.ChannelID); ok {
-				for _, session := range device.Sessions {
-					if session.CallID == result.Preview.CallID {
-						result.DeviceSession = &session
-					}
-					if result.Recovery != nil && session.CallID == result.Recovery.Before.CallID {
-						result.Recovery.PreviousSession = &session
-					}
+	correlate := func(result *gb28181.PlatformDeviceStatus) {
+		if result.Preview == nil {
+			return
+		}
+		if device, ok := devices.StatusFor(result.DeviceID, result.Preview.ChannelID); ok {
+			for _, session := range device.Sessions {
+				if session.CallID == result.Preview.CallID {
+					result.DeviceSession = &session
+				}
+				if result.Recovery != nil && session.CallID == result.Recovery.Before.CallID {
+					result.Recovery.PreviousSession = &session
 				}
 			}
+		}
+	}
+	status := func() gb28181.PlatformStatus {
+		result := platform.Status()
+		for i := range result.Devices {
+			correlate(&result.Devices[i])
+		}
+		if len(result.Devices) != 0 {
+			result.PlatformDeviceStatus = result.Devices[0]
 		}
 		return result
 	}
 	api.GET("", func(c *gin.Context) { c.JSON(http.StatusOK, status()) })
 	api.GET("/trace.json", func(c *gin.Context) {
 		result := status()
-		if result.Preview == nil {
+		if !slices.ContainsFunc(result.Devices, func(device gb28181.PlatformDeviceStatus) bool { return device.Preview != nil }) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "暂无平台点播证据"})
 			return
 		}

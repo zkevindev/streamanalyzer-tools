@@ -74,18 +74,34 @@ function applyRecoveryOptions() {
     'UDP 场景使用 5 秒设备心跳，最多等待 30 秒重新注册。';
 }
 
+function selectedDevice() {
+  return status?.devices?.find(device => device.device_id === el('preview-device').value) || status;
+}
+
 function render() {
   applyRecoveryOptions();
   const active = Boolean(status?.active);
-  const preview = status?.preview;
+  const deviceSelect = el('preview-device');
+  const selected = deviceSelect.value;
+  const devices = status?.devices || [];
+  const options = devices.map(device => new Option(device.device_id +
+    (device.peer ? ' · 在线' : ' · 离线') + (device.busy ? ' · 观测中' : ''), device.device_id));
+  if (options.length !== deviceSelect.options.length ||
+      options.some((option, index) => option.text !== deviceSelect.options[index].text)) {
+    deviceSelect.replaceChildren(...options);
+    if (devices.some(device => device.device_id === selected)) deviceSelect.value = selected;
+  }
+  deviceSelect.disabled = !devices.length;
+  const deviceStatus = selectedDevice();
+  const preview = deviceStatus?.preview;
   el('platform-config').disabled = pending || active || !status;
   el('start').disabled = el('platform-config').disabled;
   el('stop').disabled = pending || !active;
-  el('preview-config').disabled = pending || !active || !status?.peer || status.busy;
+  el('preview-config').disabled = pending || !active || !deviceStatus?.peer || deviceStatus.busy;
   el('address').textContent = status?.address ? status.address + ' · SIP ' + status.sip_transport.toUpperCase() : '—';
-  el('peer').textContent = status?.peer || '—';
+  el('peer').textContent = devices.length ? devices.filter(device => device.peer).length + ' / ' + devices.length + ' · ' + (deviceStatus?.peer || '所选设备离线') : '—';
   const badge = el('result');
-  const recovery = status?.recovery;
+  const recovery = deviceStatus?.recovery;
   const recoveryLabels = {waiting_media: '等待首次关键帧', interrupted: '等待设备重新注册', registered: '核对重新注册后的目录',
     previewing: '正在重新点播', passed: '恢复点播成功', failed: '恢复失败', stopped: '观测已停止'};
   const label = recovery ? (recovery.mode === 'media_rtp_timeout' && recovery.state === 'interrupted' ? '核对当前在线目录' : recoveryLabels[recovery.state]) : preview ? outcomes[preview.state] : '等待点播';
@@ -121,9 +137,9 @@ function render() {
   el('detail').hidden = !preview?.error;
   el('dialog-id').hidden = !preview;
   el('dialog-id').textContent = preview ? 'Call-ID ' + preview.call_id + ' · SSRC ' + preview.ssrc + ' · RTP ' + preview.rtp_address : '';
-  el('export').hidden = !preview;
+  el('export').hidden = !devices.some(device => device.preview);
   const marks = (preview?.timeline || []).map(mark => ({...mark, side: '平台'}));
-  const device = status?.device_session;
+  const device = deviceStatus?.device_session;
   if (preview && device) {
     const shift = Date.parse(device.start) - Date.parse(preview.start);
     marks.push(...device.timeline.map(mark => ({...mark, offset_ms: mark.offset_ms + shift, side: '设备'})));
@@ -146,7 +162,7 @@ async function change(path, config) {
   notice('');
   render();
   try {
-    status = await request(path, config);
+    status = await request(path, path === '/playback-control' ? {...config, device_id: selectedDevice()?.device_id} : config);
   } catch (error) {
     notice(error.message);
   } finally {
@@ -175,12 +191,14 @@ el('start-form').addEventListener('submit', event => {
   event.preventDefault();
   const config = Object.fromEntries(new FormData(event.currentTarget));
   config.port = Number(config.port);
+  config.device_ids = el('extra-devices').value.split(/[\s,，]+/).filter(Boolean);
   void change('/start', config);
 });
 el('preview-form').addEventListener('submit', event => {
   event.preventDefault();
   const config = Object.fromEntries(new FormData(event.currentTarget));
   config.window_ms = Number(config.window_ms);
+  config.device_id = selectedDevice()?.device_id;
   if (el('recording-mode').checked) {
     const start = new Date(el('recording-start').value);
     const end = new Date(el('recording-end').value);
@@ -205,5 +223,6 @@ el('recording-seek').addEventListener('click', () => {
     void change('/playback-control', {method: 'PLAY', offset: Number(offset.value)});
   }
 });
+el('preview-device').addEventListener('change', render);
 el('stop').addEventListener('click', () => void change('/stop'));
 void poll();

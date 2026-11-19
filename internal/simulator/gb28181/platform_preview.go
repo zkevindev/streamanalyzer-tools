@@ -39,6 +39,10 @@ func (m *PlatformManager) Preview(cfg PreviewConfig) error {
 	if p == nil {
 		return ErrPlatformPeer
 	}
+	p = p.device(cfg.DeviceID)
+	if p == nil {
+		return fmt.Errorf("%w，未配置该设备编号", ErrPlatformConfig)
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if p.ctx.Err() != nil || !time.Now().Before(p.expires) {
