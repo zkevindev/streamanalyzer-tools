@@ -3,6 +3,7 @@
 const el = id => document.getElementById(id);
 const gb = '/api/simulators/gb28181';
 const platform = gb + '/platform';
+const onvif = '/api/simulators/onvif';
 const hls = '/api/simulators/hls';
 const runs = '/api/diagnostics/runs';
 const ids = {
@@ -195,6 +196,82 @@ function frameState(video, player) {
   };
 }
 
+async function sampleRTSPReconnect(source, video, first) {
+  const startedAt = Date.now();
+  const startedAtPerformanceMS = performance.now();
+  const run = await request(runs, {protocol: 'rtsp', url: source.stream_url, transport: 'tcp', seconds: first ? 9 : 5, playback: true});
+  const path = runs + '/' + run.id;
+  let player;
+  let frameAt = 0;
+  try {
+    if (!run.player) throw new Error('未返回 RTSP 预览配置。');
+    player = new PlayerDiagnostics(video, run.player, {
+      startedAt, startedAtPerformanceMS,
+      onChange(event) { if (event.kind === 'first_frame') frameAt = Date.now(); },
+    });
+    player.start();
+    const detail = await waitFor(async () => {
+      const sample = await request(path);
+      return (sample.status !== 'running' || !first && frameAt) ? sample : null;
+    }, first ? 9000 : 6500, 'RTSP 会话观测超时。');
+    await request(path + '/player', player.finish(), run.player.token);
+    player = null;
+    if (detail.status === 'running') await request(path + '/stop', null);
+    const completed = detail.report ? detail : await waitFor(async () => {
+      const state = await request(path);
+      return state.report ? state : null;
+    }, 4000, 'RTSP 采样报告生成超时。');
+    return {id: run.id, frame_at: frameAt, end_reason: completed.report.manifest.observation.end_reason,
+      requests: (completed.report.rtsp?.requests || []).map(({method, status_code}) => ({method, status_code}))};
+  } finally {
+    if (player) await request(path + '/player', player.finish(), run.player.token).catch(() => {});
+    const latest = await request(path).catch(() => null);
+    if (latest?.status === 'running') await request(path + '/stop', null).catch(() => {});
+  }
+}
+
+async function runRTSPReconnect(entry) {
+  const video = el('scenario-player');
+  const attempts = [];
+  let source;
+  try {
+    progress('启动摄像头并等待正常出画…');
+    source = await request(onvif + '/start', {bind_ip: '127.0.0.1', rtsp_disconnect_ms: 3000});
+    video.hidden = false;
+    entry.evidence = {attempts};
+    const before = await sampleRTSPReconnect(source, video, true);
+    attempts.push(before);
+    const state = await request(onvif);
+    const outage = state.rtsp_outages?.find(item => item.profile === source.profiles[0].token);
+    if (!outage?.begin || outage.closed_sessions < 1 || !before.frame_at || before.frame_at > Date.parse(outage.begin) ||
+      !['eof', 'rtsp_error'].includes(before.end_reason)) {
+      throw new Error('未观察到正常出画后会话断开。');
+    }
+    progress('旧会话已断开，正在重新建立 RTSP 会话…');
+    const recovered = await waitFor(async () => {
+      if (attempts.length >= 12) throw new Error('已达到 RTSP 重连次数上限。');
+      const next = await sampleRTSPReconnect(source, video, false);
+      attempts.push(next);
+      if (next.frame_at) return next;
+      await new Promise(resolve => setTimeout(resolve, 350));
+      return null;
+    }, 15000, '恢复窗口内未重新出画。');
+    const finalState = await request(onvif);
+    entry.evidence.outage = finalState.rtsp_outages?.find(item => item.profile === source.profiles[0].token);
+    entry.evidence.reconnect_attempts = attempts.length - 1;
+    entry.evidence.recovery_ms = recovered.frame_at - Date.parse(outage.begin);
+    entry.diagnostic_id = recovered.id;
+    const reestablished = ['DESCRIBE', 'SETUP', 'PLAY'].every(method =>
+      recovered.requests.some(item => item.method === method && item.status_code === 200));
+    entry.passed = Boolean(reestablished && entry.evidence.outage?.first_reconnected_play && entry.evidence.recovery_ms >= 0);
+    entry.detail = entry.passed ? '新会话已出画 · 重连 ' + entry.evidence.reconnect_attempts + ' 次 · 恢复 ' +
+      entry.evidence.recovery_ms + ' ms' : '报告缺少新会话的控制或呈帧证据';
+  } finally {
+    if (source) await stopOwned(onvif, 'device_url', source.device_url).catch(() => {});
+    video.hidden = true;
+  }
+}
+
 async function runHLS(kind, entry) {
   let source;
   let run;
@@ -268,6 +345,7 @@ el('scenario-form').addEventListener('submit', async event => {
   notice();
   try {
     if (family === 'gb') await runGB(expected, entry);
+    else if (family === 'rtsp') await runRTSPReconnect(entry);
     else await runHLS(expected, entry);
   } catch (error) {
     entry.detail = error.message;

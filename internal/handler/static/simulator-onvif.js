@@ -59,6 +59,11 @@ function render(status) {
   ].join(' · ') : '无鉴权';
   el('transport-observation').textContent = 'UDP PLAY ' + status.udp_plays + ' 次 · TCP PLAY ' + status.tcp_plays + ' 次' +
     (status.silent_udp ? ' · UDP 无 RTP' : '');
+  const outages = status.rtsp_outages || [];
+  el('outage-observation-row').hidden = !outages.length;
+  el('outage-observation').textContent = outages.map((outage, index) => (index ? '子码流' : '主码流') + ' ' +
+    (!outage.begin ? '等待点播' : outage.first_reconnected_play ? '已重新 PLAY' : Date.parse(outage.end) > Date.now() ? '暂不可用' : '等待重新连接') +
+    ' · 已关闭 ' + outage.closed_sessions + ' 个会话 · 返回 503 ' + outage.rejected_requests + ' 次').join(' / ');
   const gaps = status.video_gaps || [];
   el('gap-observation-row').hidden = !gaps.length;
   el('gap-observation').textContent = gaps.map((gap, index) => (index ? '子码流' : '主码流') + ' ' +
@@ -142,6 +147,7 @@ form.addEventListener('submit', event => {
   config.rtsp_port = Number(config.rtsp_port);
   config.clock_offset_seconds = Number(config.clock_offset_seconds);
   config.silent_udp = el('silent-udp').checked;
+  config.rtsp_disconnect_ms = el('rtsp-outage').checked ? 3000 : 0;
   config.video_gap_ms = el('video-gap').checked ? 5000 : 0;
   const files = [['main', el('main-video').files[0]], ['sub', el('sub-video').files[0]]].filter(([, file]) => file);
   if (!files.length) {
@@ -157,6 +163,11 @@ form.addEventListener('submit', event => {
   for (const [name, file] of files) body.append(name, file);
   void change('/start-file', body);
 });
+for (const [selected, other] of [['rtsp-outage', 'video-gap'], ['video-gap', 'rtsp-outage']]) {
+  el(selected).addEventListener('change', () => {
+    if (el(selected).checked) el(other).checked = false;
+  });
+}
 el('stop').addEventListener('click', () => { void change('/stop'); });
 el('motion').addEventListener('click', () => { void change('/motion', {active: !motionActive}); });
 void configure();

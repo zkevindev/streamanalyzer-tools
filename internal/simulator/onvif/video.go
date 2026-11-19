@@ -24,6 +24,7 @@ type videoTrack struct {
 	media   *description.Media
 	audio   *description.Media
 	gap     videoGap
+	outage  rtspOutage
 	encoder *rtph264.Encoder
 }
 
@@ -45,6 +46,9 @@ func (v *videoServer) describe(conn *gortsplib.ServerConn, request *base.Request
 	if track == nil || track.stream == nil {
 		return &base.Response{StatusCode: base.StatusNotFound}, nil, nil
 	}
+	if track.outage.reject(time.Now()) {
+		return &base.Response{StatusCode: base.StatusServiceUnavailable}, nil, nil
+	}
 	return &base.Response{StatusCode: base.StatusOK}, track.stream, nil
 }
 
@@ -60,10 +64,20 @@ func (v *videoServer) OnSetup(ctx *gortsplib.ServerHandlerOnSetupCtx) (*base.Res
 	return res, stream, err
 }
 
+func (v *videoServer) OnSessionClose(ctx *gortsplib.ServerHandlerOnSessionCloseCtx) {
+	for _, track := range v.tracks {
+		track.outage.forget(ctx.Session)
+	}
+}
+
 func (v *videoServer) OnPlay(ctx *gortsplib.ServerHandlerOnPlayCtx) (*base.Response, error) {
+	track := v.tracks[ctx.Path]
+	if track != nil && !track.outage.play(time.Now(), ctx.Session, ctx.Conn) {
+		return &base.Response{StatusCode: base.StatusServiceUnavailable}, nil
+	}
 	if ctx.Session.Transport().Protocol == gortsplib.ProtocolTCP {
 		v.tcpPlays.Add(1)
-		if track := v.tracks[ctx.Path]; track != nil && track.gap.duration > 0 {
+		if track != nil && track.gap.duration > 0 {
 			track.gap.armed.CompareAndSwap(0, time.Now().Add(videoGapDelay).UnixNano())
 		}
 	} else {
@@ -81,7 +95,8 @@ func startVideo(ip net.IP, cfg Config, profiles []*profileVideo) (*videoServer, 
 			return nil, err
 		}
 		v.tracks[profile.path] = &videoTrack{profile: profile, encoder: encoder,
-			media: &description.Media{Type: description.MediaTypeVideo, Formats: []format.Format{profile.avc}}}
+			media:  &description.Media{Type: description.MediaTypeVideo, Formats: []format.Format{profile.avc}},
+			outage: rtspOutage{duration: time.Duration(cfg.RTSPDisconnectMS) * time.Millisecond}}
 		if cfg.VideoGapMS > 0 {
 			track := v.tracks[profile.path]
 			track.gap.duration = time.Duration(cfg.VideoGapMS) * time.Millisecond
@@ -175,7 +190,9 @@ func (v *videoTrack) play(ctx context.Context) {
 	var timestamp uint32
 	var skipped bool
 	for index := 0; ; index = (index + 1) % len(v.profile.frames) {
-		if v.gap.skip(time.Now()) {
+		now := time.Now()
+		v.outage.advance(now)
+		if v.gap.skip(now) {
 			skipped = true
 		} else {
 			if skipped {
