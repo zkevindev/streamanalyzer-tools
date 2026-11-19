@@ -79,6 +79,7 @@ func (r *recordingRTSP) remove(session *gortsplib.ServerSession) {
 func (r *recordingRTSP) play(ctx *gortsplib.ServerHandlerOnPlayCtx) (*base.Response, error) {
 	info := r.fixture.info
 	span := headers.RangeUTC{Start: info.From, End: &info.Until}
+	requestedEnd := info.Until
 	if raw := ctx.Request.Header["Range"]; len(raw) != 0 {
 		var request headers.Range
 		if request.Unmarshal(raw) != nil {
@@ -89,14 +90,24 @@ func (r *recordingRTSP) play(ctx *gortsplib.ServerHandlerOnPlayCtx) (*base.Respo
 			return &base.Response{StatusCode: base.StatusInvalidRange}, nil
 		}
 		span.Start = value.Start
-		if value.End != nil && value.End.Before(*span.End) {
-			span.End = value.End
+		if value.End != nil {
+			requestedEnd = *value.End
+			if value.End.Before(*span.End) {
+				span.End = value.End
+			}
 		}
 	}
-	if span.Start.Before(info.From) || !span.Start.Before(*span.End) || !span.Start.Before(info.Until) {
+	trace := &RecordingPlayTrace{Requested: RecordingSpan{From: span.Start, Until: requestedEnd}}
+	parts := r.fixture.parts(RecordingSpan{From: span.Start, Until: *span.End})
+	if len(parts) == 0 {
+		trace.Code = int(base.StatusInvalidRange)
+		r.fixture.playTrace(trace)
 		r.fixture.missing.Add(1)
 		return &base.Response{StatusCode: base.StatusInvalidRange}, nil
 	}
+	returned := RecordingSpan{From: parts[0].From, Until: parts[len(parts)-1].Until}
+	trace.Returned, trace.Parts, trace.Code = &returned, parts, int(base.StatusOK)
+	span = headers.RangeUTC{Start: returned.From, End: &returned.Until}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	p := r.sessions[ctx.Session]
@@ -108,16 +119,17 @@ func (r *recordingRTSP) play(ctx *gortsplib.ServerHandlerOnPlayCtx) (*base.Respo
 	}
 	run, cancel := context.WithCancel(context.Background())
 	p.cancel = cancel
+	r.fixture.playTrace(trace)
 	r.fixture.plays.Add(1)
 	go func() {
 		defer ctx.Session.Close()
-		r.send(run, p, span.Start.Sub(info.From), span.End.Sub(span.Start))
+		r.send(run, p, trace)
 	}()
 	value := headers.Range{Value: &span}
 	return &base.Response{StatusCode: base.StatusOK, Header: base.Header{"Range": value.Marshal()}}, nil
 }
 
-func (r *recordingRTSP) send(ctx context.Context, p *recordingStream, offset, duration time.Duration) {
+func (r *recordingRTSP) send(ctx context.Context, p *recordingStream, trace *RecordingPlayTrace) {
 	const prepDelay = 150 * time.Millisecond
 	if !recordingWait(ctx, prepDelay) {
 		return
@@ -128,32 +140,41 @@ func (r *recordingRTSP) send(ctx context.Context, p *recordingStream, offset, du
 		return
 	}
 	period := time.Second / time.Duration(profile.FPS)
-	index := int(offset/period) % len(profile.frames)
-	// Decode starts at the previous intra frame in this loop of the fixture.
-	for index > 0 && !recordingIntra(profile.frames[index]) {
-		index--
-	}
 	ticker := time.NewTicker(period)
 	defer ticker.Stop()
-	start := time.Now()
 	var timestamp uint32
-	for ctx.Err() == nil && time.Since(start) < duration {
-		packets, err := encoder.Encode(profile.frames[index])
-		if err != nil {
-			return
+	for _, part := range trace.Parts {
+		index := int(part.From.Sub(r.fixture.info.From)/period) % len(profile.frames)
+		// The first frame in each emitted part must be independently decodable.
+		for index > 0 && !recordingIntra(profile.frames[index]) {
+			index--
 		}
-		for _, packet := range packets {
-			packet.Timestamp = timestamp
-			if err := p.stream.WritePacketRTP(p.media, packet); err != nil {
+		wroteKeyframe := false
+		for elapsed := time.Duration(0); elapsed < part.Until.Sub(part.From); elapsed += period {
+			unit := profile.frames[index]
+			packets, err := encoder.Encode(unit)
+			if err != nil {
 				return
 			}
-		}
-		timestamp += uint32(90000 / profile.FPS)
-		index = (index + 1) % len(profile.frames)
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
+			for _, packet := range packets {
+				packet.Timestamp = timestamp
+				if err := p.stream.WritePacketRTP(p.media, packet); err != nil {
+					return
+				}
+			}
+			if !wroteKeyframe && len(packets) > 0 && recordingIntra(unit) {
+				r.fixture.mu.Lock()
+				trace.Keyframes = append(trace.Keyframes, time.Now().UTC())
+				r.fixture.mu.Unlock()
+				wroteKeyframe = true
+			}
+			timestamp += uint32(90000 / profile.FPS)
+			index = (index + 1) % len(profile.frames)
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
 		}
 	}
 }

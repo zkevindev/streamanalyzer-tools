@@ -3,6 +3,7 @@ package onvif
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -28,18 +29,33 @@ const (
 
 var ErrRecordingUnavailable = errors.New("请先启用 ONVIF 录像场景")
 
+type RecordingSpan struct {
+	From  time.Time `json:"from"`
+	Until time.Time `json:"until"`
+}
+
+type RecordingPlayTrace struct {
+	Requested RecordingSpan   `json:"requested"`
+	Returned  *RecordingSpan  `json:"returned,omitempty"`
+	Parts     []RecordingSpan `json:"parts,omitempty"`
+	Code      int             `json:"code"`
+	Keyframes []time.Time     `json:"keyframes,omitempty"`
+}
+
 type RecordingFixtureStatus struct {
-	Token          string    `json:"token"`
-	RecordingURL   string    `json:"recording_url"`
-	SearchURL      string    `json:"search_url"`
-	ReplayURL      string    `json:"replay_url"`
-	StreamURL      string    `json:"stream_url"`
-	From           time.Time `json:"from"`
-	Until          time.Time `json:"until"`
-	RecordedMotion time.Time `json:"recorded_motion"`
-	MissingMotion  time.Time `json:"missing_motion"`
-	Plays          uint64    `json:"plays"`
-	MissingRange   uint64    `json:"missing_range"`
+	Segments       []RecordingSpan      `json:"segments,omitempty"`
+	Playback       []RecordingPlayTrace `json:"playback,omitempty"`
+	Token          string               `json:"token"`
+	RecordingURL   string               `json:"recording_url"`
+	SearchURL      string               `json:"search_url"`
+	ReplayURL      string               `json:"replay_url"`
+	StreamURL      string               `json:"stream_url"`
+	From           time.Time            `json:"from"`
+	Until          time.Time            `json:"until"`
+	RecordedMotion time.Time            `json:"recorded_motion"`
+	MissingMotion  time.Time            `json:"missing_motion"`
+	Plays          uint64               `json:"plays"`
+	MissingRange   uint64               `json:"missing_range"`
 }
 
 type fixtureSearch struct {
@@ -53,21 +69,72 @@ type recordingFixture struct {
 	info     RecordingFixtureStatus
 	mu       sync.Mutex
 	searches map[string]fixtureSearch
+	playback []*RecordingPlayTrace
 	plays    atomic.Uint64
 	missing  atomic.Uint64
 }
 
-func newRecordingFixture(clockOffset int) *recordingFixture {
+func newRecordingFixture(clockOffset, gapSeconds int) *recordingFixture {
 	anchor := time.Now().UTC().Truncate(time.Second).Add(time.Duration(clockOffset) * time.Second)
-	from := anchor.Add(-2 * time.Minute)
-	return &recordingFixture{info: RecordingFixtureStatus{Token: recordingToken, From: from, Until: from.Add(30 * time.Second),
-		RecordedMotion: from.Add(10 * time.Second), MissingMotion: from.Add(50 * time.Second)}, searches: make(map[string]fixtureSearch)}
+	from := anchor.Add(-3 * time.Minute)
+	if gapSeconds == 0 {
+		from = anchor.Add(-2 * time.Minute)
+	}
+	first := RecordingSpan{From: from, Until: from.Add(30 * time.Second)}
+	info := RecordingFixtureStatus{Token: recordingToken, From: from, Until: first.Until, Segments: []RecordingSpan{first},
+		RecordedMotion: from.Add(10 * time.Second), MissingMotion: from.Add(50 * time.Second)}
+	if gapSeconds > 0 {
+		gap := time.Duration(gapSeconds) * time.Second
+		second := RecordingSpan{From: first.Until.Add(gap), Until: first.Until.Add(gap + 15*time.Second)}
+		info.Until = second.Until
+		info.MissingMotion = first.Until.Add(gap / 2)
+		info.Segments = append(info.Segments, second)
+	}
+	return &recordingFixture{info: info, searches: make(map[string]fixtureSearch)}
 }
 
 func (f *recordingFixture) snapshot() *RecordingFixtureStatus {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	status := f.info
 	status.Plays, status.MissingRange = f.plays.Load(), f.missing.Load()
+	status.Playback = make([]RecordingPlayTrace, 0, len(f.playback))
+	for _, trace := range f.playback {
+		copy := *trace
+		copy.Keyframes = slices.Clone(trace.Keyframes)
+		status.Playback = append(status.Playback, copy)
+	}
 	return &status
+}
+
+func (f *recordingFixture) playTrace(trace *RecordingPlayTrace) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.playback) == 8 {
+		f.playback = slices.Delete(f.playback, 0, 1)
+	}
+	f.playback = append(f.playback, trace)
+}
+
+func (f *recordingFixture) parts(span RecordingSpan) []RecordingSpan {
+	var parts []RecordingSpan
+	for _, segment := range f.info.Segments {
+		// A seek that lands in a recording gap is explicitly rejected.
+		if len(parts) == 0 && (span.From.Before(segment.From) || !span.From.Before(segment.Until)) {
+			continue
+		}
+		begin, end := segment.From, segment.Until
+		if span.From.After(begin) {
+			begin = span.From
+		}
+		if span.Until.Before(end) {
+			end = span.Until
+		}
+		if begin.Before(end) {
+			parts = append(parts, RecordingSpan{From: begin, Until: end})
+		}
+	}
+	return parts
 }
 
 func (m *Manager) NotifyRecordingMotion(recorded bool) (Status, error) {

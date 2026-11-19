@@ -69,6 +69,7 @@
               </div>
               <label class="sim-check"><input id="silent-udp" type="checkbox"> RTSP UDP 握手成功但不发送 RTP</label>
               <label class="sim-check"><input id="recording-fixture" type="checkbox"> 录像检索与按时间回放</label>
+              <label class="sim-check"><input id="recording-gap" type="checkbox"> 两段录像中间留 8 秒缺口</label>
               <label class="sim-check"><input id="rtsp-outage" type="checkbox"> 点播后断开会话，同一地址 3 秒后恢复</label>
               <label class="sim-check"><input id="resolution-switch" type="checkbox"> 首次点播后三秒切换主码流分辨率</label>
               <label class="sim-check"><input id="rtcp-step" type="checkbox"> RTSP 音轨 RTCP 时钟跳变 350 ms</label>
@@ -114,6 +115,7 @@
           </dl>
           <section id="recording-controls" hidden>
             <p id="recording-window" class="muted field-hint"></p>
+            <ol id="recording-playbacks" class="session-timeline" hidden></ol>
             <p id="recording-status" class="muted field-hint"></p>
             <div class="sim-controls">
               <button id="recorded-motion" class="secondary" type="button">发送有录像的移动告警</button>

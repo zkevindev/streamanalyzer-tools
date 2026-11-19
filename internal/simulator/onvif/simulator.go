@@ -30,6 +30,7 @@ var (
 )
 
 type Config struct {
+	RecordingGapSeconds    int    `json:"recording_gap_seconds,omitempty"`
 	RTSPResolutionSwitchMS int    `json:"rtsp_resolution_switch_ms,omitempty"`
 	RTCPClockStepMS        int    `json:"rtcp_clock_step_ms,omitempty"`
 	RecordingFixture       bool   `json:"recording_fixture,omitempty"`
@@ -104,6 +105,9 @@ func (c *Config) normalize() (net.IP, *net.Interface, error) {
 	}
 	if c.RTCPClockStepMS < -2000 || c.RTCPClockStepMS > 2000 || c.RTCPClockStepMS != 0 && (c.VideoGapMS != 0 || c.RTSPDisconnectMS != 0) {
 		return nil, nil, fmt.Errorf("%w，RTCP 时钟跳变需在 ±2000 ms 内并单独启用", ErrConfig)
+	}
+	if c.RecordingGapSeconds != 0 && (!c.RecordingFixture || c.RecordingGapSeconds < 2 || c.RecordingGapSeconds > 60) {
+		return nil, nil, fmt.Errorf("%w，录像缺口需为 2–60 秒并启用录像", ErrConfig)
 	}
 	if c.RTSPResolutionSwitchMS != 0 && (c.RTSPResolutionSwitchMS < 2000 || c.RTSPResolutionSwitchMS > 10000 ||
 		c.RTSPDisconnectMS != 0 || c.VideoGapMS != 0 || c.RTCPClockStepMS != 0 || c.SilentUDP) {
@@ -247,7 +251,7 @@ func (m *Manager) StartFiles(ctx context.Context, cfg Config, files [2]LocalVide
 	c := &camera{listener: listener, discovery: discovery, profiles: profiles}
 	origin := "http://" + listener.Addr().String()
 	if cfg.RecordingFixture {
-		c.recording = newRecordingFixture(cfg.ClockOffset)
+		c.recording = newRecordingFixture(cfg.ClockOffset, cfg.RecordingGapSeconds)
 		info := &c.recording.info
 		info.RecordingURL, info.SearchURL, info.ReplayURL = origin+recordingPath, origin+searchPath, origin+replayPath
 	}
