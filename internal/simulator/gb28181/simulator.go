@@ -39,6 +39,8 @@ type Config struct {
 	Heartbeat          int          `json:"heartbeat_seconds"`
 	Faults             *FaultConfig `json:"faults,omitempty"`
 	CaptureRTP         bool         `json:"capture_rtp,omitempty"`
+	RecordingCount     int          `json:"recording_count,omitempty"`
+	RecordingGap       int          `json:"recording_gap_seconds,omitempty"`
 	RecordingStart     string       `json:"recording_start,omitempty"`
 	AudioCodec         string       `json:"audio_codec,omitempty"`
 }
@@ -52,6 +54,9 @@ func (c *Config) validate() error {
 	c.LocalIP = strings.TrimSpace(c.LocalIP)
 	c.Username = strings.TrimSpace(c.Username)
 	c.RecordingStart = strings.TrimSpace(c.RecordingStart)
+	if c.RecordingCount < 0 || c.RecordingCount > 8 || c.RecordingGap < 0 || c.RecordingGap > 3600 {
+		return errors.New("录像段数应为 1–8，录像间隔应为 0–3600 秒")
+	}
 	c.SIPTransport = strings.ToLower(strings.TrimSpace(c.SIPTransport))
 	switch c.SIPTransport {
 	case "":
@@ -140,6 +145,7 @@ type Status struct {
 	ChannelID    string          `json:"channel_id,omitempty"`
 	LocalAddress string          `json:"local_address,omitempty"`
 	Error        string          `json:"error,omitempty"`
+	Recordings   []RecordingInfo `json:"recordings,omitempty"`
 	Recording    *RecordingInfo  `json:"recording,omitempty"`
 	MediaSource  SourceInfo      `json:"media_source"`
 	Sessions     []SessionReport `json:"sessions,omitempty"`

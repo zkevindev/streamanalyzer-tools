@@ -39,7 +39,7 @@ type localMedia struct {
 	videoIndex int
 	audioIndex int
 	duration   time.Duration
-	recording  *RecordingInfo
+	recordings []RecordingInfo
 }
 
 func prepareLocalMedia(ctx context.Context, name, audio string, input io.Reader) (*localMedia, error) {

@@ -18,15 +18,18 @@ type RecordingInfo struct {
 	DurationMS int64     `json:"duration_ms"`
 }
 
-func (m *localMedia) setRecording(value string, now time.Time) error {
+func (m *localMedia) setRecording(cfg Config, now time.Time) error {
+	value := cfg.RecordingStart
 	if m.duration <= 0 {
-		if value != "" {
+		if value != "" || cfg.RecordingCount > 1 {
 			return errors.New("无法识别所选文件的录像时长")
 		}
 		return nil
 	}
 	span := time.Duration(math.Ceil(m.duration.Seconds())) * time.Second
-	start := now.Truncate(time.Second).Add(-span)
+	count := max(cfg.RecordingCount, 1)
+	gap := time.Duration(cfg.RecordingGap) * time.Second
+	start := now.Truncate(time.Second).Add(-span*time.Duration(count) - gap*time.Duration(count-1))
 	if value != "" {
 		var err error
 		start, err = time.Parse(time.RFC3339, value)
@@ -35,7 +38,10 @@ func (m *localMedia) setRecording(value string, now time.Time) error {
 		}
 		start = start.Truncate(time.Second)
 	}
-	m.recording = &RecordingInfo{Start: start, End: start.Add(span), DurationMS: m.duration.Milliseconds()}
+	for range count {
+		m.recordings = append(m.recordings, RecordingInfo{Start: start, End: start.Add(span), DurationMS: m.duration.Milliseconds()})
+		start = start.Add(span + gap)
+	}
 	return nil
 }
 
@@ -49,7 +55,7 @@ func parseRecordTime(value string) (time.Time, error) {
 	return time.ParseInLocation(recordTimeLayout, value, time.Local)
 }
 
-func (d *device) recordInfo(query simulatorQuery) ([]byte, error) {
+func (d *device) recordInfo(query simulatorQuery) ([][]byte, error) {
 	from, err := parseRecordTime(strings.TrimSpace(query.StartTime))
 	if err != nil {
 		return nil, err
@@ -61,18 +67,32 @@ func (d *device) recordInfo(query simulatorQuery) ([]byte, error) {
 	if !from.IsZero() && !to.IsZero() && !from.Before(to) {
 		return nil, errors.New("录像查询起止时间无效")
 	}
-	count, item := 0, ""
+	var items []string
 	kind := strings.ToLower(strings.TrimSpace(query.Type))
-	if d.file != nil && d.file.recording != nil && (kind == "" || kind == "all" || kind == "time") {
-		record := d.file.recording
-		if (from.IsZero() || from.Before(record.End)) && (to.IsZero() || to.After(record.Start)) {
-			count = 1
-			item = fmt.Sprintf("<Item><DeviceID>%s</DeviceID><Name>Local Recording</Name><StartTime>%s</StartTime><EndTime>%s</EndTime><Secrecy>0</Secrecy><Type>time</Type><RecorderID>%s</RecorderID></Item>",
-				d.channelFor(query.DeviceID), record.Start.In(time.Local).Format(recordTimeLayout), record.End.In(time.Local).Format(recordTimeLayout), d.cfg.DeviceID)
+	if channel := d.channelFor(query.DeviceID); channel != "" && d.file != nil && (kind == "" || kind == "all" || kind == "time") {
+		for i, record := range d.file.recordings {
+			if (from.IsZero() || from.Before(record.End)) && (to.IsZero() || to.After(record.Start)) {
+				name := "Local Recording"
+				if len(d.file.recordings) > 1 {
+					name = fmt.Sprintf("%s %d", name, i+1)
+				}
+				items = append(items, fmt.Sprintf("<Item><DeviceID>%s</DeviceID><Name>%s</Name><StartTime>%s</StartTime><EndTime>%s</EndTime><Secrecy>0</Secrecy><Type>time</Type><RecorderID>%s</RecorderID></Item>",
+					channel, name, record.Start.In(time.Local).Format(recordTimeLayout), record.End.In(time.Local).Format(recordTimeLayout), d.cfg.DeviceID))
+			}
 		}
 	}
-	return []byte(fmt.Sprintf("%s<Response><CmdType>RecordInfo</CmdType><SN>%d</SN><DeviceID>%s</DeviceID><Name>Test Camera</Name><SumNum>%d</SumNum><RecordList Num=\"%d\">%s</RecordList></Response>",
-		xml.Header, query.SN, query.DeviceID, count, count, item)), nil
+	page := func(list []string) []byte {
+		return fmt.Appendf(nil, `%s<Response><CmdType>RecordInfo</CmdType><SN>%d</SN><DeviceID>%s</DeviceID><Name>Test Camera</Name><SumNum>%d</SumNum><RecordList Num="%d">%s</RecordList></Response>`,
+			xml.Header, query.SN, query.DeviceID, len(items), len(list), strings.Join(list, ""))
+	}
+	if d.cfg.SIPTransport == "tcp" || len(items) < 2 {
+		return [][]byte{page(items)}, nil
+	}
+	var replies [][]byte
+	for _, item := range items {
+		replies = append(replies, page([]string{item}))
+	}
+	return replies, nil
 }
 
 type fileRange struct {
@@ -80,28 +100,66 @@ type fileRange struct {
 	end   time.Duration
 }
 
-func (m *localMedia) playbackRange(offer *mediaOffer) (fileRange, error) {
-	if m == nil || m.recording == nil {
-		return fileRange{}, errors.New("请选择具有已知时长的本地录像文件")
+type recordingPart struct {
+	recordIndex int
+	origin      time.Time
+	start       time.Time
+	end         time.Time
+}
+
+type recordingWindow struct {
+	start, end time.Time
+	parts      []recordingPart
+}
+
+func (m *localMedia) playbackRange(offer *mediaOffer) (recordingWindow, error) {
+	var window recordingWindow
+	if m == nil || len(m.recordings) == 0 {
+		return window, errors.New("请选择具有已知时长的本地录像文件")
 	}
-	start := time.Unix(offer.start, 0)
-	end := time.Unix(offer.end, 0)
-	if start.Before(m.recording.Start) {
-		start = m.recording.Start
+	start, end := time.Unix(offer.start, 0), time.Unix(offer.end, 0)
+	var announcedEnd time.Time
+	for i, record := range m.recordings {
+		begin := start
+		if begin.Before(record.Start) {
+			begin = record.Start
+		}
+		finish := end
+		if limit := record.Start.Add(m.duration); finish.After(limit) {
+			finish = limit
+		}
+		if !begin.Before(finish) {
+			continue
+		}
+		window.parts = append(window.parts, recordingPart{recordIndex: i + 1, origin: record.Start, start: begin, end: finish})
+		announcedEnd = end
+		if announcedEnd.After(record.End) {
+			announcedEnd = record.End
+		}
 	}
-	if end.After(m.recording.End) {
-		end = m.recording.End
+	if len(window.parts) == 0 {
+		return window, errors.New("请求时间段与本地录像无交集")
 	}
-	if !start.Before(end) {
-		return fileRange{}, errors.New("请求时间段与本地录像无交集")
+	window.start, window.end = window.parts[0].start, window.parts[len(window.parts)-1].end
+	offer.start, offer.end = window.start.Unix(), announcedEnd.Unix()
+	return window, nil
+}
+
+func (w recordingWindow) selectParts(begin, end time.Duration) []recordingPart {
+	start, finish := w.start.Add(begin), w.start.Add(end)
+	var out []recordingPart
+	for _, part := range w.parts {
+		if part.start.Before(start) {
+			part.start = start
+		}
+		if part.end.After(finish) {
+			part.end = finish
+		}
+		if part.start.Before(part.end) {
+			out = append(out, part)
+		}
 	}
-	begin := start.Sub(m.recording.Start)
-	finish := min(end.Sub(m.recording.Start), m.duration)
-	if begin >= finish {
-		return fileRange{}, errors.New("请求时间段与本地录像无交集")
-	}
-	offer.start, offer.end = start.Unix(), end.Unix()
-	return fileRange{start: begin, end: finish}, nil
+	return out
 }
 
 func secondsArg(value time.Duration) string {
