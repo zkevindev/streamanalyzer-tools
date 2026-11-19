@@ -130,3 +130,93 @@ func TestRTMPSimulatorRelaysPublisherKeyframesAndReconnect(t *testing.T) {
 		}
 	}
 }
+
+func TestRTMPFailoverWhenPrimaryKeepsConnection(t *testing.T) {
+	server := testDiagnosticServer(t, t.TempDir())
+	const api = "/api/simulators/rtmp"
+	status := decodeDiagnostic[mediasource.RTMPStatus](t, diagnosticRequest(t, server, "POST", api+"/start", 201,
+		[]byte(`{"fault":"publish_failover","stall_ms":500}`)))
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	reader := &relayReader{video: make(chan relayVideo, 16)}
+	viewer, _, target, err := rtmp.DialAndPlay(ctx, status.URL, reader, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer viewer.Close()
+	publish := func(name string) func(uint32, []byte) {
+		t.Helper()
+		pub, err := rtmp.Dial("rtmp", target.Host, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = pub.Close() })
+		if err := pub.ConnectContext(ctx, &message.NetConnectionConnect{Command: message.NetConnectionConnectCommand{App: target.App, TCURL: target.TCURL}}); err != nil {
+			t.Fatal(err)
+		}
+		stream, err := pub.CreateStreamContext(ctx, nil, 4096)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := stream.Publish(&message.NetStreamPublish{PublishingName: name, PublishingType: "live"}); err != nil {
+			t.Fatal(err)
+		}
+		return func(stamp uint32, data []byte) {
+			t.Helper()
+			if err := stream.Write(6, stamp, &message.VideoMessage{Payload: bytes.NewReader(data)}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	get := func() *mediasource.RTMPIngestStatus {
+		return decodeDiagnostic[mediasource.RTMPStatus](t, diagnosticRequest(t, server, "GET", api, 200, nil)).Ingest
+	}
+	for get().Viewers != 1 && ctx.Err() == nil {
+		time.Sleep(10 * time.Millisecond)
+	}
+	primary := publish("test")
+	backup := publish("backup")
+	next := func(want []byte) relayVideo {
+		t.Helper()
+		select {
+		case packet := <-reader.video:
+			if !bytes.Equal(packet.payload, want) {
+				t.Fatalf("unexpected frame %x, expected %x", packet.payload, want)
+			}
+			return packet
+		case <-viewer.Done():
+			t.Fatalf("viewer disconnected: %v", viewer.LastError())
+		case <-ctx.Done():
+			t.Fatal("viewer did not receive frame")
+		}
+		return relayVideo{}
+	}
+	mainHeader, backupHeader := []byte{0x17, 0, 0, 0, 0, 1, 1}, []byte{0x17, 0, 0, 0, 0, 1, 2}
+	mainKey, backupKey := []byte{0x17, 1, 0, 0, 0, 0, 0, 0, 2, 0x65, 1}, []byte{0x17, 1, 0, 0, 0, 0, 0, 0, 2, 0x65, 2}
+	primary(0, mainHeader)
+	primary(10, mainKey)
+	next(mainHeader)
+	main := next(mainKey)
+	backup(0, backupHeader)
+	backup(10, backupKey)
+	time.Sleep(560 * time.Millisecond)
+	backup(600, []byte{0x27, 1, 0, 0, 0, 0, 0, 0, 2, 0x41, 2})
+	for get().Failover.StallDetectedAt.IsZero() && ctx.Err() == nil {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !get().Failover.SwitchedAt.IsZero() {
+		t.Fatal("switched before a keyframe")
+	}
+	backup(650, backupKey)
+	next(backupHeader)
+	switched := next(backupKey)
+	result := get()
+	failover := result.Failover
+	if switched.timestamp <= main.timestamp || result.Viewers != 1 || !failover.PrimaryConnected ||
+		failover.SwitchedAt.IsZero() || failover.GapMS == nil || *failover.GapMS < 500 || len(result.Sessions) != 2 {
+		t.Fatalf("invalid failover: %+v / %+v", result, failover)
+	}
+	primary(1000, mainKey)
+	backup(700, backupKey)
+	next(backupKey)
+}
