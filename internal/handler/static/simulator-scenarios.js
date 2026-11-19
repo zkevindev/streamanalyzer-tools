@@ -397,6 +397,66 @@ async function runHLS(kind, entry) {
   }
 }
 
+async function runHLSStale(entry) {
+  const video = el('scenario-player');
+  let source;
+  let run;
+  let player;
+  try {
+    if (!globalThis.Hls?.isSupported()) throw new Error('此浏览器需要支持 hls.js 的媒体扩展。');
+    source = await request(hls + '/start', {mode: 'stale'});
+    run = await request(runs, {protocol: 'hls', url: new URL(source.playlist, location.origin).href, seconds: 25, playback: true});
+    entry.diagnostic_id = run.id;
+    if (!run.player) throw new Error('未返回播放配置。');
+    const path = runs + '/' + run.id;
+    video.hidden = false;
+    player = new PlayerDiagnostics(video, run.player, {hlsRecovery: true});
+    player.start();
+    progress('等待播放器收到旧列表，然后继续呈帧…');
+    const recovered = await waitFor(async () => {
+      const state = await request(hls);
+      const rows = (state.playlist_samples || []).filter(item => item.player);
+      const hit = rows.find(row => row.cache_age_seconds > 0 && row.origin_sequence > row.sequence);
+      if (!hit) return null;
+      const next = rows.find(row => row.at > hit.at && !row.cache_age_seconds && row.sequence > hit.sequence);
+      return next ? {hit, next} : null;
+    }, 14000, '没有观察到同一播放列表的旧版本和恢复。');
+    const before = frameState(video, player);
+    const seenAt = performance.now();
+    await waitFor(() => {
+      const frame = frameState(video, player);
+      return frame.presented > before.presented && frame.time > before.time + 0.3 ? frame : null;
+    }, 6500, '列表恢复后未继续呈帧。');
+    entry.evidence = {samples: [recovered.hit, recovered.next],
+      resume_observed_ms: Math.round(performance.now() - seenAt), live_latency_ms: player.hlsLatencyMS()};
+    await request(path + '/player', player.finish(), run.player.token);
+    player = null;
+    await request(path + '/stop', null);
+    const report = await waitFor(async () => (await request(path)).report, 6000, '播放器证据生成超时。');
+    entry.evidence.stall_count = report.player?.stall_count ?? 0;
+    entry.evidence.total_stall_ms = report.player?.total_stall_ms ?? 0;
+    const rows = report.player_network?.requests || [];
+    const hit = rows.find(row => row.playlist_sequence === recovered.hit.sequence && row.cache_age_seconds === recovered.hit.cache_age_seconds &&
+      row.http_status === 200 && row.outcome === 'complete');
+    const beforeHit = hit && rows.find(row => row.resource_id === hit.resource_id && row.number < hit.number &&
+      row.playlist_sequence > hit.playlist_sequence && row.outcome === 'complete');
+    const next = hit && rows.find(row => row.resource_id === hit.resource_id && row.number > hit.number &&
+      row.playlist_sequence > hit.playlist_sequence && row.outcome === 'complete');
+    entry.evidence.requests = [beforeHit, hit, next].filter(Boolean);
+    entry.passed = Boolean(beforeHit && hit && next);
+    entry.detail = entry.passed ? 'HTTP 200 旧列表已复现 · 序号 ' + hit.playlist_sequence +
+      ' → ' + next.playlist_sequence + ' · 已继续呈帧' : '缺少播放请求的序号回退和恢复证据';
+  } finally {
+    if (player) await request(runs + '/' + run.id + '/player', player.finish(), run.player.token).catch(() => {});
+    if (run) {
+      const last = await request(runs + '/' + run.id).catch(() => null);
+      if (last?.status === 'running') await request(runs + '/' + run.id + '/stop', null).catch(() => {});
+    }
+    if (source) await stopOwned(hls, 'id', source.id).catch(() => {});
+    video.hidden = true;
+  }
+}
+
 async function runLLHLS(entry) {
   const video = el('scenario-player');
   let source;
@@ -471,6 +531,7 @@ el('scenario-form').addEventListener('submit', async event => {
     if (family === 'gb') await runGB(expected, entry);
     else if (expected === 'fallback') await runRTSPFallback(entry);
     else if (family === 'rtsp') await runRTSPReconnect(entry);
+    else if (expected === 'stale') await runHLSStale(entry);
     else if (expected === 'part_delay') await runLLHLS(entry);
     else await runHLS(expected, entry);
   } catch (error) {

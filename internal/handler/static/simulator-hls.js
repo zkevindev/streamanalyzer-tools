@@ -2,7 +2,7 @@
 
 const api = '/api/simulators/hls';
 const el = id => document.getElementById(id);
-const modes = {normal: '正常点播', live: '滚动直播', abr: '双码率 fMP4 直播', audio: '独立音轨分片故障', ll: '低延迟直播 / Part 延迟', delay: '分片延迟', not_found: '分片返回 404'};
+const modes = {normal: '正常点播', live: '滚动直播', stale: '直播列表回退', abr: '双码率 fMP4 直播', audio: '独立音轨分片故障', ll: '低延迟直播 / Part 延迟', delay: '分片延迟', not_found: '分片返回 404'};
 let current;
 let busy = false;
 let generation = 0;
@@ -37,6 +37,7 @@ function render(status) {
   if (status.active) el('open-workbench').href = '/diagnostics?hls_simulator=' + encodeURIComponent(status.id);
   const live = status.mode === 'live';
   const abr = status.mode === 'abr';
+  const stale = status.mode === 'stale';
   const audio = status.mode === 'audio';
   const canInject = live || audio;
   const ll = status.low_latency;
@@ -61,10 +62,10 @@ function render(status) {
   el('live-fault-status').hidden = !fault;
   el('live-fault-status').textContent = fault ? (fault.rendition === 'audio' ? '独立音轨 · ' : '') + '媒体序号 ' + fault.sequence + ' · ' + faultState + ' · 匹配请求 ' + fault.attempts + ' 次' : '';
   el('freeze').textContent = status.frozen ? '恢复列表更新' : '冻结播放列表';
-  el('live-summary').hidden = !canInject && !abr;
+  el('live-summary').hidden = !canInject && !abr && !stale;
   el('live-summary').textContent = '列表起始序号 ' + status.media_sequence + (status.frozen ? ' · 已冻结' : abr ? ' · 双码率初始化段独立 · 每 6 个分片标记不连续' : audio ? ' · 故障仅作用于独立音轨' : ' · 更新中');
   const samples = status.playlist_samples || [];
-  el('playlist-samples').hidden = (!canInject && !abr) || samples.length === 0;
+  el('playlist-samples').hidden = (!canInject && !abr && !stale) || samples.length === 0;
   el('playlist-samples').replaceChildren(...samples.slice(-8).reverse().map(sample => {
     const row = document.createElement('li');
     row.className = 'event-row';
@@ -75,7 +76,7 @@ function render(status) {
     const code = document.createElement('span');
     code.textContent = '列表';
     const value = document.createElement('span');
-    value.textContent = '序号 ' + sample.sequence + (sample.frozen ? ' · 已冻结' : '');
+    value.textContent = '序号 ' + sample.sequence + (sample.cache_age_seconds ? ' · 源站序号 ' + sample.origin_sequence + ' · Age ' + sample.cache_age_seconds + ' s' : '') + (sample.frozen ? ' · 已冻结' : '');
     row.append(time, code, value);
     return row;
   }));

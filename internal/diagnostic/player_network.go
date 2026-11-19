@@ -23,6 +23,7 @@ const (
 // PlayerNetworkRequest describes the local proxy's upstream observation, never
 // delivery to the browser, SourceBuffer append, or decoder consumption.
 type PlayerNetworkRequest struct {
+	CacheAgeSeconds  *uint32            `json:"cache_age_seconds,omitempty"`
 	PlaylistSequence *uint64            `json:"playlist_sequence,omitempty"`
 	Number           int                `json:"number"`
 	ResourceID       string             `json:"resource_id"`
@@ -132,6 +133,17 @@ func (n *playerNetwork) playlistSequence(e *playerNetworkEntry, sequence uint64)
 	}
 }
 
+func (n *playerNetwork) playlistCacheAge(e *playerNetworkEntry, age uint32) {
+	if e == nil {
+		return
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if !n.frozen && !n.stopped && e.request.PlaylistSequence != nil {
+		e.request.CacheAgeSeconds = &age
+	}
+}
+
 func (n *playerNetwork) body(e *playerNetworkEntry, bytes int) {
 	if e == nil || bytes <= 0 {
 		return
@@ -167,6 +179,10 @@ func clonePlayerNetwork(value *PlayerNetworkReport) *PlayerNetworkReport {
 	copy := *value
 	copy.Requests = slices.Clone(value.Requests)
 	for i := range copy.Requests {
+		if age := copy.Requests[i].CacheAgeSeconds; age != nil {
+			value := *age
+			copy.Requests[i].CacheAgeSeconds = &value
+		}
 		if p := copy.Requests[i].PlaylistSequence; p != nil {
 			value := *p
 			copy.Requests[i].PlaylistSequence = &value
@@ -301,6 +317,9 @@ func validatePlayerNetwork(report *PlayerNetworkReport, player *PlayerReport, pr
 			return ErrInvalid
 		}
 		if request.BlockingReload && request.Kind != "playlist" {
+			return ErrInvalid
+		}
+		if request.CacheAgeSeconds != nil && request.PlaylistSequence == nil {
 			return ErrInvalid
 		}
 		if request.PlaylistSequence != nil && (request.Kind != "playlist" || request.Method != "GET" || request.HTTPStatus != 200 || request.Bytes == 0) {
