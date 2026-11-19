@@ -129,15 +129,16 @@ func rtspArtifactName(name string) string {
 }
 
 var rtspReportPage = template.Must(template.New("rtsp").Funcs(template.FuncMap{
-	"previewState": rtspPreviewStateLabel, "previewReason": rtspPreviewReasonLabel, "ms": playerVideoObservedTime, "kind": rtspKindLabel, "failure": rtspFailureLabel, "duration": rtspRequestDuration, "counter": rtspObservedCounter, "transport": rtspTransportLabel,
+	"previewState": rtspPreviewStateLabel, "previewReason": rtspPreviewReasonLabel, "previewReasonFor": rtspPreviewReasonLabelFor, "ms": playerVideoObservedTime, "kind": rtspKindLabel, "failure": rtspFailureLabel, "duration": rtspRequestDuration, "counter": rtspObservedCounter, "transport": rtspTransportLabel,
 }).Parse(`<article id="rtsp-report"><h2>RTSP 会话与 RTP 接收</h2>
 {{if not .Metrics}}<p class="timing-note">原生 RTSP/RTP 采样不依赖浏览器预览。未记录转封装能力，播放器首屏、缓冲和呈帧指标以实际保存的播放器记录为准。</p>{{else}}{{if not .Metrics.Preview}}<p class="timing-note">原生 RTSP/RTP 采样不依赖浏览器预览。未记录转封装能力，播放器首屏、缓冲和呈帧指标以实际保存的播放器记录为准。</p>{{end}}{{end}}
 <p class="timing-note">首音视频时间表示对应 RTP 包到达本接收点，不是解码首帧。SDP 声明的轨道与编码单独列出，不代表已收到或解码媒体。</p>
 {{with .Metrics}}
 {{with .Preview}}<h3>同次采样本机预览</h3><p class="timing-note">同次采样的 RTP 在本机转封装为 FLV，不另建拉流连接。音视频使用接收端 RTP 共同时间基准，不代表已验证源端音画同步；输出访问单元数不是解码或呈帧数。浏览器解码能力仍需实际播放验证。</p>
-<dl><dt>本机转封装状态</dt><dd>{{previewState .State}}</dd><dt>预览原因</dt><dd>{{previewReason .ReasonCode}}</dd>
-<dt>预览视频</dt><dd>{{if .VideoTrackID}}#{{.VideoTrackID}} · {{.VideoCodec}}{{else}}未选择{{end}}</dd><dt>视频说明</dt><dd>{{previewReason .VideoReason}}</dd>
-<dt>预览音频</dt><dd>{{if .AudioTrackID}}#{{.AudioTrackID}} · {{.AudioCodec}}{{else}}未选择{{end}}</dd><dt>音频说明</dt><dd>{{if eq .AudioReason "codec_unsupported"}}音轨预览不支持，已静音；原始 RTP 仍保留{{else}}{{previewReason .AudioReason}}{{end}}</dd>
+<dl><dt>本机转封装状态</dt><dd>{{previewState .State}}</dd><dt>预览原因</dt><dd>{{previewReasonFor . .ReasonCode}}</dd>
+<dt>预览视频</dt><dd>{{if .VideoTrackID}}#{{.VideoTrackID}} · {{.VideoCodec}}{{else}}未选择{{end}}</dd><dt>视频说明</dt><dd>{{previewReasonFor . .VideoReason}}</dd>
+<dt>预览音频</dt><dd>{{if .AudioTrackID}}#{{.AudioTrackID}} · {{.AudioCodec}}{{else}}未选择{{end}}</dd><dt>音频说明</dt><dd>{{if eq .AudioReason "codec_unsupported"}}音轨预览不支持，已静音；原始 RTP 仍保留{{else}}{{previewReasonFor . .AudioReason}}{{end}}</dd>
+{{if eq .Version 2}}<dt>编码能力版本</dt><dd>{{.CodecCapabilitiesVersion}}</dd><dt>视频预览输出</dt><dd>{{if .VideoOutputCodec}}{{.VideoOutputCodec}}{{else}}未选择{{end}}</dd><dt>视频处理</dt><dd>{{if eq .VideoTransform "native_remux"}}原生转封装{{else}}{{if .VideoTransform}}{{.VideoTransform}}{{else}}未选择{{end}}{{end}}</dd><dt>音频预览输出</dt><dd>{{if .AudioOutputCodec}}{{.AudioOutputCodec}}{{else}}未选择{{end}}</dd><dt>音频处理</dt><dd>{{if eq .AudioTransform "native_remux"}}原生转封装{{else}}{{if .AudioTransform}}{{.AudioTransform}}{{else}}未选择{{end}}{{end}}</dd>{{end}}
 <dt>视频访问单元</dt><dd>{{.VideoAUs}}</dd><dt>音频访问单元</dt><dd>{{.AudioAUs}}</dd><dt>转封装包错误</dt><dd>{{.PacketErrors}}</dd><dt>预览队列丢弃</dt><dd>{{.DroppedPackets}}</dd></dl>{{end}}
 <dl><dt>传输</dt><dd>{{transport .Transport}}</dd><dt>应用字节边界</dt><dd>{{if .Secure}}TLS 解密后的 RTSP/RTP{{else}}RTSP/RTP 应用字节{{end}}</dd><dt>会话连接数</dt><dd>{{.Connections}}</dd>
 <dt>DNS 阶段</dt><dd>{{$.DNS}}</dd><dt>TCP 阶段</dt><dd>{{$.TCP}}</dd><dt>TLS 阶段</dt><dd>{{if .Secure}}{{$.TLS}}{{else}}不适用（RTSP）{{end}}</dd>
@@ -241,4 +242,16 @@ func rtspPreviewReasonLabel(code string) string {
 		return "原生播放准备或 PLAY 未完成"
 	}
 	return "未识别的预览状态"
+}
+
+func rtspPreviewReasonLabelFor(preview *RTSPPreviewReport, code string) string {
+	if preview != nil && preview.Version == 2 {
+		if code == "codec_unsupported" {
+			return "本版支持 H.264 / H.265 / AAC-LC；其他编码预览暂不支持"
+		}
+		if code == "missing_hevc_parameters" {
+			return "缺少或无法解析有效 VPS/SPS/PPS"
+		}
+	}
+	return rtspPreviewReasonLabel(code)
 }

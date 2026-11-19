@@ -30,7 +30,7 @@ type rtspUDPTestPacket struct {
 
 // A native server fixture sends exact UDP bytes, including bytes that the
 // SDK's parsed/re-marshalled RTP path would change or refuse to deliver.
-func rtspUDPTestServer(t *testing.T, packets []rtspUDPTestPacket, reject bool) (*url.URL, *atomic.Int32) {
+func rtspUDPTestServer(t *testing.T, packets []rtspUDPTestPacket, reject bool, sdpOverride ...string) (*url.URL, *atomic.Int32) {
 	t.Helper()
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
@@ -86,6 +86,9 @@ func rtspUDPTestServer(t *testing.T, packets []rtspUDPTestPacket, reject bool) (
 						response.Header["Content-Type"] = base.HeaderValue{"application/sdp"}
 						response.Header["Content-Base"] = base.HeaderValue{target.String() + "/"}
 						response.Body = []byte(rtspIntegrationVideoSDP())
+						if len(sdpOverride) > 0 {
+							response.Body = []byte(sdpOverride[0])
+						}
 					case base.Setup:
 						var transport headers.Transport
 						if transport.Unmarshal(request.Header["Transport"]) != nil || transport.Protocol != headers.TransportProtocolUDP || transport.ClientPorts == nil {

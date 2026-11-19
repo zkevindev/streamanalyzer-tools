@@ -48,7 +48,10 @@ const rtspPreviewNote = '原生 RTSP/RTP 采样不依赖浏览器预览。未记
 const rtspPreviewStates = { ready: '已输出媒体', unsupported: '编码或封装暂不支持', failed: '本机转封装未完成', not_requested: '未请求预览' };
 const rtspPreviewReasons = { no_track: '未选择对应轨道', no_media: '未输出对应媒体', codec_unsupported: '首版仅支持 H.264 / AAC-LC', packetization_unsupported: 'RTP 打包方式不支持', aac_configuration_unsupported: 'AAC 配置不支持（需 AAC-LC、1024 采样、单/双声道）', queue_limit: '本机预览队列达到上限', missing_video_parameters: '缺少有效 SPS/PPS', no_random_access: '未取得可用 IDR 随机接入点', timestamp_unsupported: '媒体时间戳或 DTS 不可转换', access_unit_limit: '媒体访问单元达到上限', player_unavailable: '本机播放器已停止接收', capture_setup_failed: '原生播放准备或 PLAY 未完成' };
 const rtspPreviewClockNote = '同次采样的 RTP 在本机转封装为 FLV，不另建拉流连接。音视频使用接收端 RTP 共同时间基准，不代表已验证源端音画同步；输出访问单元数不是解码或呈帧数。浏览器解码能力仍需实际播放验证。';
-function rtspPreviewReason(code) { return code ? (rtspPreviewReasons[code] || '未识别的预览状态') : '无'; }
+function rtspPreviewReason(code, preview) {
+    if (preview?.version === 2 && code === 'codec_unsupported') return '本版支持 H.264 / H.265 / AAC-LC；其他编码预览暂不支持';
+    if (preview?.version === 2 && code === 'missing_hevc_parameters') return '缺少或无法解析有效 VPS/SPS/PPS';
+    return code ? (rtspPreviewReasons[code] || '未识别的预览状态') : '无'; }
 function renderRTSPPreview(metrics) {
     const target = node('rtsp-preview-metrics');
     const preview = metrics?.preview;
@@ -56,11 +59,16 @@ function renderRTSPPreview(metrics) {
     if (!preview) { node('rtsp-capability').textContent = rtspPreviewNote; return; }
     node('rtsp-capability').textContent = rtspPreviewClockNote;
     const entries = [
-        ['本机转封装状态', rtspPreviewStates[preview.state] || '未记录'], ['预览原因', rtspPreviewReason(preview.reason_code)],
-        ['预览视频', preview.video_track_id ? `#${preview.video_track_id} · ${preview.video_codec}` : '未选择'], ['视频说明', rtspPreviewReason(preview.video_reason)],
-        ['预览音频', preview.audio_track_id ? `#${preview.audio_track_id} · ${preview.audio_codec}` : '未选择'], ['音频说明', preview.audio_reason === 'codec_unsupported' ? '音轨预览不支持，已静音；原始 RTP 仍保留' : rtspPreviewReason(preview.audio_reason)],
+        ['本机转封装状态', rtspPreviewStates[preview.state] || '未记录'], ['预览原因', rtspPreviewReason(preview.reason_code, preview)],
+        ['预览视频', preview.video_track_id ? `#${preview.video_track_id} · ${preview.video_codec}` : '未选择'], ['视频说明', rtspPreviewReason(preview.video_reason, preview)],
+        ['预览音频', preview.audio_track_id ? `#${preview.audio_track_id} · ${preview.audio_codec}` : '未选择'], ['音频说明', preview.audio_reason === 'codec_unsupported' ? '音轨预览不支持，已静音；原始 RTP 仍保留' : rtspPreviewReason(preview.audio_reason, preview)],
         ['视频访问单元', preview.video_aus ?? '未观测'], ['音频访问单元', preview.audio_aus ?? '未观测'], ['转封装包错误', preview.packet_errors ?? '未观测'], ['预览队列丢弃', preview.dropped_packets ?? '未观测'],
     ];
+    if (preview.version === 2) entries.push(
+        ['编码能力版本', preview.codec_capabilities_version ?? '未记录'],
+        ['视频预览输出', preview.video_output_codec || '未选择'], ['视频处理', preview.video_transform === 'native_remux' ? '原生转封装' : preview.video_transform || '未选择'],
+        ['音频预览输出', preview.audio_output_codec || '未选择'], ['音频处理', preview.audio_transform === 'native_remux' ? '原生转封装' : preview.audio_transform || '未选择'],
+    );
     renderMetrics('rtsp-preview-metrics', entries);
 }
 
@@ -150,7 +158,7 @@ const playerStates = {
     awaiting: '等待播放器数据', recording: '采集中', complete: '采集完成',
     unsupported: '当前环境不支持该播放格式', autoplay_blocked: '自动播放受限', error: '播放失败',
 };
-const playbackErrors = { media_error: '播放器媒体解码失败', network_error: '播放器网络请求失败', no_stream: '播放器未收到媒体流', preview_unsupported: 'RTSP 本机预览编码或封装不支持', preview_failed: 'RTSP 本机转封装失败，详见原生预览原因', preview_queue_limit: 'RTSP 本机预览队列达到上限' };
+const playbackErrors = { media_error: '播放器媒体解码失败', network_error: '播放器网络请求失败', no_stream: '播放器未收到媒体流', preview_unsupported: 'RTSP 本机预览编码或封装不支持', preview_failed: 'RTSP 本机转封装失败，详见原生预览原因', preview_queue_limit: 'RTSP 本机预览队列达到上限', browser_codec_unsupported: '浏览器不支持本次预览输出编码' };
 const modelProviderLabels = {
     'openai-compatible': 'OpenAI 兼容接口',
     deepseek: 'DeepSeek',

@@ -615,6 +615,16 @@
                     this.event('error', {code: 'media_error'});
                 }
             });
+            if (mpegts.Events.MEDIA_INFO) player.on(mpegts.Events.MEDIA_INFO, (info) => {
+                if (!/^(hvc1|hev1)\./.test(info?.videoCodec || '')) return;
+                const source = globalThis.MediaSource || globalThis.ManagedMediaSource;
+                // A negative capability check is conclusive. A positive one
+                // still requires the actual first-frame/playback observations.
+                if (source?.isTypeSupported && !source.isTypeSupported(`video/mp4; codecs="${info.videoCodec}"`)) {
+                    this.event('unsupported', {code: 'browser_codec_unsupported'});
+                    player.unload();
+                }
+            });
             player.on(mpegts.Events.LOADING_COMPLETE, () => this.cutoff());
             player.attachMediaElement(this.video);
             player.load();

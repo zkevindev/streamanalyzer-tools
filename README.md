@@ -26,7 +26,7 @@ UDP 与 RTP 使用 IPv4 接收地址，例如 `udp://0.0.0.0:5000` 或 `rtp://12
 
 API 中可用 `{"protocol":"rtsp","transport":"udp","url":"rtsp://camera.example/stream","seconds":30}` 选择 UDP；省略 `transport` 仍使用 TCP。旧 TCP 证据包继续离线复盘。UDP 原始包保留符合及不符合协商来源的数据报；报告和模型不包含原始 IP/端口，轨道统计只计算符合来源与端口协商的包。
 
-RTSP/RTSPS 原生采样不依赖浏览器。勾选播放器分析后，同一次采样收到的 RTP 可在本机转封装为 FLV 预览，不另建 RTSP 拉流连接；首版支持 H.264（packetization-mode 0/1）和 RFC 3640 AAC-LC（1024 采样、单/双声道），不转码。H.265、Opus、G.711 等仍支持原生采样，预览不支持的音轨明确标记并静音。首屏、缓冲、卡顿、呈帧和页面调度记录沿用 `player.json`，与转封装状态一起保存在报告和证据包中；共同 RTP 时间基准由接收端建立，不等于验证了源端音画同步。原始 dump 仍为 `stream.rtsp.zip`，不替换为派生 FLV；本版 RTSP 补查保留同期 RTP 与播放器证据，源流片段/截图尚不支持。HTML/JSON 与模型只使用受控方法、状态、编码标签及数字证据，不展示 RTSP 地址路径、用户信息、认证头或 SDP 原文；来源只显示协议和主机。原始 ZIP 按上述边界保存服务端字节和 SDP，证据包导入后可离线重算，无需重新连接摄像头。
+RTSP/RTSPS 原生采样不依赖浏览器。勾选播放器分析后，同一次采样收到的 RTP 可在本机转封装为 FLV 预览，不另建 RTSP 拉流连接；支持 H.264（packetization-mode 0/1）、H.265（RFC 7798，无 DON 交织）和 RFC 3640 AAC-LC（1024 采样、单/双声道），不转码。H.265 通过 Enhanced FLV 原生转封装，浏览器和系统需提供 HEVC 解码能力；转封装输出不代表已成功解码。Opus、G.711 等仍支持原生采样，预览不支持的音轨明确标记并静音。首屏、缓冲、卡顿、呈帧和页面调度记录沿用 `player.json`，与转封装状态一起保存在报告和证据包中；共同 RTP 时间基准由接收端建立，不等于验证了源端音画同步。原始 dump 仍为 `stream.rtsp.zip`，不替换为派生 FLV；本版 RTSP 补查保留同期 RTP 与播放器证据，源流片段/截图尚不支持。HTML/JSON 与模型只使用受控方法、状态、编码标签及数字证据，不展示 RTSP 地址路径、用户信息、认证头或 SDP 原文；来源只显示协议和主机。原始 ZIP 按上述边界保存服务端字节和 SDP，证据包导入后可离线重算，无需重新连接摄像头。
 
 排障工作台提供「ONVIF 设备发现」：选择本机 IPv4 网卡后搜索摄像头/NVR，选择设备并填写 ONVIF 凭据，读取 Profile，再选择 TCP/UDP 获取 RTSP 地址。地址只回填到采样表单，由用户核对后启动采样。未搜到设备时可手动输入服务地址（如 `http://192.168.1.64/onvif/device_service`）；组播发现通常限于本地网段，跨 VLAN 可使用手动地址。macOS 需允许应用访问本地网络。
 
@@ -561,3 +561,5 @@ Enhanced 标准参考：
 ## License
 
 MIT
+
+H.265 预览的浏览器回归使用仓库内预编码 B 帧素材，无需运行时转码。可分别构建 `./cmd/server` 和 `./internal/diagnostic/testdata/h265-fixture`，将二进制路径传入 `STREAMANALYZER_TEST_SERVER`、`STREAMANALYZER_HEVC_FIXTURE`，执行 `node internal/handler/testdata/rtsp_hevc_e2e.cjs`。用默认 GPU 配置的 Chrome 验证 TCP/UDP 实际解码、首屏与呈帧记录、模型/HTML，以及停止源端后的证据包完整复盘；浏览器需提供 HEVC 解码能力。

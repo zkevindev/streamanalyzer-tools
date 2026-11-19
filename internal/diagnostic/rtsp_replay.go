@@ -93,7 +93,7 @@ func replayRTSPWithEvents(dir string, manifest Manifest, visit func(Event)) (Rep
 	var metadata rtspArchiveMetadata
 	decoder := json.NewDecoder(bytes.NewReader(metadataData))
 	decoder.DisallowUnknownFields()
-	if decoder.Decode(&metadata) != nil || decoder.Decode(new(any)) != io.EOF || (metadata.Version != 1 && metadata.Version != 2 && metadata.Version != rtspPreviewArchiveVersion) || metadata.Connections < 0 || metadata.Connections > 1 || len(metadata.Requests) > maxRTSPRequests || metadata.RequestsTruncated < 0 || metadata.RequestsTruncated > 1_000_000_000 {
+	if decoder.Decode(&metadata) != nil || decoder.Decode(new(any)) != io.EOF || (metadata.Version != 1 && metadata.Version != 2 && metadata.Version != rtspLegacyPreviewArchiveVersion && metadata.Version != rtspPreviewArchiveVersion) || metadata.Connections < 0 || metadata.Connections > 1 || len(metadata.Requests) > maxRTSPRequests || metadata.RequestsTruncated < 0 || metadata.RequestsTruncated > 1_000_000_000 {
 		return Report{}, ErrInvalid
 	}
 	// Archive version 3 adds a recorded preview result without changing the
@@ -107,10 +107,10 @@ func replayRTSPWithEvents(dir string, manifest Manifest, visit func(Event)) (Rep
 		if len(entries) != 5 || entries[rtspUDPDataName] == nil || entries[rtspUDPIndexName] == nil || manifest.Protocol != ProtocolRTSP || len(metadata.Channels) != 0 {
 			return Report{}, ErrInvalid
 		}
-	} else if metadata.Version != rtspPreviewArchiveVersion || len(entries) != 3 || !validRTSPTCPArchiveFields(metadataData) {
+	} else if (metadata.Version != rtspLegacyPreviewArchiveVersion && metadata.Version != rtspPreviewArchiveVersion) || len(entries) != 3 || !validRTSPTCPArchiveFields(metadataData) {
 		return Report{}, ErrInvalid
 	}
-	if metadata.Version < rtspPreviewArchiveVersion && rtspArchiveHasField(metadataData, "preview") {
+	if metadata.Version < rtspLegacyPreviewArchiveVersion && rtspArchiveHasField(metadataData, "preview") {
 		return Report{}, ErrInvalid
 	}
 
@@ -123,7 +123,7 @@ func replayRTSPWithEvents(dir string, manifest Manifest, visit func(Event)) (Rep
 	if invalidSDP {
 		session, tracks = nil, []RTSPTrackMetrics{}
 	}
-	if metadata.Version < rtspPreviewArchiveVersion && metadata.Preview != nil || metadata.Version == rtspPreviewArchiveVersion && (!validRTSPPreview(metadata.Preview, tracks) || metadata.Preview.State == "not_requested") {
+	if metadata.Version < rtspLegacyPreviewArchiveVersion && metadata.Preview != nil || metadata.Version >= rtspLegacyPreviewArchiveVersion && (!validRTSPPreview(metadata.Preview, tracks) || metadata.Preview.State == "not_requested") || !validRTSPPreviewArchiveVersion(metadata, metadataData) {
 		return Report{}, ErrInvalid
 	}
 	spans, err := readRTSPSpans(dir, manifest.Observation, int64(entries[rtspWireName].UncompressedSize64), metadata.Connections)
@@ -159,8 +159,11 @@ func replayRTSPWithEvents(dir string, manifest Manifest, visit func(Event)) (Rep
 		report.RuleVersion = "rtsp/2"
 		metrics.Transport, metrics.RequestedTransport, metrics.Boundary = "udp", "udp", "rtsp_control_and_udp_datagrams"
 	}
-	if metadata.Version == rtspPreviewArchiveVersion {
+	if metadata.Version == rtspLegacyPreviewArchiveVersion {
 		report.RuleVersion = "rtsp/3"
+	}
+	if metadata.Version == rtspPreviewArchiveVersion {
+		report.RuleVersion = "rtsp/4"
 	}
 	report.Manifest.Observation.FirstPayloadMS = nil
 	if len(spans) > 0 {

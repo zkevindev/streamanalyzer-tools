@@ -730,6 +730,9 @@ func playerReportState(player *PlayerReport) string {
 		return "采集完成"
 	case "unsupported":
 		for _, event := range player.Events {
+			if event.Kind == "unsupported" && event.Code == "browser_codec_unsupported" {
+				return "浏览器不支持本次预览输出编码"
+			}
 			if event.Kind == "unsupported" && event.Code == "preview_unsupported" {
 				return "RTSP 本机预览编码或封装不支持"
 			}

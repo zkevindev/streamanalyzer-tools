@@ -12,31 +12,39 @@ import (
 	"github.com/bluenviron/gortsplib/v5/pkg/format"
 	"github.com/bluenviron/gortsplib/v5/pkg/format/rtph264"
 	"github.com/bluenviron/gortsplib/v5/pkg/format/rtpmpeg4audio"
+	"github.com/bluenviron/gortsplib/v5/pkg/rtptime"
 	"github.com/bluenviron/mediacommon/v2/pkg/codecs/h264"
 	"github.com/bluenviron/mediacommon/v2/pkg/codecs/mpeg4audio"
 	"github.com/pion/rtp"
 )
 
-const rtspPreviewArchiveVersion = 3
+const rtspLegacyPreviewArchiveVersion = 3
+const rtspPreviewArchiveVersion = 4
+const rtspPreviewCodecCapabilitiesVersion = 1
 const rtspPlayerSchemaVersion = 6
 
 // RTSPPreviewReport describes the local remux pipeline, not a decoded source
 // frame or source A/V synchronisation. The wire archive remains authoritative.
 type RTSPPreviewReport struct {
-	Version        int    `json:"version"`
-	State          string `json:"state"`
-	ReasonCode     string `json:"reason_code,omitempty"`
-	ClockAlignment string `json:"clock_alignment"`
-	VideoTrackID   int    `json:"video_track_id,omitempty"`
-	AudioTrackID   int    `json:"audio_track_id,omitempty"`
-	VideoCodec     string `json:"video_codec,omitempty"`
-	AudioCodec     string `json:"audio_codec,omitempty"`
-	VideoReason    string `json:"video_reason,omitempty"`
-	AudioReason    string `json:"audio_reason,omitempty"`
-	VideoAUs       int    `json:"video_aus"`
-	AudioAUs       int    `json:"audio_aus"`
-	PacketErrors   int    `json:"packet_errors"`
-	DroppedPackets int    `json:"dropped_packets"`
+	Version                  int    `json:"version"`
+	CodecCapabilitiesVersion int    `json:"codec_capabilities_version,omitempty"`
+	VideoOutputCodec         string `json:"video_output_codec,omitempty"`
+	AudioOutputCodec         string `json:"audio_output_codec,omitempty"`
+	VideoTransform           string `json:"video_transform,omitempty"`
+	AudioTransform           string `json:"audio_transform,omitempty"`
+	State                    string `json:"state"`
+	ReasonCode               string `json:"reason_code,omitempty"`
+	ClockAlignment           string `json:"clock_alignment"`
+	VideoTrackID             int    `json:"video_track_id,omitempty"`
+	AudioTrackID             int    `json:"audio_track_id,omitempty"`
+	VideoCodec               string `json:"video_codec,omitempty"`
+	AudioCodec               string `json:"audio_codec,omitempty"`
+	VideoReason              string `json:"video_reason,omitempty"`
+	AudioReason              string `json:"audio_reason,omitempty"`
+	VideoAUs                 int    `json:"video_aus"`
+	AudioAUs                 int    `json:"audio_aus"`
+	PacketErrors             int    `json:"packet_errors"`
+	DroppedPackets           int    `json:"dropped_packets"`
 }
 
 type rtspPreviewPacket struct {
@@ -53,6 +61,7 @@ type rtspPreview struct {
 	closed, failed             bool
 	started                    bool
 	video                      *format.H264
+	hevc                       *rtspHEVCPreview
 	audio                      *format.MPEG4Audio
 	videoDecoder               *rtph264.Decoder
 	audioDecoder               *rtpmpeg4audio.Decoder
@@ -61,10 +70,13 @@ type rtspPreview struct {
 	lastVideoMS, lastAudioMS   int64
 	hasVideoTime, hasAudioTime bool
 	dts                        h264.DTSExtractor
+	clock                      rtptime.GlobalDecoder
 }
 
 func newRTSPPreview(player *PlayerSession) *rtspPreview {
-	return &rtspPreview{player: player, queue: make(chan rtspPreviewPacket, 128), done: make(chan struct{}), report: RTSPPreviewReport{Version: 1, State: "failed", ReasonCode: "no_media", ClockAlignment: "receiver_rtp", VideoReason: "no_track", AudioReason: "no_track"}}
+	p := &rtspPreview{player: player, queue: make(chan rtspPreviewPacket, 128), done: make(chan struct{}), report: RTSPPreviewReport{Version: 2, CodecCapabilitiesVersion: rtspPreviewCodecCapabilitiesVersion, State: "failed", ReasonCode: "no_media", ClockAlignment: "receiver_rtp", VideoReason: "no_track", AudioReason: "no_track"}}
+	p.clock.Initialize()
+	return p
 }
 
 // start registers on the existing RTSP client after SETUP. Nothing opens a
@@ -81,10 +93,29 @@ func (p *rtspPreview) start(client *gortsplib.Client, desc *description.Session)
 			trackID++
 			switch media.Type {
 			case description.MediaTypeVideo:
-				if p.video != nil {
+				if p.hasVideo() {
 					continue
 				}
 				p.report.VideoReason = "codec_unsupported"
+				if hevc, ok := codec.(*format.H265); ok {
+					if hevc.MaxDONDiff != 0 {
+						p.report.VideoReason = "packetization_unsupported"
+						continue
+					}
+					if !p.selectHEVC(hevc) {
+						p.report.VideoReason = "packetization_unsupported"
+						continue
+					}
+					p.report.VideoTrackID, p.report.VideoCodec, p.report.VideoReason = trackID, "h265", ""
+					p.report.VideoOutputCodec, p.report.VideoTransform = "h265", "native_remux"
+					client.OnPacketRTP(media, codec, func(packet *rtp.Packet) {
+						pts, ok := p.packetPTS(codec, packet)
+						if ok {
+							p.enqueue(packet, pts, true)
+						}
+					})
+					continue
+				}
 				video, ok := codec.(*format.H264)
 				if !ok {
 					continue
@@ -101,8 +132,9 @@ func (p *rtspPreview) start(client *gortsplib.Client, desc *description.Session)
 				sps, pps := video.SafeParams()
 				p.sps, p.pps = bytes.Clone(sps), bytes.Clone(pps)
 				p.report.VideoTrackID, p.report.VideoCodec, p.report.VideoReason = trackID, "h264", ""
+				p.report.VideoOutputCodec, p.report.VideoTransform = "h264", "native_remux"
 				client.OnPacketRTP(media, codec, func(packet *rtp.Packet) {
-					pts, ok := client.PacketPTS(media, packet)
+					pts, ok := p.packetPTS(codec, packet)
 					if ok {
 						p.enqueue(packet, pts, true)
 					}
@@ -128,8 +160,9 @@ func (p *rtspPreview) start(client *gortsplib.Client, desc *description.Session)
 				}
 				p.audio, p.audioDecoder = audio, decoder
 				p.report.AudioTrackID, p.report.AudioCodec, p.report.AudioReason = trackID, "aac", ""
+				p.report.AudioOutputCodec, p.report.AudioTransform = "aac", "native_remux"
 				client.OnPacketRTP(media, codec, func(packet *rtp.Packet) {
-					pts, ok := client.PacketPTS(media, packet)
+					pts, ok := p.packetPTS(codec, packet)
 					if ok {
 						p.enqueue(packet, pts, false)
 					}
@@ -137,7 +170,7 @@ func (p *rtspPreview) start(client *gortsplib.Client, desc *description.Session)
 			}
 		}
 	}
-	if p.video == nil && p.audio == nil {
+	if !p.hasVideo() && !p.hasAudio() {
 		p.fail("codec_unsupported")
 		p.report.State = "unsupported"
 		close(p.done)
@@ -145,10 +178,10 @@ func (p *rtspPreview) start(client *gortsplib.Client, desc *description.Session)
 	}
 	p.dts.Initialize()
 	flags := byte(0)
-	if p.video != nil {
+	if p.hasVideo() {
 		flags |= 1
 	}
-	if p.audio != nil {
+	if p.hasAudio() {
 		flags |= 4
 	}
 	p.player.publish([]byte{'F', 'L', 'V', 1, flags, 0, 0, 0, 9, 0, 0, 0, 0})
@@ -221,16 +254,16 @@ func (p *rtspPreview) finish() RTSPPreviewReport {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if !p.failed && p.report.State != "ready" {
-		if p.video != nil && (len(p.sps) < 4 || len(p.pps) == 0) {
-			p.report.ReasonCode = "missing_video_parameters"
-		} else if p.video != nil {
+		if p.hasVideo() && !p.videoParametersAvailable() {
+			p.report.ReasonCode = p.missingVideoParametersCode()
+		} else if p.hasVideo() {
 			p.report.ReasonCode = "no_random_access"
 		}
 		p.player.failPreview(p.report.ReasonCode)
 	}
-	if p.video != nil && p.report.VideoAUs == 0 {
-		if len(p.sps) < 4 || len(p.pps) == 0 {
-			p.report.VideoReason = "missing_video_parameters"
+	if p.hasVideo() && p.report.VideoAUs == 0 {
+		if !p.videoParametersAvailable() {
+			p.report.VideoReason = p.missingVideoParametersCode()
 		} else {
 			p.report.VideoReason = "no_random_access"
 		}
@@ -286,6 +319,10 @@ func (p *rtspPreview) tag(kind byte, timestamp int64, body []byte) bool {
 	return true
 }
 func (p *rtspPreview) writeVideo(item rtspPreviewPacket) {
+	if p.hevc != nil {
+		p.writeHEVCVideo(item)
+		return
+	}
 	if len(item.packet.Payload) == 0 {
 		return
 	}
@@ -420,8 +457,31 @@ func (p *rtspPreview) writeAudio(item rtspPreviewPacket) {
 }
 
 func validRTSPPreview(p *RTSPPreviewReport, tracks []RTSPTrackMetrics) bool {
-	if p == nil || p.Version != 1 || p.ClockAlignment != "receiver_rtp" {
+	if p == nil || (p.Version != 1 && p.Version != 2) || p.ClockAlignment != "receiver_rtp" {
 		return false
+	}
+	if p.Version == 1 {
+		if p.CodecCapabilitiesVersion != 0 || p.VideoOutputCodec != "" || p.AudioOutputCodec != "" || p.VideoTransform != "" || p.AudioTransform != "" {
+			return false
+		}
+	} else {
+		if p.CodecCapabilitiesVersion < 1 || p.CodecCapabilitiesVersion > rtspPreviewCodecCapabilitiesVersion {
+			return false
+		}
+		if p.VideoTrackID == 0 {
+			if p.VideoOutputCodec != "" || p.VideoTransform != "" {
+				return false
+			}
+		} else if p.VideoOutputCodec != p.VideoCodec || p.VideoTransform != "native_remux" {
+			return false
+		}
+		if p.AudioTrackID == 0 {
+			if p.AudioOutputCodec != "" || p.AudioTransform != "" {
+				return false
+			}
+		} else if p.AudioOutputCodec != p.AudioCodec || p.AudioTransform != "native_remux" {
+			return false
+		}
 	}
 	switch p.State {
 	case "not_requested":
@@ -441,7 +501,7 @@ func validRTSPPreview(p *RTSPPreviewReport, tracks []RTSPTrackMetrics) bool {
 		return false
 	}
 	for _, code := range []string{p.ReasonCode, p.VideoReason, p.AudioReason} {
-		if !validRTSPPreviewReason(code) {
+		if !validRTSPPreviewReason(code) || p.Version == 1 && code == "missing_hevc_parameters" {
 			return false
 		}
 	}
@@ -470,11 +530,11 @@ func validRTSPPreview(p *RTSPPreviewReport, tracks []RTSPTrackMetrics) bool {
 		}
 		return false
 	}
-	return (p.VideoCodec == "" || p.VideoCodec == "h264") && (p.AudioCodec == "" || p.AudioCodec == "aac") && selected(p.VideoTrackID, p.VideoCodec, "video") && selected(p.AudioTrackID, p.AudioCodec, "audio")
+	return (p.VideoCodec == "" || p.VideoCodec == "h264" || p.Version == 2 && p.CodecCapabilitiesVersion >= 1 && p.VideoCodec == "h265") && (p.AudioCodec == "" || p.AudioCodec == "aac") && selected(p.VideoTrackID, p.VideoCodec, "video") && selected(p.AudioTrackID, p.AudioCodec, "audio")
 }
 func validRTSPPreviewReason(code string) bool {
 	switch code {
-	case "", "no_track", "no_media", "codec_unsupported", "packetization_unsupported", "aac_configuration_unsupported", "queue_limit", "missing_video_parameters", "no_random_access", "timestamp_unsupported", "access_unit_limit", "player_unavailable", "capture_setup_failed":
+	case "", "missing_hevc_parameters", "no_track", "no_media", "codec_unsupported", "packetization_unsupported", "aac_configuration_unsupported", "queue_limit", "missing_video_parameters", "no_random_access", "timestamp_unsupported", "access_unit_limit", "player_unavailable", "capture_setup_failed":
 		return true
 	}
 	return false
@@ -490,6 +550,8 @@ func addRTSPPreviewFinding(report *Report) {
 		if p.State == "unsupported" {
 			severity = "info"
 		}
-		report.Findings = append(report.Findings, Finding{ID: fmt.Sprintf("F%03d", len(report.Findings)+1), Code: "rtsp_preview_" + p.State, Severity: severity, Message: "本机预览转封装：" + rtspPreviewReasonLabel(p.ReasonCode) + "；该结果不等同于原生采样或网络失败。", NextCheck: "先对照原生 RTSP 控制和 RTP 接收，再检查选中轨道、编码配置、随机接入点及本机播放器能力。", StartMS: 0, EndMS: report.Manifest.Observation.ElapsedMS, Occurrences: 1})
+		report.Findings = append(report.Findings, Finding{ID: fmt.Sprintf("F%03d", len(report.Findings)+1), Code: "rtsp_preview_" + p.State, Severity: severity, Message: "本机预览转封装：" + rtspPreviewReasonLabelFor(p, p.ReasonCode) + "；该结果不等同于原生采样或网络失败。", NextCheck: "先对照原生 RTSP 控制和 RTP 接收，再检查选中轨道、编码配置、随机接入点及本机播放器能力。", StartMS: 0, EndMS: report.Manifest.Observation.ElapsedMS, Occurrences: 1})
 	}
 }
+
+func (p *rtspPreview) hasAudio() bool { return p.audio != nil }
