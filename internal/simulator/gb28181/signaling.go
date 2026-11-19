@@ -103,12 +103,12 @@ func (d *device) onMessage(flow *sipFlow, req *sip.Request, tx sip.ServerTransac
 	case "Catalog":
 		replies = d.catalogReplies(query)
 	case "RecordInfo":
-		reply, err := d.recordInfo(query)
+		records, err := d.recordInfo(query)
 		if err != nil {
 			d.respond(req, tx, 400, "Bad Request")
 			return
 		}
-		replies = [][]byte{reply}
+		replies = records
 	default:
 		reply := d.queryReply(query.Command, query.SN, query.DeviceID)
 		if reply == nil {

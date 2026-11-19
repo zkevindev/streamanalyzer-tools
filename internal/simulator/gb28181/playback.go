@@ -88,12 +88,13 @@ func parsePlaybackOffset(value string, limit time.Duration) (time.Duration, erro
 }
 
 type playbackSession struct {
-	window   fileRange
+	window   recordingWindow
 	commands chan playbackCommand
 }
 
 func (p *playbackSession) run(ctx context.Context, file *localMedia, send func(mediaUnit) error, mark func(string, string)) error {
-	span := p.window
+	parts := p.window.parts
+	var nextParts []recordingPart
 	scale := 1.0
 	paused := false
 	var output int64
@@ -107,7 +108,7 @@ func (p *playbackSession) run(ctx context.Context, file *localMedia, send func(m
 			paused = false
 			scale = command.scale
 			if command.seek {
-				span = fileRange{start: p.window.start + command.start, end: p.window.start + command.end}
+				nextParts = p.window.selectParts(command.start, command.end)
 				mark("playback_seek", fmt.Sprintf("%.3f s · %.2fx", command.start.Seconds(), scale))
 				return errPlaybackSeek
 			}
@@ -117,7 +118,13 @@ func (p *playbackSession) run(ctx context.Context, file *localMedia, send func(m
 		}
 		return nil
 	}
-	for {
+	var previousEnd time.Time
+	for len(parts) > 0 {
+		part := parts[0]
+		if !previousEnd.IsZero() && previousEnd.Before(part.start) {
+			mark("playback_gap", fmt.Sprintf("%s → %s", previousEnd.Format(time.RFC3339), part.start.Format(time.RFC3339)))
+		}
+		mark("playback_recording", fmt.Sprintf("录像 %d · %s", part.recordIndex, part.start.Format(time.RFC3339)))
 		first := true
 		var lastDTS int64
 		var lastWall time.Time
@@ -186,15 +193,20 @@ func (p *playbackSession) run(ctx context.Context, file *localMedia, send func(m
 			sent = true
 			return send(unit)
 		}
+		span := fileRange{start: part.start.Sub(part.origin), end: part.end.Sub(part.origin)}
 		err := file.read(ctx, &span, consume)
-		if errors.Is(err, errPlaybackSeek) {
-			continue
-		}
-		if errors.Is(err, errPlaybackStop) {
+		switch {
+		case errors.Is(err, errPlaybackSeek):
+			parts, previousEnd = nextParts, time.Time{}
+		case errors.Is(err, errPlaybackStop):
 			return io.EOF
+		case errors.Is(err, io.EOF):
+			parts, previousEnd = parts[1:], part.end
+		default:
+			return err
 		}
-		return err
 	}
+	return io.EOF
 }
 
 func (d *device) onPlaybackInfo(req *sip.Request, tx sip.ServerTransaction) {
@@ -211,8 +223,8 @@ func (d *device) onPlaybackInfo(req *sip.Request, tx sip.ServerTransaction) {
 		return
 	}
 	window := session.playback.window
-	command, err := parsePlaybackCommand(string(req.Body()), window.end-window.start)
-	if err != nil {
+	command, err := parsePlaybackCommand(string(req.Body()), window.end.Sub(window.start))
+	if err != nil || command.seek && len(window.selectParts(command.start, command.end)) == 0 {
 		d.mu.Unlock()
 		d.respond(req, tx, 400, "Bad Request")
 		return

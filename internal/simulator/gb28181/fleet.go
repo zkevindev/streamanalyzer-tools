@@ -181,7 +181,7 @@ func (m *Manager) StartFile(ctx context.Context, cfg Config, name string, input 
 	if err != nil {
 		return err
 	}
-	if err := media.setRecording(specs[0].config.RecordingStart, time.Now()); err != nil {
+	if err := media.setRecording(specs[0].config, time.Now()); err != nil {
 		media.remove()
 		return err
 	}
@@ -233,8 +233,9 @@ func (m *Manager) start(specs []deviceSpec, file *localMedia) {
 			status: Status{State: state, Platform: net.JoinHostPort(cfg.PlatformHost, strconv.Itoa(cfg.PlatformPort)),
 				SIPTransport: cfg.SIPTransport, DeviceID: cfg.DeviceID, MediaSource: source},
 		}
-		if file != nil {
-			d.status.Recording = file.recording
+		if file != nil && len(file.recordings) > 0 {
+			d.status.Recording = &file.recordings[0]
+			d.status.Recordings = file.recordings
 		}
 		for _, id := range spec.channels {
 			d.channelStatus[id] = &MediaStatus{MediaState: "idle"}
@@ -299,6 +300,7 @@ func (m *Manager) StatusFor(deviceID, channelID string) (Status, bool) {
 			LocalAddress: d.status.LocalAddress, Error: d.status.Error, ChannelCount: len(d.channels), ActiveMedia: playing})
 		if d == selected {
 			result = d.status
+			result.Recordings = slices.Clone(result.Recordings)
 			if d.outputID != "" {
 				voice := d.voice
 				result.Broadcast = &voice

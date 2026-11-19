@@ -22,7 +22,7 @@ const sessionStages = {
   media_connected: '媒体就绪', first_rtp: '发出首个 RTP 包', first_keyframe: '发完首个视频关键帧',
   bye: '收到 BYE', ended: '会话结束', failed: '会话失败',
   fault_delay: '注入起播延迟', fault_loss: '注入 UDP 丢包', fault_reorder: '注入 UDP 乱序',
-  playback_pause: '暂停回放', playback_play: '继续回放', playback_seek: '定位录像', playback_done: '录像回放结束',
+  playback_pause: '暂停回放', playback_play: '继续回放', playback_seek: '定位录像', playback_recording: '开始录像段', playback_gap: '跳过录像缺口', playback_done: '录像回放结束',
   fault_timestamp: '注入时间戳跳变', fault_mute: '中断音频', fault_udp_only: '跳过 UDP 包故障',
 };
 let liveSessions = [];
@@ -243,11 +243,12 @@ function renderSource(status) {
   const filename = source.filename || '内置测试画面';
   el('media-source').hidden = !source.video_mode;
   el('media-source').textContent = `${filename} · ${output} · ${audioLabels[source.audio_codec] || ''}`;
-  const record = status.recording;
+  const records = status.recordings || (status.recording ? [status.recording] : []);
+  const record = records[0];
   const windowLabel = el('recording-window');
   windowLabel.hidden = !record;
   windowLabel.textContent = record ? '录像可查询 ' + new Date(record.start).toLocaleString('zh-CN') +
-    ' 至 ' + new Date(record.end).toLocaleString('zh-CN') : '';
+    ' 至 ' + new Date(records.at(-1).end).toLocaleString('zh-CN') + ' · ' + records.length + ' 段' : '';
   const video = status.video_frames || 0;
   const audio = status.audio_packets || 0;
   el('media-units').hidden = !video && !audio;
@@ -391,6 +392,8 @@ form.addEventListener('submit', (event) => {
     notice('本地视频超过 512 MiB。');
     return;
   }
+  config.recording_count = Number(el('recording-count').value);
+  config.recording_gap_seconds = Number(el('recording-gap').value);
   const recordingStart = el('recording-start').value;
   if (recordingStart) config.recording_start = new Date(recordingStart).toISOString();
   const body = new FormData();

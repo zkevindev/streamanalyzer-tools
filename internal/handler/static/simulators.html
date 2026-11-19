@@ -80,7 +80,11 @@
             <div class="recording-config" id="recording-config" hidden>
               <label for="recording-start">录像开始时间</label>
               <input id="recording-start" type="datetime-local" step="1" aria-describedby="recording-hint">
-              <p class="muted field-hint" id="recording-hint">留空时，录像结束时间取设备启动时间。</p>
+              <div class="sim-fields">
+                <div><label for="recording-count">录像段数</label><input id="recording-count" type="number" min="1" max="8" value="1"></div>
+                <div><label for="recording-gap">段间缺口（秒）</label><input id="recording-gap" type="number" min="0" max="3600" value="5"></div>
+              </div>
+              <p class="muted field-hint" id="recording-hint">多段使用同一视频源。留空开始时间时，最后一段在设备启动时结束。</p>
             </div>
             <p id="source-hint" class="muted field-hint">留空使用内置测试画面。本地文件最大 512 MiB，需要 FFmpeg 和 ffprobe。</p>
             <label class="sim-check"><input id="voice-enabled" type="checkbox"> 启用语音广播和对讲</label>
