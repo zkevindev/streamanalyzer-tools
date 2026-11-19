@@ -34,22 +34,16 @@ func (a *agent) serve() error {
 		return errors.New("SIP 服务器需要单播 IPv4 地址")
 	}
 	local, _ := netip.ParseAddr(a.cfg.LocalIP)
-	if !local.IsValid() {
-		conn, err := net.DialUDP("udp4", nil, net.UDPAddrFromAddrPort(a.registrar))
-		if err != nil {
-			return fmt.Errorf("确定本机 SIP 地址失败：%w", err)
-		}
-		local = conn.LocalAddr().(*net.UDPAddr).AddrPort().Addr().Unmap()
-		conn.Close()
-	}
-	udp, err := net.ListenUDP("udp4", net.UDPAddrFromAddrPort(netip.AddrPortFrom(local, uint16(a.cfg.LocalPort))))
+	wire, err := a.openSignal(local)
 	if err != nil {
-		return fmt.Errorf("绑定本机 SIP 地址失败：%w", err)
+		return err
 	}
-	defer udp.Close()
-	a.local = netip.AddrPortFrom(local, uint16(udp.LocalAddr().(*net.UDPAddr).Port))
-	wire := &signalSocket{UDPConn: udp, agent: a, ready: make(chan struct{})}
-	ua, err := sipgo.NewUA(sipgo.WithUserAgent("Stream Analyzer SIP"), sipgo.WithUserAgentHostname(a.cfg.Domain))
+	defer wire.close()
+	options := []sipgo.UserAgentOption{sipgo.WithUserAgent("Stream Analyzer SIP"), sipgo.WithUserAgentHostname(a.cfg.Domain)}
+	if a.cfg.Transport != "udp" {
+		options = append(options, a.streamOptions()...)
+	}
+	ua, err := sipgo.NewUA(options...)
 	if err != nil {
 		return err
 	}
@@ -62,9 +56,11 @@ func (a *agent) serve() error {
 	if err != nil {
 		return err
 	}
-	a.dialogs = sipgo.DialogUA{Client: a.client, ContactHDR: sip.ContactHeader{Address: sip.Uri{
-		Scheme: "sip", User: a.cfg.User, Host: local.String(), Port: int(a.local.Port()),
-	}}}
+	contact := sip.Uri{Scheme: "sip", User: a.cfg.User, Host: a.local.Addr().String(), Port: int(a.local.Port())}
+	if a.cfg.Transport != "udp" {
+		contact.UriParams.Add("transport", a.cfg.Transport)
+	}
+	a.dialogs = sipgo.DialogUA{Client: a.client, RewriteContact: a.cfg.Transport != "udp", ContactHDR: sip.ContactHeader{Address: contact}}
 	a.registerID = sip.CallIDHeader(sip.GenerateTagN(24))
 	a.registerTag = sip.GenerateTagN(16)
 	a.routes(server)
@@ -72,7 +68,7 @@ func (a *agent) serve() error {
 	served := make(chan struct{})
 	var serveErr error
 	go func() {
-		serveErr = server.ServeUDP(wire)
+		serveErr = wire.serve(server)
 		close(served)
 	}()
 	defer func() {
@@ -80,7 +76,7 @@ func (a *agent) serve() error {
 		// A dial or INVITE accepted before cancellation may be adding its worker.
 		a.mu.Lock()
 		a.mu.Unlock()
-		wire.Close()
+		_ = wire.close()
 		ua.Close()
 		<-served
 		a.workers.Wait()
@@ -90,16 +86,18 @@ func (a *agent) serve() error {
 	case <-a.ctx.Done():
 		return a.ctx.Err()
 	case <-served:
-		return fmt.Errorf("SIP UDP 监听失败：%w", serveErr)
+		return fmt.Errorf("SIP 信令流初始化失败：%w", serveErr)
 	}
 
 	a.mu.Lock()
 	a.status.LocalAddress, a.status.Registrar = a.local.String(), a.registrar.String()
 	a.mu.Unlock()
+	a.signalPhase("register", "")
 	expiry, err := a.register(a.ctx, requestedExpiry)
 	if err != nil {
 		return err
 	}
+	a.signalPhase("registered", "")
 	a.state("registered", nil)
 	close(a.registered)
 	delay := time.Duration(expiry) * time.Second * 4 / 5
@@ -107,11 +105,13 @@ func (a *agent) serve() error {
 		timer := time.NewTimer(delay)
 		select {
 		case <-timer.C:
+			a.signalPhase("register", "")
 			refreshed, err := a.register(a.ctx, expiry)
 			if err != nil {
 				a.state("retrying", err)
 				delay = 5 * time.Second
 			} else {
+				a.signalPhase("registered", "")
 				a.state("registered", nil)
 				expiry = refreshed
 				delay = time.Duration(expiry) * time.Second * 4 / 5
@@ -122,7 +122,8 @@ func (a *agent) serve() error {
 			return nil
 		case <-served:
 			timer.Stop()
-			return fmt.Errorf("SIP UDP 监听已结束：%w", serveErr)
+			a.signalPhase("connection", "closed")
+			return fmt.Errorf("SIP 信令流已结束：%w", serveErr)
 		}
 	}
 }
@@ -149,7 +150,7 @@ func (a *agent) register(ctx context.Context, expiry int) (int, error) {
 	defer cancel()
 	for range 2 {
 		req := sip.NewRequest(sip.REGISTER, sip.Uri{Scheme: "sip", Host: a.cfg.Domain})
-		req.SetTransport("UDP")
+		req.SetTransport(strings.ToUpper(a.cfg.Transport))
 		req.SetDestination(a.registrar.String())
 		identity := sip.Uri{Scheme: "sip", User: a.cfg.User, Host: a.cfg.Domain}
 		from := &sip.FromHeader{Address: identity}
@@ -162,11 +163,19 @@ func (a *agent) register(ctx context.Context, expiry int) (int, error) {
 		req.AppendHeader(sip.HeaderClone(&a.dialogs.ContactHDR))
 		req.AppendHeader(sip.NewHeader("Expires", strconv.Itoa(expiry)))
 		res, err := a.client.Do(ctx, req)
+		stage := "register"
 		if err == nil && res != nil && (res.StatusCode == 401 || res.StatusCode == 407) {
+			stage = "digest"
+			if expiry > 0 {
+				a.signalPhase("digest", "")
+			}
 			res, err = a.client.DoDigestAuth(ctx, req, res, sipgo.DigestAuth{Username: a.cfg.Username, Password: a.cfg.Password})
 		}
 		a.registerSeq = req.CSeq().SeqNo
 		if err != nil {
+			if expiry > 0 {
+				a.signalPhase(stage, "transaction")
+			}
 			return 0, fmt.Errorf("SIP REGISTER 事务失败：%w", err)
 		}
 		if res == nil {
@@ -179,6 +188,9 @@ func (a *agent) register(ctx context.Context, expiry int) (int, error) {
 			}
 		}
 		if res.StatusCode != 200 {
+			if expiry > 0 {
+				a.signalPhase(stage, "sip_"+strconv.Itoa(res.StatusCode))
+			}
 			return 0, fmt.Errorf("SIP 注册请求被拒绝（%d）", res.StatusCode)
 		}
 		if expiry == 0 {
@@ -227,7 +239,7 @@ func (s *signalSocket) ReadFrom(buf []byte) (int, net.Addr, error) {
 	s.once.Do(func() { close(s.ready) })
 	n, addr, err := s.UDPConn.ReadFrom(buf)
 	if err == nil {
-		s.observe("in", buf[:n], addr)
+		s.agent.observeSignal("in", buf[:n], addr.String())
 	}
 	return n, addr, err
 }
@@ -235,12 +247,12 @@ func (s *signalSocket) ReadFrom(buf []byte) (int, net.Addr, error) {
 func (s *signalSocket) WriteTo(data []byte, addr net.Addr) (int, error) {
 	n, err := s.UDPConn.WriteTo(data, addr)
 	if err == nil {
-		s.observe("out", data, addr)
+		s.agent.observeSignal("out", data, addr.String())
 	}
 	return n, err
 }
 
-func (s *signalSocket) observe(direction string, packet []byte, addr net.Addr) {
+func (a *agent) observeSignal(direction string, packet []byte, addr string) {
 	// Only retain SIP method and status. Credentials, headers and SDP stay off the workbench.
 	line, rest, _ := strings.Cut(string(packet), "\r\n")
 	fields := strings.Fields(line)
@@ -270,7 +282,7 @@ func (s *signalSocket) observe(direction string, packet []byte, addr net.Addr) {
 	} else if !sipMethod(message) || len(fields) != 3 || fields[2] != "SIP/2.0" {
 		return
 	}
-	s.agent.event(direction, message+" · "+addr.String())
+	a.event(direction, message+" · "+addr)
 }
 
 func sipMethod(method string) bool {

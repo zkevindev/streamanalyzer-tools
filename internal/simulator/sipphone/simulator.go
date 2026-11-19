@@ -2,6 +2,7 @@ package sipphone
 
 import (
 	"context"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"net"
@@ -27,6 +28,10 @@ var (
 )
 
 type Config struct {
+	Transport        string `json:"transport,omitempty"`
+	TLSServerName    string `json:"tls_server_name,omitempty"`
+	TLSCAPEM         string `json:"tls_ca_pem,omitempty"`
+	tlsRoots         *x509.CertPool
 	SessionTimer     string `json:"session_timer,omitempty"`
 	SessionSeconds   int    `json:"session_seconds,omitempty"`
 	RTPReturn        string `json:"rtp_return,omitempty"`
@@ -73,8 +78,41 @@ func (c *Config) validate() error {
 	}
 	c.Host, c.Domain, c.User = strings.TrimSpace(c.Host), strings.TrimSpace(c.Domain), strings.TrimSpace(c.User)
 	c.Username, c.LocalIP = strings.TrimSpace(c.Username), strings.TrimSpace(c.LocalIP)
+	c.Transport = strings.ToLower(strings.TrimSpace(c.Transport))
+	switch c.Transport {
+	case "", "udp":
+		c.Transport = "udp"
+	case "tcp", "tls":
+	default:
+		return fmt.Errorf("%w，SIP 信令传输需为 UDP、TCP 或 TLS", ErrConfig)
+	}
 	if c.Port == 0 {
 		c.Port = 5060
+		if c.Transport == "tls" {
+			c.Port = 5061
+		}
+	}
+	if c.Transport == "tls" {
+		c.TLSServerName = strings.TrimSpace(c.TLSServerName)
+		if c.TLSServerName == "" {
+			c.TLSServerName = c.Host
+		}
+		if !hostPattern.MatchString(c.TLSServerName) || len(c.TLSCAPEM) > 32<<10 {
+			return fmt.Errorf("%w，TLS 主机名或 CA 证书格式无效", ErrConfig)
+		}
+		if c.TLSCAPEM != "" {
+			pool, err := x509.SystemCertPool()
+			if err != nil {
+				pool = x509.NewCertPool()
+			}
+			if !pool.AppendCertsFromPEM([]byte(c.TLSCAPEM)) {
+				return fmt.Errorf("%w，TLS CA 证书必须为 PEM 格式", ErrConfig)
+			}
+			c.tlsRoots = pool
+			c.TLSCAPEM = ""
+		}
+	} else if c.TLSServerName != "" || c.TLSCAPEM != "" {
+		return fmt.Errorf("%w，证书选项仅用于 SIP TLS", ErrConfig)
 	}
 	if c.Domain == "" {
 		c.Domain = c.Host
@@ -99,15 +137,18 @@ func (c *Config) validate() error {
 }
 
 type Status struct {
-	Preset       string      `json:"preset,omitempty"`
-	Active       bool        `json:"active"`
-	State        string      `json:"state"`
-	User         string      `json:"user,omitempty"`
-	Registrar    string      `json:"registrar,omitempty"`
-	LocalAddress string      `json:"local_address,omitempty"`
-	Error        string      `json:"error,omitempty"`
-	Call         *CallStatus `json:"call,omitempty"`
-	Events       []Event     `json:"events,omitempty"`
+	Transport     string      `json:"transport,omitempty"`
+	SignalStage   string      `json:"signal_stage,omitempty"`
+	SignalFailure string      `json:"signal_failure,omitempty"`
+	Preset        string      `json:"preset,omitempty"`
+	Active        bool        `json:"active"`
+	State         string      `json:"state"`
+	User          string      `json:"user,omitempty"`
+	Registrar     string      `json:"registrar,omitempty"`
+	LocalAddress  string      `json:"local_address,omitempty"`
+	Error         string      `json:"error,omitempty"`
+	Call          *CallStatus `json:"call,omitempty"`
+	Events        []Event     `json:"events,omitempty"`
 }
 
 type Event struct {
@@ -136,7 +177,7 @@ func (m *Manager) Start(cfg Config) (Status, error) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	a := &agent{cfg: cfg, ctx: ctx, cancel: cancel, done: make(chan struct{}), registered: make(chan struct{}),
-		status: Status{Active: true, State: "registering", Preset: cfg.Preset, User: cfg.User, Registrar: net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))}}
+		status: Status{Transport: cfg.Transport, Active: true, State: "registering", Preset: cfg.Preset, User: cfg.User, Registrar: net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))}}
 	m.agent = a
 	go a.run()
 	return a.snapshot(), nil

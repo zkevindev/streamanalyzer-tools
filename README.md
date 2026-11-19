@@ -153,7 +153,7 @@ RTSP 音轨时钟跳变场景持续正常发送 H.264 和 G.711 RTP，在首次 
 
 #### 通用 SIP
 
-在「模拟器」切换到「通用 SIP」，填写 PBX 地址、分机号和鉴权信息后注册。信令使用 IPv4 UDP，支持 REGISTER Digest 鉴权、续期和注销。SIP 域和 Digest 用户名可按 PBX 配置单独填写。
+在「模拟器」切换到「通用 SIP」，填写 PBX 地址、分机号和鉴权信息后注册。信令支持 IPv4 UDP、TCP 和 TLS。TCP/TLS 在同一条外连信令连接上收发呼叫。TLS 默认校验证书链与主机名，可附加测试 CA。阶段状态区分连接、TLS 握手、注册和 Digest 鉴权。三种传输均支持 REGISTER Digest 鉴权、续期和注销。SIP 域和 Digest 用户名可按 PBX 配置单独填写。
 
 呼出会声明支持 `100rel`，收到可靠临时应答后自动发送 PRACK。开启「对支持 100rel 的呼入等待 PRACK」后，模拟器发送带 RSeq 的可靠 183，收到匹配的 PRACK 才发送早期测试音。工作台显示临时应答、PRACK 及应答和早期 RTP 的时间，PRACK 等待窗口为 4 秒。
 
