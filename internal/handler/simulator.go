@@ -19,6 +19,9 @@ func RegisterSimulatorRoutes(r *gin.Engine, simulator *gb28181.Manager, onvifSim
 	r.GET("/simulators", localDiagnostics, func(c *gin.Context) {
 		serveEmbeddedStaticFile(c, "simulators.html")
 	})
+	r.GET("/simulators/scenarios", localDiagnostics, func(c *gin.Context) {
+		serveEmbeddedStaticFile(c, "simulator-scenarios.html")
+	})
 	registerONVIFRoutes(r, onvifSimulator)
 	registerSIPRoutes(r, sipSimulator)
 	registerHLSRoutes(r, hlsSimulator)
