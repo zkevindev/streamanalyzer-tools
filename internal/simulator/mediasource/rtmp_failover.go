@@ -6,6 +6,8 @@ import (
 )
 
 type RTMPPublisherSwitch struct {
+	AudioBeforeMS  *uint32   `json:"audio_before_ms,omitempty"`
+	AudioAfterMS   *uint32   `json:"audio_after_ms,omitempty"`
 	To             string    `json:"to"`
 	DecisionAt     time.Time `json:"decision_at"`
 	KeyframeAt     time.Time `json:"keyframe_at"`
@@ -14,6 +16,9 @@ type RTMPPublisherSwitch struct {
 }
 
 type RTMPFailoverStatus struct {
+	StallTrack         string                `json:"stall_track,omitempty"`
+	PrimaryLastVideoAt time.Time             `json:"primary_last_video_at,omitzero"`
+	PrimaryLastAudioAt time.Time             `json:"primary_last_audio_at,omitzero"`
 	FailbackStableMS   int                   `json:"failback_stable_ms,omitempty"`
 	ActivePublisher    string                `json:"active_publisher,omitempty"`
 	RecoveryRestarts   uint64                `json:"recovery_restarts"`
@@ -33,6 +38,7 @@ type rtmpFailover struct {
 	primaryAudio, primaryVideo        *relayPacket
 	resumeStart, resumeLast           time.Time
 	primaryPublished, activeLastMedia time.Time
+	activeAudioStamp                  *uint32
 	report                            RTMPFailoverStatus
 	standby                           *rtmpWire
 	demoted                           *rtmpWire
@@ -50,8 +56,12 @@ func (s *rtmpSource) standbyMedia(wire *rtmpWire, kind byte, stamp uint32, data 
 		return false
 	}
 	primary := r.currentPublication()
-	if r.publisher == nil || primary == nil || f.report.PrimaryLastMediaAt.IsZero() ||
-		now.Sub(f.report.PrimaryLastMediaAt) < time.Duration(f.report.StallMS)*time.Millisecond {
+	last := f.report.PrimaryLastMediaAt
+	if f.report.StallTrack == "video" {
+		last = f.report.PrimaryLastVideoAt
+	}
+	if r.publisher == nil || primary == nil || last.IsZero() ||
+		now.Sub(last) < time.Duration(f.report.StallMS)*time.Millisecond {
 		return false
 	}
 	if f.report.StallDetectedAt.IsZero() {
@@ -63,7 +73,7 @@ func (s *rtmpSource) standbyMedia(wire *rtmpWire, kind byte, stamp uint32, data 
 		return false
 	}
 	f.report.SwitchedAt = now
-	gap := now.Sub(f.report.PrimaryLastMediaAt).Milliseconds()
+	gap := now.Sub(last).Milliseconds()
 	f.report.GapMS = &gap
 	f.oldNumber, f.primaryPublished = primary.Number, primary.PublishedAt
 	f.primaryAudio, f.primaryVideo = r.initAudio, r.initVideo
@@ -97,6 +107,9 @@ func (s *rtmpSource) recoverPrimary(wire *rtmpWire, kind byte, stamp uint32, dat
 		cacheRelayConfig(&f.primaryAudio, &f.primaryVideo, kind, stamp, data)
 		return false
 	}
+	if f.report.StallTrack == "video" && kind != relayVideo {
+		return false
+	}
 	if f.resumeLast.IsZero() || now.Sub(f.resumeLast) >= time.Duration(f.report.StallMS)*time.Millisecond {
 		if !f.resumeLast.IsZero() {
 			f.report.RecoveryRestarts++
@@ -127,8 +140,9 @@ func (f *rtmpFailover) recordSwitch(to string, decision, now time.Time) {
 		f.report.Switches = slices.Delete(f.report.Switches, 0, 1)
 	}
 	f.report.Switches = append(f.report.Switches, RTMPPublisherSwitch{
-		To: to, DecisionAt: decision, KeyframeAt: now, KeyframeWaitMS: now.Sub(decision).Milliseconds(), MediaGapMS: gap,
+		To: to, AudioBeforeMS: f.activeAudioStamp, DecisionAt: decision, KeyframeAt: now, KeyframeWaitMS: now.Sub(decision).Milliseconds(), MediaGapMS: gap,
 	})
+	f.activeAudioStamp = nil
 }
 
 func (s *rtmpSource) activatePublisher(wire *rtmpWire, stamp uint32, now, published time.Time, audio, video *relayPacket) {
@@ -139,5 +153,14 @@ func (s *rtmpSource) activatePublisher(wire *rtmpWire, stamp uint32, now, publis
 		if config != nil {
 			s.forwardPacket(config.media, stamp, config.payload, now, true)
 		}
+	}
+}
+
+// The audio positions are on the outgoing relay time base, on the same
+// playing connection. Configuration packets have no audio presentation time.
+func (f *rtmpFailover) forwardedAudio(timestamp uint32) {
+	f.activeAudioStamp = &timestamp
+	if n := len(f.report.Switches); n > 0 && f.report.Switches[n-1].AudioAfterMS == nil {
+		f.report.Switches[n-1].AudioAfterMS = &timestamp
 	}
 }

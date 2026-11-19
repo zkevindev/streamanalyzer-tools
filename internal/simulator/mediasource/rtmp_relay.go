@@ -166,6 +166,7 @@ func (s *rtmpSource) releasePublisher(wire *rtmpWire) {
 		}
 		if f := r.failover; f != nil && !f.onBackup {
 			f.report.PrimaryLastMediaAt, f.report.StallDetectedAt = time.Time{}, time.Time{}
+			f.report.PrimaryLastVideoAt, f.report.PrimaryLastAudioAt = time.Time{}, time.Time{}
 		}
 		r.publisher, r.firstStamp, r.initAudio, r.initVideo = nil, nil, nil, nil
 		if s.status.Active {
@@ -269,7 +270,14 @@ func (s *rtmpSource) forwardMedia(wire *rtmpWire, kind byte, stamp uint32, data 
 			f.activeLastMedia = now
 			if !f.onBackup {
 				f.report.PrimaryLastMediaAt = now
-				f.report.StallDetectedAt = time.Time{}
+				if kind == relayVideo {
+					f.report.PrimaryLastVideoAt = now
+				} else {
+					f.report.PrimaryLastAudioAt = now
+				}
+				if f.report.StallTrack != "video" || kind == relayVideo {
+					f.report.StallDetectedAt = time.Time{}
+				}
 			}
 		}
 	}
@@ -312,6 +320,9 @@ func (s *rtmpSource) forwardPacket(kind byte, stamp uint32, data []byte, now tim
 	}
 	packet := relayPacket{media: kind, timestamp: r.bridgeStamp + delta, payload: data}
 	r.lastRelayStamp = max(r.lastRelayStamp, packet.timestamp)
+	if r.failover != nil && kind == relayAudio && !config {
+		r.failover.forwardedAudio(packet.timestamp)
+	}
 	if config {
 		if kind == relayAudio {
 			r.initAudio = &packet

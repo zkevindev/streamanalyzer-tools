@@ -23,12 +23,21 @@ type relayVideo struct {
 type relayReader struct {
 	rtmp.DefaultHandler
 	video chan relayVideo
+	audio chan relayVideo
 }
 
 func (r *relayReader) OnVideo(timestamp uint32, payload io.Reader) error {
 	data, err := io.ReadAll(payload)
 	if err == nil {
 		r.video <- relayVideo{timestamp, data}
+	}
+	return err
+}
+
+func (r *relayReader) OnAudio(timestamp uint32, payload io.Reader) error {
+	data, err := io.ReadAll(payload)
+	if err == nil && r.audio != nil {
+		r.audio <- relayVideo{timestamp, data}
 	}
 	return err
 }
@@ -134,25 +143,29 @@ func TestRTMPSimulatorRelaysPublisherKeyframesAndReconnect(t *testing.T) {
 
 func TestRTMPFailoverWhenPrimaryKeepsConnection(t *testing.T) {
 	for _, stable := range []int{0, 700} {
-		t.Run(fmt.Sprint(stable), func(t *testing.T) { checkRTMPStableFailback(t, stable) })
+		t.Run(fmt.Sprint(stable), func(t *testing.T) { checkRTMPStableFailback(t, stable, "") })
 	}
 }
 
-func checkRTMPStableFailback(t *testing.T, stable int) {
+func TestRTMPFailoverWhenVideoStallsAndAudioContinues(t *testing.T) {
+	checkRTMPStableFailback(t, 700, "video")
+}
+
+func checkRTMPStableFailback(t *testing.T, stable int, stallTrack string) {
 	t.Helper()
 	server := testDiagnosticServer(t, t.TempDir())
 	const api = "/api/simulators/rtmp"
 	status := decodeDiagnostic[mediasource.RTMPStatus](t, diagnosticRequest(t, server, "POST", api+"/start", 201,
-		fmt.Appendf(nil, `{"fault":"publish_failover","stall_ms":500,"failback_stable_ms":%d}`, stable)))
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+		fmt.Appendf(nil, `{"fault":"publish_failover","stall_ms":500,"failback_stable_ms":%d,"stall_track":%q}`, stable, stallTrack)))
+	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Second)
 	defer cancel()
-	reader := &relayReader{video: make(chan relayVideo, 16)}
+	reader := &relayReader{video: make(chan relayVideo, 16), audio: make(chan relayVideo, 16)}
 	viewer, _, target, err := rtmp.DialAndPlay(ctx, status.URL, reader, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer viewer.Close()
-	publish := func(name string) func(uint32, []byte) {
+	publish := func(name string) (video, audio func(uint32, []byte)) {
 		t.Helper()
 		pub, err := rtmp.Dial("rtmp", target.Host, nil)
 		if err != nil {
@@ -169,12 +182,19 @@ func checkRTMPStableFailback(t *testing.T, stable int) {
 		if err := stream.Publish(&message.NetStreamPublish{PublishingName: name, PublishingType: "live"}); err != nil {
 			t.Fatal(err)
 		}
-		return func(stamp uint32, data []byte) {
+		video = func(stamp uint32, data []byte) {
 			t.Helper()
 			if err := stream.Write(6, stamp, &message.VideoMessage{Payload: bytes.NewReader(data)}); err != nil {
 				t.Fatal(err)
 			}
 		}
+		audio = func(stamp uint32, data []byte) {
+			t.Helper()
+			if err := stream.Write(5, stamp, &message.AudioMessage{Payload: bytes.NewReader(data)}); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return video, audio
 	}
 	get := func() *mediasource.RTMPIngestStatus {
 		return decodeDiagnostic[mediasource.RTMPStatus](t, diagnosticRequest(t, server, "GET", api, 200, nil)).Ingest
@@ -182,12 +202,12 @@ func checkRTMPStableFailback(t *testing.T, stable int) {
 	for get().Viewers != 1 && ctx.Err() == nil {
 		time.Sleep(10 * time.Millisecond)
 	}
-	primary := publish("test")
-	backup := publish("backup")
-	next := func(want []byte) relayVideo {
+	primary, primaryAudio := publish("test")
+	backup, backupAudio := publish("backup")
+	nextMedia := func(packets <-chan relayVideo, want []byte) relayVideo {
 		t.Helper()
 		select {
-		case packet := <-reader.video:
+		case packet := <-packets:
 			if !bytes.Equal(packet.payload, want) {
 				t.Fatalf("unexpected frame %x, expected %x", packet.payload, want)
 			}
@@ -199,6 +219,10 @@ func checkRTMPStableFailback(t *testing.T, stable int) {
 		}
 		return relayVideo{}
 	}
+	next := func(want []byte) relayVideo {
+		t.Helper()
+		return nextMedia(reader.video, want)
+	}
 	mainHeader, backupHeader := []byte{0x17, 0, 0, 0, 0, 1, 1}, []byte{0x17, 0, 0, 0, 0, 1, 2}
 	mainKey, backupKey := []byte{0x17, 1, 0, 0, 0, 0, 0, 0, 2, 0x65, 1}, []byte{0x17, 1, 0, 0, 0, 0, 0, 0, 2, 0x65, 2}
 	primary(0, mainHeader)
@@ -207,13 +231,38 @@ func checkRTMPStableFailback(t *testing.T, stable int) {
 	main := next(mainKey)
 	backup(0, backupHeader)
 	backup(10, backupKey)
-	time.Sleep(560 * time.Millisecond)
+	var lastOldAudio uint32
+	oldAudio, newAudio := []byte{0xaf, 1, 1}, []byte{0xaf, 1, 2}
+	keepAudio := func(stamp uint32) {
+		t.Helper()
+		primaryAudio(stamp, oldAudio)
+		sample := nextMedia(reader.audio, oldAudio)
+		if sample.timestamp <= lastOldAudio || sample.timestamp <= main.timestamp {
+			t.Fatalf("primary audio timeline stopped with video: %d <= %d", sample.timestamp, lastOldAudio)
+		}
+		lastOldAudio = sample.timestamp
+	}
+	if stallTrack == "video" {
+		for i := range uint32(6) {
+			keepAudio(100 + i*100)
+			time.Sleep(100 * time.Millisecond)
+		}
+	} else {
+		time.Sleep(560 * time.Millisecond)
+	}
 	backup(600, []byte{0x27, 1, 0, 0, 0, 0, 0, 0, 2, 0x41, 2})
 	for get().Failover.StallDetectedAt.IsZero() && ctx.Err() == nil {
 		time.Sleep(10 * time.Millisecond)
 	}
 	if !get().Failover.SwitchedAt.IsZero() {
 		t.Fatal("switched before a keyframe")
+	}
+	if stallTrack == "video" {
+		keepAudio(700)
+		pending := get().Failover
+		if !pending.PrimaryLastAudioAt.After(pending.StallDetectedAt) {
+			t.Fatalf("audio stopped while waiting for backup keyframe: %+v", pending)
+		}
 	}
 	backup(650, backupKey)
 	next(backupHeader)
@@ -224,7 +273,24 @@ func checkRTMPStableFailback(t *testing.T, stable int) {
 		failover.SwitchedAt.IsZero() || failover.GapMS == nil || *failover.GapMS < 500 || len(result.Sessions) != 2 {
 		t.Fatalf("invalid failover: %+v / %+v", result, failover)
 	}
-	primary(1000, mainKey)
+	if stallTrack == "video" {
+		backupAudio(680, newAudio)
+		firstNewAudio := nextMedia(reader.audio, newAudio)
+		observed := get().Failover
+		change := observed.Switches[0]
+		if !observed.PrimaryLastAudioAt.After(observed.PrimaryLastVideoAt) || *observed.GapMS <= change.MediaGapMS ||
+			firstNewAudio.timestamp <= lastOldAudio || firstNewAudio.timestamp-lastOldAudio > 150 ||
+			change.AudioBeforeMS == nil || *change.AudioBeforeMS != lastOldAudio ||
+			change.AudioAfterMS == nil || *change.AudioAfterMS != firstNewAudio.timestamp {
+			t.Fatalf("missing continuous audio and separate video gap: %+v", observed)
+		}
+		// Audio alone must not age the recovery window or trigger failback.
+		for i := range uint32(8) {
+			primaryAudio(800+i*100, oldAudio)
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+	primary(1600, mainKey)
 	backup(700, backupKey)
 	next(backupKey)
 	if stable == 0 {
@@ -235,7 +301,7 @@ func checkRTMPStableFailback(t *testing.T, stable int) {
 	mainDelta := []byte{0x27, 1, 0, 0, 0, 0, 0, 0, 2, 0x41, 1}
 	backupDelta := []byte{0x27, 1, 0, 0, 0, 0, 0, 0, 2, 0x41, 2}
 	for index := range 6 {
-		primary(1600+uint32(index)*150, mainDelta)
+		primary(2200+uint32(index)*150, mainDelta)
 		backup(1300+uint32(index)*150, backupDelta)
 		next(backupDelta)
 		time.Sleep(150 * time.Millisecond)
@@ -243,7 +309,7 @@ func checkRTMPStableFailback(t *testing.T, stable int) {
 	if got := get().Failover; len(got.Switches) != 1 || got.RecoveryRestarts != 1 || got.ActivePublisher != "backup" {
 		t.Fatalf("stable interval must wait for a keyframe: %+v", got)
 	}
-	primary(2500, mainKey)
+	primary(3100, mainKey)
 	next(mainHeader)
 	resumed := next(mainKey)
 	after := get().Failover
