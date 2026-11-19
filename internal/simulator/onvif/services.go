@@ -10,7 +10,7 @@ import (
 
 const (
 	deviceCapabilities = `<tds:Capabilities><tds:Network DiscoveryResolve="true" DiscoveryBye="false"/><tds:Security/><tds:System/></tds:Capabilities>`
-	mediaCapabilities  = `<trt:Capabilities SnapshotUri="false"><trt:StreamingCapabilities RTPMulticast="false" RTP_TCP="false" RTP_RTSP_TCP="true"/></trt:Capabilities>`
+	mediaCapabilities  = `<trt:Capabilities SnapshotUri="true"><trt:StreamingCapabilities RTPMulticast="false" RTP_TCP="false" RTP_RTSP_TCP="true"/></trt:Capabilities>`
 )
 
 func (c *camera) scopes() []string {
@@ -25,7 +25,8 @@ func (c *camera) deviceReply(op operation) (string, *soapFault) {
 	switch op.XMLName.Local {
 	case "GetServices":
 		return serviceEntry(deviceNS, c.status.DeviceURL, deviceCapabilities, op.IncludeCapability) +
-			serviceEntry(mediaNS, c.status.MediaURL, mediaCapabilities, op.IncludeCapability), nil
+			serviceEntry(mediaNS, c.status.MediaURL, mediaCapabilities, op.IncludeCapability) +
+			serviceEntry(ptzNS, c.status.PTZURL, ptzCapabilities, op.IncludeCapability), nil
 	case "GetCapabilities":
 		var parts strings.Builder
 		if len(op.Category) == 0 || slices.Contains(op.Category, "All") || slices.Contains(op.Category, "Device") {
@@ -35,6 +36,9 @@ func (c *camera) deviceReply(op operation) (string, *soapFault) {
 			parts.WriteString("<tt:Media><tt:XAddr>" + c.status.MediaURL + "</tt:XAddr>" +
 				"<tt:StreamingCapabilities><tt:RTPMulticast>false</tt:RTPMulticast><tt:RTP_TCP>false</tt:RTP_TCP>" +
 				"<tt:RTP_RTSP_TCP>true</tt:RTP_RTSP_TCP></tt:StreamingCapabilities></tt:Media>")
+		}
+		if len(op.Category) == 0 || slices.Contains(op.Category, "All") || slices.Contains(op.Category, "PTZ") {
+			parts.WriteString("<tt:PTZ><tt:XAddr>" + c.status.PTZURL + "</tt:XAddr></tt:PTZ>")
 		}
 		return "<tds:Capabilities>" + parts.String() + "</tds:Capabilities>", nil
 	case "GetDeviceInformation":
@@ -100,6 +104,10 @@ func (c *camera) mediaReply(op operation) (string, *soapFault) {
 			if config == "encoder-config-"+p.number {
 				return p.encoderConfig("trt:Configuration"), nil
 			}
+		case "GetSnapshotUri":
+			if token == p.Token {
+				return mediaURI(p.SnapshotURL), nil
+			}
 		case "GetStreamUri":
 			if token != p.Token {
 				continue
@@ -110,8 +118,7 @@ func (c *camera) mediaReply(op operation) (string, *soapFault) {
 				(protocol != "" && protocol != "UDP" && protocol != "RTSP" && protocol != "TCP") {
 				return "", &soapFault{code: "InvalidArgVal", message: "Only RTSP unicast streaming is available"}
 			}
-			return "<trt:MediaUri><tt:Uri>" + p.StreamURL + "</tt:Uri><tt:InvalidAfterConnect>false</tt:InvalidAfterConnect>" +
-				"<tt:InvalidAfterReboot>true</tt:InvalidAfterReboot><tt:Timeout>PT0S</tt:Timeout></trt:MediaUri>", nil
+			return mediaURI(p.StreamURL), nil
 		default:
 			return "", unsupportedAction()
 		}
@@ -122,9 +129,14 @@ func (c *camera) mediaReply(op operation) (string, *soapFault) {
 	return body.String(), nil
 }
 
+func mediaURI(uri string) string {
+	return "<trt:MediaUri><tt:Uri>" + uri + "</tt:Uri><tt:InvalidAfterConnect>false</tt:InvalidAfterConnect>" +
+		"<tt:InvalidAfterReboot>true</tt:InvalidAfterReboot><tt:Timeout>PT0S</tt:Timeout></trt:MediaUri>"
+}
+
 func (p *profileVideo) profile(tag string) string {
 	return fmt.Sprintf(`<%s token="%s" fixed="true"><tt:Name>%s</tt:Name>`, tag, p.Token, p.Name) +
-		p.sourceConfig("tt:VideoSourceConfiguration") + p.encoderConfig("tt:VideoEncoderConfiguration") + "</" + tag + ">"
+		p.sourceConfig("tt:VideoSourceConfiguration") + p.encoderConfig("tt:VideoEncoderConfiguration") + p.ptzConfig("tt:PTZConfiguration") + "</" + tag + ">"
 }
 
 func (p *profileVideo) sourceConfig(tag string) string {

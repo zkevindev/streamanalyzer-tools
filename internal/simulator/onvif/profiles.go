@@ -5,6 +5,7 @@ import (
 	"context"
 	_ "embed"
 	"fmt"
+	"image"
 	"io"
 	"os"
 	"os/exec"
@@ -33,13 +34,14 @@ type LocalVideo struct {
 }
 
 type Profile struct {
-	Token     string `json:"token"`
-	Name      string `json:"name"`
-	StreamURL string `json:"stream_url"`
-	Filename  string `json:"filename,omitempty"`
-	Width     int    `json:"width"`
-	Height    int    `json:"height"`
-	FPS       int    `json:"fps"`
+	Token       string `json:"token"`
+	Name        string `json:"name"`
+	SnapshotURL string `json:"snapshot_url"`
+	StreamURL   string `json:"stream_url"`
+	Filename    string `json:"filename,omitempty"`
+	Width       int    `json:"width"`
+	Height      int    `json:"height"`
+	FPS         int    `json:"fps"`
 }
 
 type profileVideo struct {
@@ -48,6 +50,9 @@ type profileVideo struct {
 	number string
 	frames []h264.AnnexB
 	avc    *format.H264
+	still  image.Image
+	jpeg   []byte
+	ptz    ptzState
 }
 
 func prepareProfiles(ctx context.Context, files [2]LocalVideo) ([]*profileVideo, error) {
@@ -59,6 +64,7 @@ func prepareProfiles(ctx context.Context, files [2]LocalVideo) ([]*profileVideo,
 		builtin.Write(testpattern.AccessUnit(i))
 	}
 	patterns := [][]byte{builtin.Bytes(), subPattern}
+	snapshots := [][]byte{mainSnapshot, subSnapshot}
 	for i, profile := range profiles {
 		raw := patterns[i]
 		if file := files[i]; file.Reader != nil {
@@ -71,6 +77,9 @@ func prepareProfiles(ctx context.Context, files [2]LocalVideo) ([]*profileVideo,
 		}
 		if err := profile.parse(raw); err != nil {
 			return nil, fmt.Errorf("%w，%s：%v", ErrConfig, profile.Name, err)
+		}
+		if err := loadSnapshot(ctx, profile, snapshots[i], files[i].Reader != nil); err != nil {
+			return nil, fmt.Errorf("%w，%s 无法生成快照：%v", ErrConfig, profile.Name, err)
 		}
 	}
 	return profiles, nil

@@ -13,6 +13,7 @@ const (
 	soapNS      = "http://www.w3.org/2003/05/soap-envelope"
 	deviceNS    = "http://www.onvif.org/ver10/device/wsdl"
 	mediaNS     = "http://www.onvif.org/ver10/media/wsdl"
+	ptzNS       = "http://www.onvif.org/ver20/ptz/wsdl"
 	schemaNS    = "http://www.onvif.org/ver10/schema"
 	errorNS     = "http://www.onvif.org/ver10/error"
 	addressNS04 = "http://schemas.xmlsoap.org/ws/2004/08/addressing"
@@ -36,6 +37,15 @@ type operation struct {
 	ProfileToken       string
 	ConfigurationToken string
 	IncludeCapability  bool
+	NodeToken          string
+	PresetToken        string
+	PresetName         string
+	Position           ptzVector
+	Translation        ptzVector
+	Velocity           ptzVector
+	Timeout            string
+	PanTilt            *bool
+	Zoom               *bool
 	Category           []string
 	StreamSetup        struct {
 		Stream    string
@@ -174,7 +184,10 @@ func (c *camera) serveSOAP(namespace string, reply func(operation) (string, *soa
 			action = ""
 		} else {
 			prefix := "tds"
-			if namespace == mediaNS {
+			switch namespace {
+			case ptzNS:
+				prefix = "tptz"
+			case mediaNS:
 				prefix = "trt"
 			}
 			name := prefix + ":" + op.XMLName.Local + "Response"
@@ -188,7 +201,7 @@ func (c *camera) serveSOAP(namespace string, reply func(operation) (string, *soa
 			}
 		}
 		ns, header := addressedReply(request.Header, action)
-		namespaces := ` xmlns:tds="` + deviceNS + `" xmlns:trt="` + mediaNS + `" xmlns:tt="` + schemaNS + `" xmlns:ter="` + errorNS + `"`
+		namespaces := ` xmlns:tds="` + deviceNS + `" xmlns:trt="` + mediaNS + `" xmlns:tptz="` + ptzNS + `" xmlns:tt="` + schemaNS + `" xmlns:ter="` + errorNS + `"`
 		if ns != "" {
 			namespaces += ` xmlns:a="` + ns + `"`
 		}

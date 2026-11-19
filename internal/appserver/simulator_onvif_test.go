@@ -255,6 +255,7 @@ func TestONVIFLocalSubProfileAndRTSPDigest(t *testing.T) {
 			t.Fatalf("wrong stream URI for %s: %s", profile.Token, soap)
 		}
 	}
+	getONVIFSnapshot(t, client, started.Profiles[1])
 	url, err := base.ParseURL(started.Profiles[1].StreamURL)
 	if err != nil {
 		t.Fatal(err)
