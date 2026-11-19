@@ -1,0 +1,41 @@
+{{define "header" -}}
+<header class="workbench-header">
+  <div class="workbench-header-inner">
+    <a class="workbench-brand" href="/"{{if eq .Page "index"}} aria-current="page"{{end}}>
+      <span class="workbench-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+      Stream Analyzer
+    </a>
+    <nav class="workbench-sections" aria-label="主导航">
+      <a class="workbench-tab" href="/diagnostics"{{if eq .Page "diagnostics"}} aria-current="page"{{else if .Diagnostics}} aria-current="true"{{end}}>排障工作台</a>
+      <a class="workbench-tab" href="/simulators"{{if eq .Page "simulators"}} aria-current="page"{{else if .Simulator}} aria-current="true"{{end}}>模拟器</a>
+    </nav>
+    {{if eq .Page "diagnostics" -}}
+    <button type="button" class="workbench-setting" id="model-settings" aria-haspopup="dialog" hidden>模型设置</button>
+    {{- end}}
+  </div>
+</header>
+{{- end}}
+
+{{define "diagnostic-tools" -}}
+<nav class="workbench-subnav diagnostic-tools" aria-label="排障工具">
+  <a id="capture-tool-link" href="/diagnostics"{{if eq .Page "diagnostics"}} aria-current="page"{{end}}>流媒体采样</a>
+  <a id="onvif-tool-link" href="/diagnostics/onvif">ONVIF 设备探测</a>
+  <a href="/realtime"{{if eq .Page "realtime"}} aria-current="page"{{end}}>实时分析</a>
+  <a href="/offline"{{if eq .Page "offline"}} aria-current="page"{{end}}>离线分析</a>
+  <a href="/hls-stats"{{if eq .Page "hls-stats"}} aria-current="page"{{end}}>HLS 分析</a>
+  <a href="/history"{{if eq .Page "history"}} aria-current="page"{{end}}>历史记录</a>
+</nav>
+{{- end}}
+
+{{define "simulator-protocols" -}}
+<nav class="workbench-subnav simulator-protocols" aria-label="模拟协议和场景">
+  <a href="/simulators"{{if eq .Page "simulators"}} aria-current="page"{{else if eq .Page "simulator-gb-platform"}} aria-current="true"{{end}}>GB28181</a>
+  <a href="/simulators/onvif"{{if eq .Page "simulator-onvif"}} aria-current="page"{{end}}>ONVIF</a>
+  <a href="/simulators/sip"{{if eq .Page "simulator-sip"}} aria-current="page"{{end}}>通用 SIP</a>
+  <a href="/simulators/hls"{{if eq .Page "simulator-hls"}} aria-current="page"{{end}}>HLS</a>
+  <a href="/simulators/media"{{if eq .Page "simulator-media"}} aria-current="page"{{end}}>HTTP-FLV／MPEG-TS</a>
+  <a href="/simulators/rtmp"{{if eq .Page "simulator-rtmp"}} aria-current="page"{{end}}>RTMP／RTMPS</a>
+  <a href="/simulators/whep"{{if eq .Page "simulator-whep"}} aria-current="page"{{end}}>WHEP</a>
+  <a href="/simulators/scenarios"{{if eq .Page "simulator-scenarios"}} aria-current="page"{{end}}>场景回归</a>
+</nav>
+{{- end}}

@@ -17,19 +17,10 @@
 </head>
 <body>
 <a class="skip" href="#main">跳转到主要内容</a>
-<header class="topbar">
-    <div class="topbar-inner">
-      <a class="wordmark" href="/"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>Stream Analyzer</a>
-      <nav aria-label="工作台导航">
-        <a href="/diagnostics" aria-current="page">排障工作台</a>
-        <a href="/simulators">模拟器</a>
-        <a href="/realtime?protocol=rtmp">RTMP 实时分析</a>
-        <a href="/hls-stats">HLS 分析</a>
-        <button type="button" id="model-settings" aria-haspopup="dialog" hidden>模型设置</button>
-      </nav>
-    </div>
-</header>
+<!-- workbench-header -->
 <main id="main">
+    <!-- diagnostic-tools -->
+    <div id="capture-workbench">
     <div class="page-heading">
         <h1>排障工作台</h1>
         <p class="muted">采样 1–300 秒 · 单次原始流上限 128 MiB</p>
@@ -56,7 +47,7 @@
                         <label for="url" id="url-label">播放地址</label>
                         <div class="sample-address">
                             <input id="url" type="url" placeholder="https://live.example.com/app/stream.flv" aria-describedby="url-hint onvif-prefill-status" required>
-                            <button id="open-onvif-discovery" type="button" class="secondary" aria-haspopup="dialog" aria-controls="onvif-discovery" hidden>ONVIF 设备探测</button>
+                            <button id="open-onvif-discovery" type="button" class="secondary" aria-controls="onvif-discovery" hidden>ONVIF 设备探测</button>
                         </div>
                         <p id="url-hint" class="field-hint muted" hidden></p>
                         <p id="onvif-prefill-status" class="field-hint" role="status"></p>
@@ -236,50 +227,52 @@
             </div>
         </section>
     </div>
-</main>
-<dialog class="panel onvif-discovery" id="onvif-discovery" aria-labelledby="onvif-title">
-  <div class="panel-heading">
-    <h2 id="onvif-title">ONVIF 摄像头与 NVR</h2>
-    <button id="close-onvif-discovery" type="button" class="secondary">关闭</button>
-  </div>
-  <p id="onvif-status" role="status">选择网卡后搜索设备，或使用手动服务地址。</p>
-  <div class="onvif-content">
-    <h3>搜索局域网设备</h3>
-    <form id="onvif-search" class="onvif-grid">
-      <div><label for="onvif-interface">本机网卡 / IPv4</label><select id="onvif-interface" required autofocus><option value="">正在读取网卡…</option></select></div>
-      <div><label for="onvif-seconds">搜索时长</label><select id="onvif-seconds"><option value="3">3 秒</option><option value="5">5 秒</option><option value="10">10 秒</option></select></div>
-      <div class="onvif-controls"><button id="onvif-search-button" type="submit" disabled>搜索设备</button><button id="onvif-stop" type="button" class="secondary" disabled>停止搜索</button></div>
-    </form>
-    <p class="onvif-note muted">通过 WS-Discovery 搜索所选网卡子网内的 IPv4 设备。跨网段或搜不到设备时，可手动填写服务地址。</p>
-    <div id="onvif-devices" class="scroll onvif-devices" role="region" tabindex="0" aria-label="ONVIF 发现设备" hidden></div>
-    <form id="onvif-query" class="onvif-step">
-      <h3>连接设备</h3>
-      <p id="onvif-selected" class="muted">尚未选择设备</p>
-      <label class="onvif-inline"><input id="onvif-manual" type="checkbox"> 手动填写 ONVIF 服务地址</label>
-      <div id="onvif-manual-fields" hidden>
-        <label for="onvif-service-url">Device 服务地址</label>
-        <input id="onvif-service-url" type="url" placeholder="http://192.168.1.10/onvif/device_service" autocomplete="off">
+    </div>
+    <section id="onvif-discovery" aria-labelledby="onvif-title" hidden>
+      <div class="page-heading">
+        <h1 id="onvif-title" tabindex="-1">ONVIF 设备探测</h1>
       </div>
-      <div id="onvif-credentials" hidden>
-        <div class="onvif-auth">
-          <div><label for="onvif-username">用户名</label><input id="onvif-username" maxlength="128" autocomplete="off"></div>
-          <div><label for="onvif-password">密码</label><input id="onvif-password" type="password" maxlength="256" autocomplete="new-password"></div>
+      <div class="panel onvif-discovery">
+        <div class="panel-heading"><h2>ONVIF 摄像头与 NVR</h2></div>
+        <p id="onvif-status" role="status">选择网卡后搜索设备，或使用手动服务地址。</p>
+        <div class="onvif-content">
+          <h3>搜索局域网设备</h3>
+          <form id="onvif-search" class="onvif-grid">
+            <div><label for="onvif-interface">本机网卡 / IPv4</label><select id="onvif-interface" required autofocus><option value="">正在读取网卡…</option></select></div>
+            <div><label for="onvif-seconds">搜索时长</label><select id="onvif-seconds"><option value="3">3 秒</option><option value="5">5 秒</option><option value="10">10 秒</option></select></div>
+            <div class="onvif-controls"><button id="onvif-search-button" type="submit" disabled>搜索设备</button><button id="onvif-stop" type="button" class="secondary" disabled>停止搜索</button></div>
+          </form>
+          <p class="onvif-note muted">通过 WS-Discovery 搜索所选网卡子网内的 IPv4 设备。跨网段或搜不到设备时，可手动填写服务地址。</p>
+          <div id="onvif-devices" class="scroll onvif-devices" role="region" tabindex="0" aria-label="ONVIF 发现设备" hidden></div>
+          <form id="onvif-query" class="onvif-step">
+            <h3>连接设备</h3>
+            <p id="onvif-selected" class="muted">尚未选择设备</p>
+            <label class="onvif-inline"><input id="onvif-manual" type="checkbox"> 手动填写 ONVIF 服务地址</label>
+            <div id="onvif-manual-fields" hidden>
+              <label for="onvif-service-url">Device 服务地址</label>
+              <input id="onvif-service-url" type="url" placeholder="http://192.168.1.10/onvif/device_service" autocomplete="off">
+            </div>
+            <div id="onvif-credentials" hidden>
+              <div class="onvif-auth">
+                <div><label for="onvif-username">用户名</label><input id="onvif-username" maxlength="128" autocomplete="off"></div>
+                <div><label for="onvif-password">密码</label><input id="onvif-password" type="password" maxlength="256" autocomplete="new-password"></div>
+              </div>
+              <p class="onvif-note muted">设备需要鉴权时填写。ONVIF 凭据仅用于本次查询。</p>
+              <button type="submit" id="onvif-read-profiles" class="secondary">读取设备 Profile</button>
+            </div>
+          </form>
+          <section id="onvif-profiles" class="onvif-step" hidden aria-labelledby="onvif-profiles-title">
+            <h3 id="onvif-profiles-title">选择采样流</h3>
+            <p id="onvif-clock" class="onvif-note muted"></p>
+            <div class="onvif-profile"><div><label for="onvif-profile">媒体 Profile</label><select id="onvif-profile"></select></div>
+            <div><label for="onvif-transport">RTSP 传输</label><select id="onvif-transport"><option value="tcp">TCP 交织</option><option value="udp">UDP 单播</option></select></div></div>
+            <label class="onvif-inline"><input id="onvif-copy-credentials" type="checkbox"> 将本次 ONVIF 凭据复制到同主机 RTSP 地址（默认不复制）</label>
+            <button type="button" id="onvif-prefill">使用此流地址</button>
+            <p class="onvif-note muted">将播放地址和传输方式填入采样表单，供你核对。</p>
+          </section>
         </div>
-        <p class="onvif-note muted">设备需要鉴权时填写。ONVIF 凭据仅用于本次查询。</p>
-        <button type="submit" id="onvif-read-profiles" class="secondary">读取设备 Profile</button>
       </div>
-    </form>
-    <section id="onvif-profiles" class="onvif-step" hidden aria-labelledby="onvif-profiles-title">
-      <h3 id="onvif-profiles-title">选择采样流</h3>
-      <p id="onvif-clock" class="onvif-note muted"></p>
-      <div class="onvif-profile"><div><label for="onvif-profile">媒体 Profile</label><select id="onvif-profile"></select></div>
-      <div><label for="onvif-transport">RTSP 传输</label><select id="onvif-transport"><option value="tcp">TCP 交织</option><option value="udp">UDP 单播</option></select></div></div>
-      <label class="onvif-inline"><input id="onvif-copy-credentials" type="checkbox"> 将本次 ONVIF 凭据复制到同主机 RTSP 地址（默认不复制）</label>
-      <button type="button" id="onvif-prefill">使用此流地址</button>
-      <p class="onvif-note muted">将播放地址和传输方式填入采样表单，供你核对。</p>
     </section>
-  </div>
-</dialog>
-<div id="onvif-backdrop" hidden></div>
+</main>
 </body>
 </html>
