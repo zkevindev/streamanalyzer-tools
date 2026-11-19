@@ -2,8 +2,10 @@ package gb28181
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"math/rand/v2"
+	"net"
 	"net/netip"
 	"strings"
 	"time"
@@ -44,8 +46,9 @@ func (m *PlatformManager) Preview(cfg PreviewConfig) error {
 	}
 	if cfg.Recovery != "" && (cfg.SkipACK || cfg.SkipConnect ||
 		(cfg.Recovery != recoveryTCP || p.cfg.SIPTransport != "tcp") &&
-			(cfg.Recovery != recoveryUDP || p.cfg.SIPTransport != "udp")) {
-		return fmt.Errorf("%w，重连场景需匹配 SIP 传输并正常发送 ACK、建立媒体连接", ErrPlatformConfig)
+			(cfg.Recovery != recoveryUDP || p.cfg.SIPTransport != "udp") &&
+			(cfg.Recovery != recoveryMedia || cfg.WindowMS < 8000)) {
+		return fmt.Errorf("%w，重连场景需匹配 SIP 传输并正常发送 ACK、建立媒体连接；媒体恢复观测窗口至少为 8000 ms", ErrPlatformConfig)
 	}
 	if p.busy {
 		return ErrActive
@@ -57,7 +60,7 @@ func (m *PlatformManager) Preview(cfg PreviewConfig) error {
 	report := newPlatformPreview(cfg, media)
 	var recovery *PlatformRecovery
 	if cfg.Recovery != "" {
-		recovery = &PlatformRecovery{Mode: cfg.Recovery, State: "waiting_media", Before: report}
+		recovery = &PlatformRecovery{Mode: cfg.Recovery, State: "waiting_media", Before: report, registrationBaseline: p.registrations}
 		p.ignoredSN = make(map[uint32]struct{})
 	}
 	var playback *platformPlayback
@@ -282,11 +285,19 @@ func (p *platform) runPreview(cfg PreviewConfig, report *PlatformPreview, media 
 	buf := make([]byte, 65535)
 	var result RTPReview
 	var assembly []byte
+	var mediaDeadline time.Time
 	var seq uint16
 	var stamp uint32
 	for {
 		n, addr, err := read(buf)
 		if err != nil {
+			var network net.Error
+			if !mediaDeadline.IsZero() && mediaDeadline.Before(deadline) && p.ctx.Err() == nil &&
+				errors.As(err, &network) && network.Timeout() {
+				p.mark(report, "media_timeout", "")
+				p.finish(report, "media_timeout", "")
+				return
+			}
 			break
 		}
 		var packet rtp.Packet
@@ -312,6 +323,14 @@ func (p *platform) runPreview(cfg PreviewConfig, report *PlatformPreview, media 
 				p.mark(report, "first_keyframe", "")
 				firstKeyframe = true
 			}
+		}
+		if cfg.watchMedia && result.Keyframes > 0 {
+			at := time.Now()
+			mediaDeadline = at.Add(mediaIdleTimeout)
+			_ = readDeadline(earlierTime(mediaDeadline, deadline))
+			p.mu.Lock()
+			p.recovery.LastRTPAt = at
+			p.mu.Unlock()
 		}
 		p.mu.Lock()
 		report.Media = PlatformMedia{Packets: result.Packets, PSUnits: result.PSUnits, PartialUnits: result.PartialUnits, VideoUnits: result.VideoUnits, Keyframes: result.Keyframes}

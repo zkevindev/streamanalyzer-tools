@@ -8,6 +8,7 @@ import (
 )
 
 type FaultConfig struct {
+	SilenceAfterMS  int  `json:"silence_after_ms,omitempty"`
 	FirstDelayMS    int  `json:"first_delay_ms"`
 	StartMS         int  `json:"start_ms"`
 	WindowMS        int  `json:"window_ms"`
@@ -21,7 +22,7 @@ func (f *FaultConfig) validate() error {
 	if f == nil {
 		return nil
 	}
-	if f.FirstDelayMS < 0 || f.FirstDelayMS > 30000 || f.StartMS < 0 || f.StartMS > 600000 ||
+	if f.SilenceAfterMS < 0 || f.SilenceAfterMS > 30000 || f.FirstDelayMS < 0 || f.FirstDelayMS > 30000 || f.StartMS < 0 || f.StartMS > 600000 ||
 		f.WindowMS < 0 || f.WindowMS > 60000 || f.DropEvery < 0 || f.DropEvery > 10000 ||
 		f.ReorderEvery < 0 || f.ReorderEvery > 10000 || f.TimestampJumpMS < -30000 || f.TimestampJumpMS > 30000 {
 		return errors.New("故障配置超出允许范围")
