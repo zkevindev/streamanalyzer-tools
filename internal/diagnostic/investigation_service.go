@@ -33,6 +33,14 @@ func investigationByID(report *Report, id string) *StallInvestigation {
 }
 
 func (s *Service) InvestigateStall(id string, request StallInvestigationRequest) (StallInvestigation, error) {
+	return s.investigateStall(id, request, false)
+}
+
+func (s *Service) investigateStallMedia(id string, request StallInvestigationRequest) (StallInvestigation, error) {
+	return s.investigateStall(id, request, true)
+}
+
+func (s *Service) investigateStall(id string, request StallInvestigationRequest, mediaOnly bool) (StallInvestigation, error) {
 	s.persistence.Lock()
 	defer s.persistence.Unlock()
 	detail, err := s.detail(id)
@@ -43,6 +51,9 @@ func (s *Service) InvestigateStall(id string, request StallInvestigationRequest)
 		return StallInvestigation{}, ErrPending
 	}
 	report := *detail.Report
+	if mediaOnly && report.AutomaticInvestigation == nil {
+		return StallInvestigation{}, ErrInvalid
+	}
 	kind, index, err := normalizePlayerIntervalRequest(request)
 	if err != nil {
 		return StallInvestigation{}, err
@@ -96,6 +107,9 @@ func (s *Service) InvestigateStall(id string, request StallInvestigationRequest)
 	}
 	previousState := *item
 	item.Status, item.ModelState, item.ModelError, item.Explanation = "queued", "pending", "", nil
+	if mediaOnly {
+		markAutomaticCaseModel(item)
+	}
 	item.UpdatedAt = time.Now().UTC()
 	item.Media = InvestigationMedia{Status: "unavailable", Reason: "等待提取源流片段和截图", Assets: []DerivedArtifact{}}
 	s.mu.Lock()
@@ -111,6 +125,15 @@ func (s *Service) InvestigateStall(id string, request StallInvestigationRequest)
 	ctx, cancel := context.WithCancel(context.Background())
 	s.investigationJobs[key] = cancel
 	s.workers.Add(1)
+	if mediaOnly {
+		if err := attachAutomaticCase(s.runDir(id), &report, *item); err != nil {
+			delete(s.investigationJobs, key)
+			cancel()
+			s.workers.Done()
+			s.mu.Unlock()
+			return StallInvestigation{}, err
+		}
+	}
 	if err := persistStallReport(s.runDir(id), &report); err != nil {
 		delete(s.investigationJobs, key)
 		cancel()
@@ -120,13 +143,19 @@ func (s *Service) InvestigateStall(id string, request StallInvestigationRequest)
 	}
 	s.mu.Unlock()
 	result := *item
-	go s.runStallInvestigation(ctx, id, result, report, key, cancel)
+	go s.runStallInvestigation(ctx, id, result, report, key, cancel, mediaOnly)
 	return result, nil
 }
 
-func (s *Service) runStallInvestigation(ctx context.Context, runID string, item StallInvestigation, report Report, key string, cancel context.CancelFunc) {
+func (s *Service) runStallInvestigation(ctx context.Context, runID string, item StallInvestigation, report Report, key string, cancel context.CancelFunc, mediaOnly bool) {
 	defer s.workers.Done()
 	defer func() { cancel(); s.mu.Lock(); delete(s.investigationJobs, key); s.mu.Unlock() }()
+	save := func() error {
+		if mediaOnly {
+			markAutomaticCaseModel(&item)
+		}
+		return s.saveStallItem(runID, item)
+	}
 	select {
 	case s.investigationSlots <- struct{}{}:
 		defer func() { <-s.investigationSlots }()
@@ -134,11 +163,11 @@ func (s *Service) runStallInvestigation(ctx context.Context, runID string, item 
 		item.Status = "canceled"
 		item.ModelState = "failed"
 		item.ModelError = "补查已停止"
-		_ = s.saveStallItem(runID, item)
+		_ = save()
 		return
 	}
 	item.Status = "running"
-	if err := s.saveStallItem(runID, item); err != nil {
+	if err := save(); err != nil {
 		return
 	}
 	if !sourceArtifactMatches(s.runDir(runID), dumpName(report.Manifest.Protocol), report.Manifest.Stream, maxStreamBytes) ||
@@ -146,19 +175,19 @@ func (s *Service) runStallInvestigation(ctx context.Context, runID string, item 
 		report.Manifest.Player == nil || !sourceArtifactMatches(s.runDir(runID), playerName, *report.Manifest.Player, maxPlayerBytes) {
 		item.Status, item.ModelState, item.ModelError = "failed", "failed", "原始流、时间线或播放器记录未通过 SHA-256 校验，无法补查"
 		item.Media.Reason = "原始采样校验失败"
-		_ = s.saveStallItem(runID, item)
+		_ = save()
 		return
 	}
 	correlation, err := correlatePlayerInterval(s.runDir(runID), report, item.ID, item.IntervalKind, item.StallIndex)
 	if err != nil {
 		item.Status, item.ModelState, item.ModelError = "failed", "failed", "无法从原始流和时间线重建补查证据"
 		item.Media.Reason = "时序证据重建失败，已保留原始数据"
-		_ = s.saveStallItem(runID, item)
+		_ = save()
 		return
 	}
 	item.Correlation = correlation
 	item.Assessment = assessStall(item)
-	if err := s.saveStallItem(runID, item); err != nil {
+	if err := save(); err != nil {
 		return
 	}
 	if ctx.Err() == nil {
@@ -166,10 +195,18 @@ func (s *Service) runStallInvestigation(ctx context.Context, runID string, item 
 	}
 	if ctx.Err() != nil {
 		item.Status, item.ModelState, item.ModelError = "canceled", "failed", "补查已停止"
-		_ = s.saveStallItem(runID, item)
+		_ = save()
 		return
 	}
-	if err := s.saveStallItem(runID, item); err != nil {
+	if err := save(); err != nil {
+		return
+	}
+	if mediaOnly {
+		item.Status = "complete"
+		if item.Media.Status != "ready" {
+			item.Status = "partial"
+		}
+		_ = save()
 		return
 	}
 	s.investigationModel.Lock()
@@ -413,6 +450,9 @@ func persistStallReport(dir string, report *Report) error {
 	report.Manifest.StallEvidence = &artifact
 	report.Manifest.Version = max(report.Manifest.Version, investigationSchemaVersion)
 	mergeStallFindings(report)
+	if err := invalidateAutomaticSummary(dir, report); err != nil {
+		return err
+	}
 	if err := os.Remove(filepath.Join(dir, explanationName)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}

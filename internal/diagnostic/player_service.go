@@ -99,6 +99,7 @@ func (s *Service) SavePlayerRecording(id, token string, record PlayerRecording) 
 	defer func() {
 		if err == nil && record.Complete {
 			session.Close()
+			s.maybeStartAutomaticInvestigation(id)
 		}
 	}()
 

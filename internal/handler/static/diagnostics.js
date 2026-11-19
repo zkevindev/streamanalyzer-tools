@@ -217,6 +217,8 @@ const renditionLabels = { main: '主路', audio: '独立音频' };
 let desktop = false;
 let currentID = '';
 let currentStatus = '';
+let currentMode = '';
+let currentAutomaticRunning = false;
 let activePoll;
 let runs = [];
 let currentModel = null;
@@ -229,13 +231,14 @@ const selectedStalls = new Map();
 const selectedPresentationGaps = new Map();
 const selectedIntervalKinds = new Map();
 const pendingStallRequests = new Set();
+const pendingAutomaticRequests = new Set();
 const pendingStallExplanations = new Set();
 const pendingStallStops = new Set();
 const openPlayerNetworkDetails = new Set();
 let currentReport;
 const investigationStates = { queued: '等待补查', running: '补查中', complete: '补查完成', partial: '保留部分结果', failed: '补查失败', canceled: '补查已停止' };
 const investigationMediaStates = { ready: '片段与截图已提取', partial: '媒体产物部分可用', unavailable: '媒体产物不可用', failed: '媒体提取失败' };
-const investigationModelStates = { pending: '正在结合时序证据生成建议…', complete: '已生成建议', unconfigured: '尚未配置大模型，可在模型设置中配置后生成建议。', failed: '模型建议生成失败，可重试。', changed: '模型配置已变化，可使用当前模型重新生成建议。' };
+const investigationModelStates = { not_requested: '未单独解读 · 见整体汇总', pending: '正在结合时序证据生成建议…', complete: '已生成建议', unconfigured: '尚未配置大模型，可在模型设置中配置后生成建议。', failed: '模型建议生成失败，可重试。', changed: '模型配置已变化，可使用当前模型重新生成建议。' };
 const investigationAlignments = { receiver_rtp_estimate: '接收端 RTP 时钟与播放器媒体时间估算', media_clock: '播放器媒体时间对齐', player_clock: '播放器媒体时间对齐', player_clock_estimate: '根据播放器媒体时间估算', arrival_estimate: '按接收时序估算', independent_capture: '独立采样连接参考', independent_capture_reference: '独立连接采样参考' };
 
 function playerSnapshotBody(recording) {
@@ -1320,6 +1323,7 @@ function renderInvestigationModel(item) {
     const vision = item.explanation?.input_evidence?.mode === 'vision';
     block.append(element('h5', vision ? '模型建议（截图与时序证据）' : item.media?.rtsp ? '模型建议（时序与重建证据）' : '模型建议（时序证据）'));
     if (item.explanation) block.append(renderModelInputEvidence(item));
+    else if (item.model_state === 'not_requested') { const note = element('p', '未单独解读 · ', 'timing-note muted'); const link = element('a', '见整体汇总'); link.href = '#report-model-heading'; note.append(link); block.append(note); }
     else block.append(element('p', currentModel?.image_input === 'text' ? '当前补查设为仅文本，截图供人工对照。' : '当前补查将按模型设置使用可用截图与时序；图片不支持时回退文本，实际输入以解读记录为准。', 'timing-note muted'));
     if (item.explanation) {
         block.append(element('p', `解读来源 ${modelLabel(item.explanation)}`, 'model-source muted'), element('p', item.explanation.summary));
@@ -1337,10 +1341,10 @@ function renderInvestigationModel(item) {
             list.append(row);
         }
         if (list.childElementCount) block.append(list);
-    } else block.append(element('p', investigationModelStates[item.model_state] || '等待模型建议。', 'timing-note muted'));
+    } else if (item.model_state !== 'not_requested') block.append(element('p', investigationModelStates[item.model_state] || '等待模型建议。', 'timing-note muted'));
     if (item.model_error) block.append(element('p', item.model_error, 'timing-note muted'));
     if (item.status !== 'queued' && item.status !== 'running') {
-        const button = element('button', !item.assessment ? '生成排查与模型建议' : item.explanation ? '用当前模型重新生成建议' : '生成模型建议', 'secondary');
+        const button = element('button', item.model_state === 'not_requested' ? '单独解读本次异常' : !item.assessment ? '生成排查与模型建议' : item.explanation ? '用当前模型重新生成建议' : '生成模型建议', 'secondary');
         button.type = 'button';
         button.dataset.stallExplain = item.id;
         button.disabled = pendingStallExplanations.has(`${currentID}/${item.id}`);
@@ -1438,6 +1442,62 @@ function renderInvestigation(item) {
     return card;
 }
 
+const automaticStateLabels = { waiting_player: '等待播放器记录完成', queued: '等待处理', investigating: '正在提取异常证据', summarizing: '正在生成整体汇总', complete: '自动流程完成', partial: '保留部分结果', unconfigured: '媒体补查已完成，模型尚未配置', failed: '自动流程未完成', canceled: '自动流程已停止', interrupted: '任务因服务中断停止' };
+const automaticSummaryLabels = { pending: '尚未生成', complete: '已生成', unconfigured: '未配置模型', failed: '生成失败', canceled: '已停止', not_requested: '尚未请求' };
+const automaticActiveStates = new Set(['waiting_player', 'queued', 'investigating', 'summarizing']);
+function automaticWorkflowActive() { return currentAutomaticRunning; }
+function automaticSelectionCase(report, selection) { return (report.stall_investigations || []).find((item) => item.id === selection.case_id); }
+function automaticSelectionMedia(item) {
+    if (!item) return '尚未创建案例';
+    if (['queued', 'running'].includes(item.status)) return '等待媒体提取';
+    return investigationMediaStates[item.media?.status] || '未记录';
+}
+function renderAutomaticInvestigation(report) {
+    const section = node('automatic-investigation'), content = node('automatic-investigation-content'), automatic = report.automatic_investigation;
+    if (!section || !content) return;
+    section.hidden = !automatic;
+    if (!automatic) { content.replaceChildren(); return; }
+    const active = automaticWorkflowActive(), imported = currentMode === 'replay' && !active;
+    const block = document.createDocumentFragment();
+    block.append(element('p', `${active ? '当前阶段' : '记录阶段'} · ${automaticStateLabels[automatic.state] || '未记录阶段'}`, 'automatic-stage'));
+    if (imported) block.append(element('p', '已导入记录，不自动续跑；任务阶段按证据保留。只有点击重新运行才会开始新的处理。', 'timing-note muted automatic-replay-note'));
+    else if (!active && automaticActiveStates.has(automatic.state)) block.append(element('p', '这是已保存的任务快照，当前没有后台任务运行。可按当前配置重新运行。', 'timing-note muted'));
+    if (automatic.reason) block.append(element('p', automatic.reason, 'timing-note muted'));
+    if (active && automatic.state === 'waiting_player') block.append(element('p', '采样已结束，最多等待 30 秒保存完整播放器记录，再选择补查区间。', 'timing-note muted'));
+    const planned = automatic.candidate_count > 0 || (automatic.selected || []).length > 0 || (automatic.player_revision > 0 && ['investigating', 'summarizing', 'complete', 'partial', 'unconfigured'].includes(automatic.state));
+    const selected = automatic.selected || [];
+    const metrics = element('dl', '', 'metrics automatic-metrics');
+    for (const [label, value] of [
+        ['候选同期异常区间', planned ? String(automatic.candidate_count) : '尚未记录选择结果'],
+        ['自动选择', planned || selected.length ? `${selected.length} 个 / 最多 3 个` : '尚未记录选择结果'],
+        ['播放器记录', automatic.player_revision > 0 ? `修订 #${automatic.player_revision}` : '未完成'],
+        ['整体汇总状态', automaticSummaryLabels[automatic.model_state] || '尚未记录'],
+    ]) { const row = element('div', ''); row.append(element('dt', label), element('dd', value)); metrics.append(row); }
+    block.append(metrics, element('p', '按采样内重合时长优先选择，跳过与已选区间重合的候选，最多提取 3 个案例；原始观测区间保持不变。候选数与选择数不是新的卡顿次数，单次案例只提取证据，模型统一汇总一次。', 'timing-note muted'));
+    if (planned && automatic.candidate_count === 0) block.append(element('p', '未选出可补查的同期异常；整体汇总仍可使用本次报告指标与规则证据。', 'timing-note muted'));
+    if (selected.length) {
+        const elapsed = report.manifest?.observation?.elapsed_ms ?? 0;
+        const table = renderTable(['观测类型', '原始区间', '采样内重合', '媒体产物', '关联案例'], selected.slice(0, 3).map((selection) => {
+            const interval = selection.interval || {}, overlap = Math.max(0, Math.min(interval.end_ms ?? 0, elapsed) - Math.max(0, interval.start_ms ?? 0));
+            return [intervalTitle(selection.interval_kind || 'buffering', selection.interval_index), `${time(interval.start_ms)}–${time(interval.end_ms)}`, time(overlap), automaticSelectionMedia(automaticSelectionCase(report, selection)), selection.case_id || '尚未创建'];
+        }));
+        table.querySelectorAll('tbody tr').forEach((row, index) => { const id = selected[index].case_id; if (!id) return; const cell = row.lastElementChild; cell.textContent = ''; const link = element('a', id); link.href = '#investigation-' + encodeURIComponent(id); link.addEventListener('click', (event) => { event.preventDefault(); showFinding('investigation-' + id); }); cell.append(link); });
+        block.append(table);
+    }
+    const actions = element('div', '', 'tool-row automatic-actions'), busy = pendingAutomaticRequests.has(currentID);
+    const button = element('button', busy ? '正在提交…' : active ? '停止自动流程' : '按当前配置重新运行', 'secondary'); button.type = 'button'; button.disabled = busy; button.dataset.automaticAction = active ? 'stop' : 'retry';
+    const runID = currentID;
+    button.addEventListener('click', async () => {
+        if (pendingAutomaticRequests.has(runID)) return; pendingAutomaticRequests.add(runID); button.disabled = true;
+        try { await api(runPath(runID) + '/automatic/' + (active ? 'stop' : 'retry'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); if (currentID === runID) { message(active ? '已请求停止自动流程，正在保留已获得的证据。' : '已请求按当前配置运行自动补查与整体汇总。'); await refreshDetail(runID); } }
+        catch (error) { if (currentID === runID) message(error.message, true); }
+        finally { pendingAutomaticRequests.delete(runID); if (currentID === runID) void refreshDetail(runID); }
+    });
+    actions.append(button);
+    const summary = element('a', '查看整体汇总', 'button secondary'); summary.href = '#report-model-heading'; actions.append(summary); block.append(actions);
+    content.replaceChildren(block);
+}
+
 function renderInvestigationAction(report, kind, intervals, buttonID, statusID) {
     const button = node(buttonID);
     const status = node(statusID);
@@ -1446,13 +1506,13 @@ function renderInvestigationAction(report, kind, intervals, buttonID, statusID) 
     const selected = intervalSelection(kind).get(currentID) || 1;
     const existing = items.find((item) => investigationIntervalKind(item) === kind && item.stall_index === selected);
     const playerPending = activePlayer?.id === currentID || Array.from(finalizingPlayers).some((player) => player.id === currentID) || ['recording', 'awaiting'].includes(report?.player?.state);
-    const busy = pendingStallRequests.has(currentID);
+    const busy = pendingStallRequests.has(currentID) || automaticWorkflowActive();
     const retry = existing && !['queued', 'running'].includes(existing.status) && !existing.media?.assets?.length;
     const full = !existing && items.length >= 8;
     button.disabled = !intervals.length || currentStatus === 'running' || playerPending || busy || full || Boolean(existing && !retry);
     const label = kind === 'presentation_gap' ? `第 ${selected} 个呈帧回调间隔` : `第 ${selected} 次卡顿`;
     button.textContent = !intervals.length ? (kind === 'presentation_gap' ? '暂无可补查回调间隔' : '暂无缓冲卡顿区间') : busy ? '正在提交…' : retry ? `重新补查${label}` : existing ? (investigationStates[existing.status] || '已补查') : `补查${label}`;
-    status.textContent = !intervals.length ? (kind === 'presentation_gap' ? '当前没有可补查的呈帧回调间隔。' : '当前没有可补查的缓冲卡顿区间。') : full ? '本报告已达到 8 个补查案例上限，可查看或重新补查已有案例。' : playerPending || currentStatus === 'running' ? `采样和播放器记录保存完成后，可以选择${intervalName(kind)}补查证据。` : existing ? `${label} ${investigationStates[existing.status] || existing.status}。` : `已选择${label}。补查会关联时序并提取异常附近的源流媒体。`;
+    status.textContent = automaticWorkflowActive() ? '自动流程正在处理关键异常，完成后仍可手动补充其他区间。' : !intervals.length ? (kind === 'presentation_gap' ? '当前没有可补查的呈帧回调间隔。' : '当前没有可补查的缓冲卡顿区间。') : full ? '本报告已达到 8 个补查案例上限，可查看或重新补查已有案例。' : playerPending || currentStatus === 'running' ? `采样和播放器记录保存完成后，可以选择${intervalName(kind)}补查证据。` : existing ? `${label} ${investigationStates[existing.status] || existing.status}。` : `已选择${label}。补查会关联时序并提取异常附近的源流媒体。`;
 }
 
 function renderStallInvestigations(report) {
@@ -1477,9 +1537,9 @@ function renderStallInvestigations(report) {
         if (!previous || previous.dataset.signature !== card.dataset.signature) card.open = previous?.open ?? isSelected;
         card.classList.toggle('selected', isSelected);
         const explain = card.querySelector('[data-stall-explain]');
-        if (explain) explain.disabled = pendingStallExplanations.has(`${currentID}/${item.id}`);
+        if (explain) explain.disabled = automaticWorkflowActive() || pendingStallExplanations.has(`${currentID}/${item.id}`);
         const stop = card.querySelector('[data-stall-stop]');
-        if (stop) stop.disabled = pendingStallStops.has(`${currentID}/${item.id}`);
+        if (stop) stop.disabled = automaticWorkflowActive() || pendingStallStops.has(`${currentID}/${item.id}`);
         return card;
     }));
 }
@@ -1519,6 +1579,7 @@ function renderReport(report) {
     if (!protocols[protocol]?.nativeRTSP && m.audio_codecs?.length) values.push(['音频编码', m.audio_codecs.join(' / ')]);
     values.push([protocols[protocol]?.dump || '原始流', bytes(report.manifest.stream.bytes)]);
     renderMetrics('metrics', values);
+    renderAutomaticInvestigation(report);
     renderSamplingTiming(report, requests);
     renderRTSPReport(report);
     renderPlayerReport(report.player, observed.elapsed_ms);
@@ -1559,6 +1620,8 @@ function renderModelStatus() {
         (!currentModel.model || result.model === currentModel.model) && result.report_input_evidence?.requested_mode === (currentModel.image_input || 'auto');
     button.hidden = !currentModel || (Boolean(cached) && !desktop);
     button.textContent = result ? '用当前模型重新解读' : '生成解读';
+    if (automaticWorkflowActive()) { button.disabled = true; button.dataset.automaticDisabled = 'true'; node('model-status').textContent = currentModel ? '自动流程将统一生成整体汇总；也可停止自动流程后手动解读。' : '自动流程正在提取证据；未配置模型时会保留结果，可稍后生成整体汇总。'; return; }
+    if (button.dataset.automaticDisabled) { delete button.dataset.automaticDisabled; button.disabled = false; }
     if (button.disabled) return;
     node('model-status').textContent = currentModel
         ? (button.hidden ? '' : `当前模型 ${modelLabel(currentModel)}。${currentModel.image_input === 'text' ? '汇总与补查仅发送时序文本。' : '汇总按关键异常选择最多 3 张截图与时序；图片不支持时回退文本。'}`)
@@ -1675,6 +1738,8 @@ function renderDetail(detail) {
     const mode = detail.mode === 'replay' ? '复盘结果' : '采样结果';
     node('result-heading').textContent = `${protocolLabel(protocol, detail.origin)} ${mode}`;
     currentStatus = detail.status;
+    currentMode = detail.mode || '';
+    currentAutomaticRunning = detail.automatic_running === true;
     node('stop').hidden = currentStatus !== 'running';
     node('report').hidden = !detail.report;
     const observed = detail.report?.manifest.observation;
@@ -1716,12 +1781,12 @@ async function refreshDetail(id) {
         } else {
             if (activePlayer?.id === id) completePlayback(activePlayer, detail.report?.manifest.observation.end_reason);
             if (previousStatus === 'running') await refreshHistory();
-            if (detail.report?.stall_investigations?.some((item) => ['queued', 'running'].includes(item.status))) activePoll = setTimeout(() => refreshDetail(id), 850);
+            if (detail.automatic_running || (detail.mode !== 'replay' && detail.report?.stall_investigations?.some((item) => ['queued', 'running'].includes(item.status)))) activePoll = setTimeout(() => refreshDetail(id), 850);
         }
     } catch (err) {
         if (id !== currentID || request !== detailRequest) return;
         message(err.message, true);
-        if (activePlayer?.id === id || currentReport?.stall_investigations?.some((item) => ['queued', 'running'].includes(item.status))) activePoll = setTimeout(() => refreshDetail(id), 1000);
+        if (currentAutomaticRunning || activePlayer?.id === id || (currentMode !== 'replay' && currentReport?.stall_investigations?.some((item) => ['queued', 'running'].includes(item.status)))) activePoll = setTimeout(() => refreshDetail(id), 1000);
     }
 }
 
@@ -1730,6 +1795,8 @@ function selectRun(id) {
     if (node('player-preview').dataset.runId !== id) node('player-preview').hidden = true;
     currentID = id;
     currentStatus = '';
+    currentMode = '';
+    currentAutomaticRunning = false;
     currentReport = null;
     node('stall-investigation-results').replaceChildren();
     history.replaceState(null, '', '#' + id);
@@ -1758,6 +1825,8 @@ function bindForm(id, submit) {
     });
 }
 
+function updateAutomaticOption() { const playback = node('analyze-playback'); node('auto-investigate').disabled = playback.disabled || !playback.checked; }
+node('analyze-playback').addEventListener('change', updateAutomaticOption);
 node('protocol').addEventListener('change', () => {
     const protocol = node('protocol').value;
     const selected = protocols[protocol];
@@ -1770,9 +1839,11 @@ node('protocol').addEventListener('change', () => {
     playback.disabled = false;
     node('playback-capability-note').hidden = !selected.nativeRTSP;
     updateRTSPTransport();
+    updateAutomaticOption();
 });
 node('rtsp-transport').addEventListener('change', updateRTSPTransport);
 updateRTSPTransport();
+updateAutomaticOption();
 const launchOptions = new URLSearchParams(location.search);
 const simulatedHLS = launchOptions.get('hls_simulator');
 let simulatorURL = '';
@@ -1783,6 +1854,7 @@ if (simulatedHLS && /^[a-f0-9-]{36}$/.test(simulatedHLS)) {
     node('url').value = simulatorURL;
     node('seconds').value = '30';
     node('analyze-playback').checked = true;
+    updateAutomaticOption();
 }
 
 const simulatedMedia = launchOptions.get('media_simulator');
@@ -1857,6 +1929,8 @@ bindForm('sample', async () => {
     const startedAtPerformanceMS = performance.now();
     const seconds = node('seconds').valueAsNumber;
     const playback = !node('analyze-playback').disabled && node('analyze-playback').checked;
+    updateAutomaticOption();
+    const autoInvestigate = playback && node('auto-investigate').checked;
     const url = node('url').value.trim();
     const localSimulator = Boolean(simulatorURL && simulatorURL === url);
     const hlsRecovery = localSimulator && launchOptions.get('hls_recovery') === '1';
@@ -1864,7 +1938,7 @@ bindForm('sample', async () => {
     const hlsLowLatency = localSimulator && launchOptions.get('hls_ll') === '1';
     const run = await api('/runs', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ protocol: node('protocol').value, transport: protocols[node('protocol').value]?.nativeRTSP ? node('rtsp-transport').value : undefined, url, seconds, playback }),
+        body: JSON.stringify({ protocol: node('protocol').value, transport: protocols[node('protocol').value]?.nativeRTSP ? node('rtsp-transport').value : undefined, url, seconds, playback, auto_investigate: autoInvestigate }),
     });
     stopPlayback(activePlayer);
     startPlayback(run, startedAt, startedAtPerformanceMS, seconds, hlsRecovery, hlsABR, hlsLowLatency);

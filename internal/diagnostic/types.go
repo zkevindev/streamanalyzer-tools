@@ -53,11 +53,12 @@ var (
 )
 
 type SampleRequest struct {
-	URL       string `json:"url"`
-	Seconds   int    `json:"seconds"`
-	Protocol  string `json:"protocol,omitempty"`
-	Transport string `json:"transport,omitempty"`
-	Playback  bool   `json:"playback,omitempty"`
+	AutoInvestigate bool   `json:"auto_investigate,omitempty"`
+	URL             string `json:"url"`
+	Seconds         int    `json:"seconds"`
+	Protocol        string `json:"protocol,omitempty"`
+	Transport       string `json:"transport,omitempty"`
+	Playback        bool   `json:"playback,omitempty"`
 }
 
 type Run struct {
@@ -130,14 +131,15 @@ type HTTPHeader struct {
 }
 
 type Manifest struct {
-	Version       int         `json:"version"`
-	Protocol      string      `json:"protocol"`
-	Observation   Observation `json:"observation"`
-	Stream        Artifact    `json:"stream"`
-	Timeline      Artifact    `json:"timeline"`
-	Player        *Artifact   `json:"player,omitempty"`
-	StallEvidence *Artifact   `json:"stall_evidence,omitempty"`
-	PlayerNetwork *Artifact   `json:"player_network,omitempty"`
+	AutomaticInvestigation *Artifact   `json:"automatic_investigation,omitempty"`
+	Version                int         `json:"version"`
+	Protocol               string      `json:"protocol"`
+	Observation            Observation `json:"observation"`
+	Stream                 Artifact    `json:"stream"`
+	Timeline               Artifact    `json:"timeline"`
+	Player                 *Artifact   `json:"player,omitempty"`
+	StallEvidence          *Artifact   `json:"stall_evidence,omitempty"`
+	PlayerNetwork          *Artifact   `json:"player_network,omitempty"`
 }
 
 // Event locates protocol evidence in the dump. RTMP and FLV events use byte
@@ -189,23 +191,25 @@ type Finding struct {
 }
 
 type Report struct {
-	modelScope          string
-	Requests            []HTTPRequestTiming  `json:"requests,omitempty"`
-	RequestsTruncated   int                  `json:"requests_truncated,omitempty"`
-	RuleVersion         string               `json:"rule_version"`
-	Manifest            Manifest             `json:"manifest"`
-	Metrics             Metrics              `json:"metrics"`
-	HLS                 *HLSMetrics          `json:"hls,omitempty"`
-	MPEGTS              *MPEGTSMetrics       `json:"mpegts,omitempty"`
-	RTSP                *RTSPMetrics         `json:"rtsp,omitempty"`
-	Findings            []Finding            `json:"findings"`
-	Player              *PlayerReport        `json:"player,omitempty"`
-	PlayerNetwork       *PlayerNetworkReport `json:"player_network,omitempty"`
-	StallInvestigations []StallInvestigation `json:"stall_investigations,omitempty"`
+	AutomaticInvestigation *AutomaticInvestigation `json:"automatic_investigation,omitempty"`
+	modelScope             string
+	Requests               []HTTPRequestTiming  `json:"requests,omitempty"`
+	RequestsTruncated      int                  `json:"requests_truncated,omitempty"`
+	RuleVersion            string               `json:"rule_version"`
+	Manifest               Manifest             `json:"manifest"`
+	Metrics                Metrics              `json:"metrics"`
+	HLS                    *HLSMetrics          `json:"hls,omitempty"`
+	MPEGTS                 *MPEGTSMetrics       `json:"mpegts,omitempty"`
+	RTSP                   *RTSPMetrics         `json:"rtsp,omitempty"`
+	Findings               []Finding            `json:"findings"`
+	Player                 *PlayerReport        `json:"player,omitempty"`
+	PlayerNetwork          *PlayerNetworkReport `json:"player_network,omitempty"`
+	StallInvestigations    []StallInvestigation `json:"stall_investigations,omitempty"`
 }
 
 type Detail struct {
 	Run
+	AutomaticRunning    bool         `json:"automatic_running,omitempty"`
 	RTSPReplayAvailable bool         `json:"rtsp_replay_available,omitempty"`
 	FLVReplayAvailable  bool         `json:"flv_replay_available,omitempty"`
 	DumpName            string       `json:"dump_name,omitempty"`

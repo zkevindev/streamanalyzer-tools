@@ -23,6 +23,7 @@ func RegisterDiagnosticRoutes(r *gin.Engine, service *diagnostic.Service) {
 	api := r.Group("/api/diagnostics", localDiagnostics)
 	RegisterDiagnosticPlayerMedia(api, service)
 	RegisterStallInvestigationRoutes(api, service)
+	RegisterAutomaticInvestigationRoutes(api, service)
 	api.POST("/runs/:id/player", func(c *gin.Context) {
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 512<<10)
 		decoder := json.NewDecoder(c.Request.Body)
