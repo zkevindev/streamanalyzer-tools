@@ -39,6 +39,9 @@ type Service struct {
 	close              sync.Once
 	closeErr           error
 	imports            chan struct{}
+	flvReplaySlots     chan struct{}
+	flvReplayContext   context.Context
+	cancelFLVReplays   context.CancelFunc
 	persistence        sync.RWMutex
 	players            map[string]*playerSessionState
 	investigationJobs  map[string]context.CancelFunc
@@ -69,7 +72,7 @@ func Open(baseDir string, model Explainer) (*Service, error) {
 
 	s := &Service{
 		root: root, db: db, client: captureClient(),
-		active: make(map[string]context.CancelFunc), imports: make(chan struct{}, 2),
+		active: make(map[string]context.CancelFunc), imports: make(chan struct{}, 2), flvReplaySlots: make(chan struct{}, 8),
 		players:           make(map[string]*playerSessionState),
 		investigationJobs: make(map[string]context.CancelFunc), investigationSlots: make(chan struct{}, 2),
 	}
@@ -82,6 +85,7 @@ func Open(baseDir string, model Explainer) (*Service, error) {
 		db.Close()
 		return nil, err
 	}
+	s.flvReplayContext, s.cancelFLVReplays = context.WithCancel(context.Background())
 	return s, nil
 }
 
@@ -121,6 +125,7 @@ func initRunIndex(db *sql.DB) error {
 
 func (s *Service) Close() error {
 	s.close.Do(func() {
+		s.StopFLVReplays()
 		s.SetModel(nil)
 		s.mu.Lock()
 		s.closed = true
@@ -401,6 +406,7 @@ func (s *Service) detail(id string) (Detail, error) {
 	}
 	detail.Report = &report
 	detail.DumpName = dumpName(run.Protocol)
+	detail.FLVReplayAvailable = canReplayFLV(report.Manifest)
 	explanation, err := readJSONFile[Explanation](dir, explanationName)
 	switch {
 	case err == nil:

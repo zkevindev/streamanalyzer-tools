@@ -1457,6 +1457,10 @@ function renderDetail(detail) {
     node('dump').textContent = protocols[protocol]?.dump || '原始流';
     node('dump').download = detail.dump_name || '';
     node('dump').hidden = detail.report.manifest.stream.bytes === 0;
+    const replay = node('flv-replay');
+    replay.hidden = !detail.flv_replay_available;
+    replay.dataset.url = detail.flv_replay_available ? new URL(base + '/replay.flv', location.origin).href : '';
+    replay.dataset.seconds = Math.min(300, Math.max(1, Math.ceil((observed.elapsed_ms + 1000) / 1000)));
     renderReport(detail.report);
     renderExplanation(detail.explanation);
 }
@@ -1571,6 +1575,17 @@ if (launchOptions.get('rtmp_simulator') === '1') {
         node('seconds').value = '10';
     }).catch(() => {});
 }
+node('flv-replay').addEventListener('click', () => {
+    const replay = node('flv-replay');
+    if (!replay.dataset.url) return;
+    node('protocol').value = 'http-flv';
+    node('protocol').dispatchEvent(new Event('change'));
+    node('url').value = replay.dataset.url;
+    node('seconds').value = replay.dataset.seconds;
+    node('url').focus();
+    node('url').select();
+    message('已填入本机回放地址，可复制到其他本机播放器。每个连接从头按原采样节奏回放。');
+});
 bindForm('sample', async () => {
     const startedAt = Date.now();
     const startedAtPerformanceMS = performance.now();
