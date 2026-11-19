@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WHEP 模拟器 · Stream Analyzer</title>
+  <link rel="stylesheet" href="/static/workbench-theme.css">
+  <link rel="stylesheet" href="/static/diagnostics.css">
+  <link rel="stylesheet" href="/static/simulators.css">
+  <script src="/static/simulator-whep.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">跳转到主要内容</a>
+  <header class="topbar"><div class="topbar-inner">
+    <a class="wordmark" href="/"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>Stream Analyzer</a>
+    <nav aria-label="主导航"><a href="/diagnostics">排障工作台</a><a href="/simulators" aria-current="page">模拟器</a></nav>
+  </div></header>
+  <main id="main" tabindex="-1">
+    <nav class="simulator-protocols" aria-label="模拟协议">
+      <a href="/simulators">GB28181</a><a href="/simulators/onvif">ONVIF</a><a href="/simulators/sip">通用 SIP</a>
+      <a href="/simulators/hls">HLS</a><a href="/simulators/media">HTTP-FLV / MPEG-TS</a><a href="/simulators/rtmp">RTMP／RTMPS</a>
+      <a href="/simulators/whep" aria-current="page">WHEP</a><a href="/simulators/scenarios">场景回归</a>
+    </nav>
+    <div class="page-heading"><h1>WHEP 模拟器</h1></div>
+    <p id="notice" class="error" role="alert" hidden></p>
+    <div class="simulator-grid">
+      <section class="panel" aria-labelledby="config-title">
+        <div class="panel-heading"><h2 id="config-title">本机视频源</h2><span id="source-state" class="status" role="status">正在读取</span></div>
+        <form id="source-form" class="panel-body">
+          <label for="mode">场景</label>
+          <select id="mode" disabled>
+            <option value="normal">正常播放</option>
+            <option value="ice_timeout">SDP 成功，ICE 探测超时</option>
+            <option value="no_media">ICE 和 DTLS 成功，始终无 RTP</option>
+            <option value="media_stop">正常出画后停止 RTP</option>
+          </select>
+          <div class="sim-controls">
+            <button id="start" disabled>启动视频源</button>
+            <button id="stop" class="secondary" type="button" disabled>停止视频源</button>
+          </div>
+          <dl id="endpoint-info" class="onvif-addresses" hidden>
+            <div><dt>WHEP 地址</dt><dd id="endpoint"></dd></div>
+            <div><dt>当前会话数</dt><dd id="sessions"></dd></div>
+          </dl>
+        </form>
+      </section>
+      <section class="panel" aria-labelledby="probe-title">
+        <div class="panel-heading"><h2 id="probe-title">本机播放诊断</h2><span id="probe-state" class="status" role="status">等待运行</span></div>
+        <div class="panel-body">
+          <video id="video" class="whep-preview" playsinline autoplay muted hidden aria-label="WHEP 测试画面"></video>
+          <dl id="metrics" class="onvif-addresses" hidden>
+            <div><dt>HTTP / SDP</dt><dd id="http"></dd></div>
+            <div><dt>ICE</dt><dd id="ice"></dd></div>
+            <div><dt>DTLS</dt><dd id="dtls"></dd></div>
+            <div><dt>首次 / 最后观测到 RTP</dt><dd id="rtp"></dd></div>
+            <div><dt>首个实际呈现的画面</dt><dd id="frame"></dd></div>
+          </dl>
+          <div class="sim-controls">
+            <button id="probe" type="button" disabled>开始本机播放</button>
+            <button id="cancel" class="secondary" type="button" disabled>结束观测</button>
+            <button id="export" class="secondary" type="button" disabled>导出结果</button>
+          </div>
+          <ol id="timeline" class="session-timeline" aria-label="播放时序"></ol>
+        </div>
+      </section>
+    </div>
+  </main>
+</body>
+</html>

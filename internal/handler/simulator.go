@@ -12,11 +12,12 @@ import (
 	"streamanalyzer/internal/simulator/mediasource"
 	"streamanalyzer/internal/simulator/onvif"
 	"streamanalyzer/internal/simulator/sipphone"
+	"streamanalyzer/internal/simulator/whep"
 
 	"github.com/gin-gonic/gin"
 )
 
-func RegisterSimulatorRoutes(r *gin.Engine, simulator *gb28181.Manager, onvifSimulator *onvif.Manager, sipSimulator *sipphone.Manager, hlsSimulator *hlsorigin.Manager, platform *gb28181.PlatformManager, media *mediasource.Manager, rtmp *mediasource.RTMPManager) {
+func RegisterSimulatorRoutes(r *gin.Engine, simulator *gb28181.Manager, onvifSimulator *onvif.Manager, sipSimulator *sipphone.Manager, hlsSimulator *hlsorigin.Manager, platform *gb28181.PlatformManager, media *mediasource.Manager, rtmp *mediasource.RTMPManager, whepSimulator *whep.Manager) {
 	r.GET("/simulators", localDiagnostics, func(c *gin.Context) {
 		serveEmbeddedStaticFile(c, "simulators.html")
 	})
@@ -29,6 +30,7 @@ func RegisterSimulatorRoutes(r *gin.Engine, simulator *gb28181.Manager, onvifSim
 	registerGBPlatformRoutes(r, platform, simulator)
 	registerMediaSimulatorRoutes(r, media)
 	registerRTMPSimulatorRoutes(r, rtmp)
+	registerWHEPSimulatorRoutes(r, whepSimulator)
 	api := r.Group("/api/simulators/gb28181", localDiagnostics)
 	api.GET("", func(c *gin.Context) {
 		status, ok := simulator.StatusFor(c.Query("device_id"), c.Query("channel_id"))
