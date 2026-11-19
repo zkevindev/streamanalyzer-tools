@@ -79,6 +79,7 @@ function renderRTSPPreview(metrics) {
         ['本机转封装状态', rtspPreviewStates[preview.state] || '未记录'], ['预览原因', rtspPreviewReason(preview.reason_code, preview)],
         ['预览视频', preview.video_track_id ? `#${preview.video_track_id} · ${preview.video_codec}` : '未选择'], ['视频说明', rtspPreviewReason(preview.video_reason, preview)],
         ['预览音频', preview.audio_track_id ? `#${preview.audio_track_id} · ${preview.audio_codec}` : '未选择'], ['音频说明', preview.audio_reason === 'codec_unsupported' ? '音轨预览不支持，已静音；原始 RTP 仍保留' : rtspPreviewReason(preview.audio_reason, preview)],
+        ...(preview.video_configurations?.length ? [['H.264 转封装配置', preview.video_configurations.map(config => config.width + '×' + config.height + ' @ ' + config.media_dts_ms + ' ms').join(' → ')]] : []),
         ['视频访问单元', preview.video_aus ?? '未观测'], ['音频访问单元', preview.audio_aus ?? '未观测'], ['转封装包错误', preview.packet_errors ?? '未观测'], ['预览队列丢弃', preview.dropped_packets ?? '未观测'],
     ];
     if (preview.version === 2) entries.push(

@@ -26,26 +26,33 @@ const rtspPlayerSchemaVersion = 6
 // RTSPPreviewReport describes the local remux pipeline, not a decoded source
 // frame or source A/V synchronisation. The wire archive remains authoritative.
 type RTSPPreviewReport struct {
-	G711                     *RTSPG711PreviewReport `json:"g711,omitempty"`
-	Version                  int                    `json:"version"`
-	CodecCapabilitiesVersion int                    `json:"codec_capabilities_version,omitempty"`
-	VideoOutputCodec         string                 `json:"video_output_codec,omitempty"`
-	AudioOutputCodec         string                 `json:"audio_output_codec,omitempty"`
-	VideoTransform           string                 `json:"video_transform,omitempty"`
-	AudioTransform           string                 `json:"audio_transform,omitempty"`
-	State                    string                 `json:"state"`
-	ReasonCode               string                 `json:"reason_code,omitempty"`
-	ClockAlignment           string                 `json:"clock_alignment"`
-	VideoTrackID             int                    `json:"video_track_id,omitempty"`
-	AudioTrackID             int                    `json:"audio_track_id,omitempty"`
-	VideoCodec               string                 `json:"video_codec,omitempty"`
-	AudioCodec               string                 `json:"audio_codec,omitempty"`
-	VideoReason              string                 `json:"video_reason,omitempty"`
-	AudioReason              string                 `json:"audio_reason,omitempty"`
-	VideoAUs                 int                    `json:"video_aus"`
-	AudioAUs                 int                    `json:"audio_aus"`
-	PacketErrors             int                    `json:"packet_errors"`
-	DroppedPackets           int                    `json:"dropped_packets"`
+	VideoConfigurations      []RTSPVideoConfiguration `json:"video_configurations,omitempty"`
+	G711                     *RTSPG711PreviewReport   `json:"g711,omitempty"`
+	Version                  int                      `json:"version"`
+	CodecCapabilitiesVersion int                      `json:"codec_capabilities_version,omitempty"`
+	VideoOutputCodec         string                   `json:"video_output_codec,omitempty"`
+	AudioOutputCodec         string                   `json:"audio_output_codec,omitempty"`
+	VideoTransform           string                   `json:"video_transform,omitempty"`
+	AudioTransform           string                   `json:"audio_transform,omitempty"`
+	State                    string                   `json:"state"`
+	ReasonCode               string                   `json:"reason_code,omitempty"`
+	ClockAlignment           string                   `json:"clock_alignment"`
+	VideoTrackID             int                      `json:"video_track_id,omitempty"`
+	AudioTrackID             int                      `json:"audio_track_id,omitempty"`
+	VideoCodec               string                   `json:"video_codec,omitempty"`
+	AudioCodec               string                   `json:"audio_codec,omitempty"`
+	VideoReason              string                   `json:"video_reason,omitempty"`
+	AudioReason              string                   `json:"audio_reason,omitempty"`
+	VideoAUs                 int                      `json:"video_aus"`
+	AudioAUs                 int                      `json:"audio_aus"`
+	PacketErrors             int                      `json:"packet_errors"`
+	DroppedPackets           int                      `json:"dropped_packets"`
+}
+
+type RTSPVideoConfiguration struct {
+	Width      int   `json:"width"`
+	Height     int   `json:"height"`
+	MediaDTSMS int64 `json:"media_dts_ms"`
 }
 
 type rtspPreviewPacket struct {
@@ -460,6 +467,7 @@ func (p *rtspPreview) writeVideo(item rtspPreviewPacket) {
 			return
 		}
 		p.videoReady = true
+		p.recordH264Configuration(dts / 90)
 	}
 	avcc, err := h264.AVCC(au).Marshal()
 	if err != nil {
@@ -517,6 +525,30 @@ func (p *rtspPreview) writeAudio(item rtspPreviewPacket) {
 	}
 }
 
+func (p *rtspPreview) recordH264Configuration(dts int64) {
+	var sps h264.SPS
+	if sps.Unmarshal(p.sps) != nil {
+		return
+	}
+	value := RTSPVideoConfiguration{Width: sps.Width(), Height: sps.Height(), MediaDTSMS: dts}
+	if value.Width < 1 || value.Width > 16384 || value.Height < 1 || value.Height > 16384 || dts < 0 {
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	history := p.report.VideoConfigurations
+	if len(history) >= 16 {
+		return
+	}
+	if len(history) > 0 {
+		last := history[len(history)-1]
+		if last.Width == value.Width && last.Height == value.Height || dts < last.MediaDTSMS {
+			return
+		}
+	}
+	p.report.VideoConfigurations = append(history, value)
+}
+
 func validRTSPPreview(p *RTSPPreviewReport, tracks []RTSPTrackMetrics) bool {
 	if p == nil || (p.Version != 1 && p.Version != 2) || p.ClockAlignment != "receiver_rtp" {
 		return false
@@ -543,6 +575,16 @@ func validRTSPPreview(p *RTSPPreviewReport, tracks []RTSPTrackMetrics) bool {
 		} else if p.AudioTransform != "g711_to_aac" && (p.AudioOutputCodec != p.AudioCodec || p.AudioTransform != "native_remux") {
 			return false
 		}
+	}
+	if len(p.VideoConfigurations) > 16 || len(p.VideoConfigurations) != 0 && (p.Version != 2 || p.VideoCodec != "h264" || p.VideoTrackID == 0) {
+		return false
+	}
+	var lastDTS int64
+	for _, configuration := range p.VideoConfigurations {
+		if configuration.Width < 1 || configuration.Width > 16384 || configuration.Height < 1 || configuration.Height > 16384 || configuration.MediaDTSMS < lastDTS {
+			return false
+		}
+		lastDTS = configuration.MediaDTSMS
 	}
 	if !validRTSPG711Preview(p, tracks) {
 		return false
