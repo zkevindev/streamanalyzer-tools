@@ -15,17 +15,20 @@ import (
 const ringTimeout = 45 * time.Second
 
 type CallStatus struct {
-	Active          bool   `json:"active"`
-	State           string `json:"state"`
-	Direction       string `json:"direction"`
-	Peer            string `json:"peer"`
-	ID              string `json:"call_id,omitempty"`
-	Codec           string `json:"codec,omitempty"`
-	MediaLocal      string `json:"media_local"`
-	MediaRemote     string `json:"media_remote,omitempty"`
-	PacketsSent     uint64 `json:"packets_sent"`
-	PacketsReceived uint64 `json:"packets_received"`
-	Error           string `json:"error,omitempty"`
+	AudioFault      string   `json:"audio_fault"`
+	SendRTP         RTPStats `json:"send_rtp"`
+	ReceiveRTP      RTPStats `json:"receive_rtp"`
+	Active          bool     `json:"active"`
+	State           string   `json:"state"`
+	Direction       string   `json:"direction"`
+	Peer            string   `json:"peer"`
+	ID              string   `json:"call_id,omitempty"`
+	Codec           string   `json:"codec,omitempty"`
+	MediaLocal      string   `json:"media_local"`
+	MediaRemote     string   `json:"media_remote,omitempty"`
+	PacketsSent     uint64   `json:"packets_sent"`
+	PacketsReceived uint64   `json:"packets_received"`
+	Error           string   `json:"error,omitempty"`
 }
 
 type phoneCall struct {

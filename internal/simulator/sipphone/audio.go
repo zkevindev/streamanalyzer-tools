@@ -24,8 +24,9 @@ const (
 type audioSession struct {
 	conn     *net.UDPConn
 	local    netip.AddrPort
-	sent     atomic.Uint64
-	received atomic.Uint64
+	sent     rtpStats
+	received rtpStats
+	fault    atomic.Uint32
 
 	mu      sync.Mutex
 	samples []int16
@@ -73,13 +74,17 @@ func (a *audioSession) sendTone(ctx context.Context, params audioParameters) {
 	buffer := make([]byte, 12+audioFrame)
 	offset := 0
 	for ctx.Err() == nil {
-		packet := rtp.Packet{Header: header, Payload: tone[offset : offset+audioFrame]}
-		n, err := packet.MarshalTo(buffer)
-		if err != nil {
-			return
-		}
-		if _, err := a.conn.WriteToUDPAddrPort(buffer[:n], dist); err == nil {
-			a.sent.Add(1)
+		if audioFault(a.fault.Load()) == audioFaultSend {
+			a.sent.drop()
+		} else {
+			packet := rtp.Packet{Header: header, Payload: tone[offset : offset+audioFrame]}
+			n, err := packet.MarshalTo(buffer)
+			if err != nil {
+				return
+			}
+			if _, err := a.conn.WriteToUDPAddrPort(buffer[:n], dist); err == nil {
+				a.sent.observe(header, time.Now())
+			}
 		}
 		header.SequenceNumber++
 		header.Timestamp += audioFrame
@@ -112,6 +117,11 @@ func (a *audioSession) receive(params audioParameters) {
 		if packet.Unmarshal(buf[:n]) != nil || packet.Version != 2 || packet.PayloadType != params.codec.pt || len(packet.Payload) == 0 {
 			continue
 		}
+		if audioFault(a.fault.Load()) == audioFaultReceive {
+			a.received.drop()
+			continue
+		}
+		arrival := time.Now()
 		a.mu.Lock()
 		for _, sample := range packet.Payload {
 			pcm := decoder(sample)
@@ -123,7 +133,7 @@ func (a *audioSession) receive(params audioParameters) {
 			}
 		}
 		a.mu.Unlock()
-		a.received.Add(1)
+		a.received.observe(packet.Header, arrival)
 	}
 }
 

@@ -108,6 +108,7 @@ func TestSIPPhoneRegisterIncomingOutgoingAndAudio(t *testing.T) {
 		t.Fatalf("wrong outbound call state: %+v", status.Call)
 	}
 	checkSIPAudio(t, server, pbxMedia, outgoing.body, 0, false)
+	checkSIPAudioFaults(t, server, pbxMedia)
 
 	diagnosticRequest(t, server, http.MethodPost, sipAPI+"/hangup", http.StatusAccepted, nil)
 	bye, _ := receiveSimulatorSIP(t, pbx, "BYE ", time.Second)
@@ -328,4 +329,64 @@ func checkSIPAudio(t *testing.T, server *Server, pbx *net.UDPConn, localSDP stri
 		int16(binary.LittleEndian.Uint16(wav[44:46])) != decode(payload[0]) {
 		t.Fatalf("recorded WAV does not contain decoded received G.711 (%d bytes)", len(wav))
 	}
+}
+
+func checkSIPAudioFaults(t *testing.T, server *Server, peer *net.UDPConn) {
+	t.Helper()
+	action := func(direction string) sipphone.Status {
+		return decodeDiagnostic[sipphone.Status](t, diagnosticRequest(t, server, "POST", sipAPI+"/audio-fault", http.StatusOK, []byte(fmt.Sprintf(`{"direction":%q}`, direction))))
+	}
+	await := func(test func(*sipphone.CallStatus) bool) *sipphone.CallStatus {
+		t.Helper()
+		deadline := time.Now().Add(time.Second)
+		for {
+			status := waitSIPPhone(t, server, "registered", "incall")
+			if test(status.Call) {
+				return status.Call
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("RTP fault did not affect the expected direction: %+v", status.Call)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}
+	seq := uint16(2)
+	send := func(local string) {
+		t.Helper()
+		addr, err := net.ResolveUDPAddr("udp4", local)
+		if err != nil {
+			t.Fatal(err)
+		}
+		packet := rtp.Packet{Header: rtp.Header{Version: 2, SSRC: 100, SequenceNumber: seq, Timestamp: uint32(seq) * 160}, Payload: []byte{0xff}}
+		seq++
+		data, err := packet.Marshal()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := peer.WriteToUDP(data, addr); err != nil {
+			t.Fatal(err)
+		}
+	}
+	action("send")
+	out := await(func(c *sipphone.CallStatus) bool { return c.SendRTP.FaultDrops >= 2 })
+	send(out.MediaLocal)
+	got := await(func(c *sipphone.CallStatus) bool {
+		return c.AudioFault == "send" && c.ReceiveRTP.Packets > out.ReceiveRTP.Packets && c.SendRTP.FaultDrops > out.SendRTP.FaultDrops
+	})
+	if got.SendRTP.Packets != out.SendRTP.Packets || !got.SendRTP.LastAt.Equal(out.SendRTP.LastAt) {
+		t.Fatalf("outbound RTP did not stop: %+v", got)
+	}
+	action("receive")
+	send(got.MediaLocal)
+	in := await(func(c *sipphone.CallStatus) bool {
+		return c.AudioFault == "receive" && c.ReceiveRTP.FaultDrops > 0 && c.SendRTP.Packets > out.SendRTP.Packets
+	})
+	if in.ReceiveRTP.Packets != got.ReceiveRTP.Packets {
+		t.Fatalf("incoming RTP was passed during the fault: %+v", in)
+	}
+	action("off")
+	send(got.MediaLocal)
+	await(func(c *sipphone.CallStatus) bool {
+		return c.AudioFault == "off" && c.ReceiveRTP.Packets > in.ReceiveRTP.Packets && c.ReceiveRTP.SequenceGaps > 0
+	})
 }

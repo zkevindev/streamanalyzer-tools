@@ -40,6 +40,7 @@ function updateButtons() {
   el('unregister').disabled = busy || !status?.active || status.state === 'stopping';
   target.disabled = !canDial;
   el('dial').disabled = !canDial;
+  el('audio-fault').disabled = busy || status?.state === 'stopping' || status?.call?.state !== 'incall';
   el('answer').disabled = busy || status?.state === 'stopping' || !incoming;
   el('hangup').disabled = busy || status?.state === 'stopping' || !calling || status.call.state === 'ending';
   el('hangup').textContent = incoming ? '拒接'
@@ -65,13 +66,14 @@ function render(next) {
   el('call-state').textContent = call ? callState[call.state] || call.state : '空闲';
   el('call-state').dataset.status = call?.state === 'incall' ? 'done' : call?.active ? 'running' : '';
   el('call-metrics').hidden = el('media-addresses').hidden = !call;
-  el('call-direction').textContent = call?.direction === 'inbound' ? '呼入' : '呼出';
+  const direction = call?.direction === 'inbound' ? '呼入' : '呼出';
+  el('audio-summary').textContent = call?.codec ? direction + ' · ' + call.codec + ' · 8 kHz' : direction;
+  el('audio-fault').value = call?.audio_fault || 'off';
+  renderRTP('send-rtp', call?.send_rtp);
+  renderRTP('receive-rtp', call?.receive_rtp);
   el('call-peer').textContent = call?.peer || '—';
-  el('audio-codec').textContent = call?.codec ? call.codec + ' · 8 kHz' : '—';
   el('media-local').textContent = call?.media_local || '—';
   el('media-remote').textContent = call?.media_remote || '—';
-  el('packets-sent').textContent = (call?.packets_sent || 0).toLocaleString('zh-CN');
-  el('packets-received').textContent = (call?.packets_received || 0).toLocaleString('zh-CN');
   setError('call-error', call?.error);
   el('received-audio').hidden = !call?.packets_received;
   if (clipCall !== (call?.call_id || '')) {
@@ -82,6 +84,26 @@ function render(next) {
   }
   renderEvents(status.events || []);
   updateButtons();
+}
+
+function renderRTP(id, stats) {
+  const container = el(id);
+  const time = value => value ? new Date(value).toLocaleTimeString('zh-CN', {fractionalSecondDigits: 3}) : '—';
+  const values = [
+    ['通过 / 注入丢弃', (stats?.packets || 0) + ' / ' + (stats?.fault_drops || 0)],
+    ['首包 / 末包', time(stats?.first_at) + ' / ' + time(stats?.last_at)],
+    ['序列缺口 / 抖动', (stats?.sequence_gaps || 0) + ' / ' + (stats?.jitter_ms || 0).toFixed(2) + ' ms'],
+  ];
+  if (!container.children.length) {
+    container.replaceChildren(...values.map(([label]) => {
+      const row = document.createElement('div');
+      const term = document.createElement('dt');
+      term.textContent = label;
+      row.append(term, document.createElement('dd'));
+      return row;
+    }));
+  }
+  values.forEach(([, value], index) => { container.children[index].lastElementChild.textContent = value; });
 }
 
 function renderEvents(entries) {
@@ -145,6 +167,7 @@ async function change(path, data) {
     render(next);
   } catch (error) {
     notice(error.message);
+    el('audio-fault').value = status?.call?.audio_fault || 'off';
   } finally {
     busy = false;
     updateButtons();
@@ -165,6 +188,7 @@ el('call-form').addEventListener('submit', event => {
 el('unregister').addEventListener('click', () => { void change('/stop'); });
 el('answer').addEventListener('click', () => { void change('/answer'); });
 el('hangup').addEventListener('click', () => { void change('/hangup'); });
+el('audio-fault').addEventListener('change', event => { void change('/audio-fault', {direction: event.target.value}); });
 el('hear-audio').addEventListener('click', () => {
   audio.hidden = false;
   audio.src = api + '/received.wav?t=' + Date.now();

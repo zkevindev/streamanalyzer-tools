@@ -88,12 +88,18 @@
               </div>
             </form>
             <p class="muted field-hint">通话时发送 440 Hz 测试音。收到的音频可试听最近 20 秒。</p>
-            <dl id="call-metrics" class="metrics sim-metrics sip-metrics" hidden>
-              <div><dt>方向</dt><dd id="call-direction"></dd></div>
-              <div><dt>编码</dt><dd id="audio-codec"></dd></div>
-              <div><dt>发送 RTP 包</dt><dd id="packets-sent">0</dd></div>
-              <div><dt>收到 RTP 包</dt><dd id="packets-received">0</dd></div>
-            </dl>
+            <section id="call-metrics" class="sip-metrics" aria-label="RTP 音频" hidden>
+              <p id="audio-summary" class="field-hint"></p>
+              <label for="audio-fault">单向无声</label>
+              <select id="audio-fault" aria-describedby="audio-fault-hint" disabled>
+                <option value="off">关闭</option><option value="send">暂停发送</option><option value="receive">丢弃接收</option>
+              </select>
+              <p class="muted field-hint" id="audio-fault-hint">保持通话接通，暂停一个方向的音频。</p>
+              <div class="sim-fields sip-metrics">
+                <div><h3>发送 RTP</h3><dl class="onvif-addresses" id="send-rtp"></dl></div>
+                <div><h3>接收 RTP</h3><dl class="onvif-addresses" id="receive-rtp"></dl></div>
+              </div>
+            </section>
             <dl id="media-addresses" class="onvif-addresses" hidden>
               <div><dt>通话对端</dt><dd id="call-peer"></dd></div>
               <div><dt>本机音频 RTP</dt><dd id="media-local"></dd></div>
