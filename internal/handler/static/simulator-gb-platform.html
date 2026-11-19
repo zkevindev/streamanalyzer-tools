@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GB28181 平台侧收流 · Stream Analyzer</title>
+  <link rel="stylesheet" href="/static/workbench-theme.css">
+  <link rel="stylesheet" href="/static/diagnostics.css">
+  <link rel="stylesheet" href="/static/simulators.css">
+  <script src="/static/simulator-gb-platform.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">跳转到主要内容</a>
+  <header class="topbar"><div class="topbar-inner">
+    <a class="wordmark" href="/"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>Stream Analyzer</a>
+    <nav aria-label="主导航"><a href="/diagnostics">排障工作台</a><a href="/simulators" aria-current="page">模拟器</a></nav>
+  </div></header>
+  <main id="main" tabindex="-1">
+    <div class="page-heading"><div><h1>GB28181 平台侧收流</h1><a href="/simulators">返回 GB28181 设备模拟器</a></div></div>
+    <p id="notice" class="error" role="alert" hidden></p>
+    <div class="simulator-grid">
+      <section class="panel">
+        <div class="panel-heading"><h2>平台接入</h2></div>
+        <div class="panel-body">
+          <form id="start-form">
+            <fieldset id="platform-config" disabled>
+              <div class="sim-fields">
+                <div><label for="ip">本机 IPv4</label><input id="ip" name="ip" value="127.0.0.1" required></div>
+                <div><label for="port">SIP UDP 端口</label><input id="port" name="port" type="number" min="0" max="65535" value="0"></div>
+                <div><label for="platform-id">平台编号</label><input id="platform-id" name="platform_id" pattern="[0-9]{20}" value="34020000002000000001" required></div>
+                <div><label for="device-id">设备编号</label><input id="device-id" name="device_id" pattern="[0-9]{20}" value="34020000001320000001" required></div>
+              </div>
+            </fieldset>
+            <div class="sim-controls"><button id="start" disabled>启动平台</button><button type="button" id="stop" class="secondary" disabled>停止平台</button></div>
+          </form>
+          <p class="muted field-hint">将设备的 SIP 平台地址填为下方实际监听地址，选择 UDP，密码留空。</p>
+          <dl class="onvif-addresses">
+            <div><dt>监听地址</dt><dd id="address">—</dd></div>
+            <div><dt>已注册设备地址</dt><dd id="peer">—</dd></div>
+          </dl>
+          <form id="preview-form">
+            <fieldset id="preview-config" disabled>
+              <div class="sim-fields">
+                <div><label for="channel">通道编号</label><input id="channel" name="channel_id" pattern="[0-9]{20}" value="34020000001320000002" required></div>
+                <div><label for="window">观测窗口（毫秒）</label><input id="window" name="window_ms" type="number" min="500" max="15000" value="4000" required></div>
+              </div>
+              <label class="sim-check"><input id="skip-ack" type="checkbox"> 观测窗口内暂缓 ACK</label>
+              <div class="sim-controls"><button>点播并收流</button></div>
+            </fieldset>
+          </form>
+        </div>
+      </section>
+      <section class="panel">
+        <div class="panel-heading"><h2>点播结果</h2><span id="result" class="status" role="status">等待点播</span></div>
+        <div class="panel-body">
+          <p id="detail" class="field-hint" hidden></p>
+          <dl id="stats" class="metrics sim-metrics" hidden>
+            <div><dt>收到 RTP</dt><dd id="rtp">0</dd></div>
+            <div><dt>完整 PS 单元</dt><dd id="ps">0</dd></div>
+            <div><dt>关键帧</dt><dd id="keys">0</dd></div>
+          </dl>
+          <p id="dialog-id" class="muted field-hint" hidden></p>
+          <ol id="timeline" class="session-timeline" hidden></ol>
+          <a id="export" class="button secondary" href="/api/simulators/gb28181/platform/trace.json" hidden>导出点播证据</a>
+        </div>
+      </section>
+    </div>
+  </main>
+</body>
+</html>

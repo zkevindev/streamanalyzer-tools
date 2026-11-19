@@ -8,6 +8,7 @@ import (
 )
 
 type RTPReview struct {
+	Keyframes    int     `json:"keyframes,omitempty"`
 	Packets      int     `json:"packets"`
 	SequenceGaps int     `json:"sequence_gaps"`
 	OutOfOrder   int     `json:"out_of_order"`
@@ -94,8 +95,13 @@ func (r *RTPReview) reviewPS(ps []byte) {
 		r.PartialUnits++
 		return
 	}
-	video, audio := false, false
-	for ps = ps[14:]; len(ps) > 0; {
+	video, audio, key := false, false, false
+	offset := 14 + int(ps[13]&7)
+	if offset > len(ps) {
+		r.PartialUnits++
+		return
+	}
+	for ps = ps[offset:]; len(ps) > 0; {
 		if len(ps) < 6 || !bytes.HasPrefix(ps, []byte{0, 0, 1}) {
 			r.PartialUnits++
 			return
@@ -108,6 +114,16 @@ func (r *RTPReview) reviewPS(ps []byte) {
 		switch ps[3] {
 		case videoStreamID:
 			video = true
+			pes := ps[6 : 6+size]
+			if len(pes) >= 3 && 3+int(pes[2]) <= len(pes) {
+				data := pes[3+int(pes[2]):]
+				switch r.VideoType {
+				case 0x24:
+					key = key || containsRandomAccess(data, "hevc")
+				case 0x1b, 0:
+					key = key || containsRandomAccess(data, "h264")
+				}
+			}
 		case audioStreamID:
 			audio = true
 		case 0xbc:
@@ -116,6 +132,9 @@ func (r *RTPReview) reviewPS(ps []byte) {
 		ps = ps[6+size:]
 	}
 	r.PSUnits++
+	if key {
+		r.Keyframes++
+	}
 	if video {
 		r.VideoUnits++
 	}
