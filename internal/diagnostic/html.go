@@ -27,7 +27,12 @@ var reportPage = template.Must(template.New("report").Funcs(template.FuncMap{
 	"dumpName":               dumpName,
 	"join":                   strings.Join,
 	"modelProvider":          modelProviderLabel,
-	"stageName":              stageLabel,
+	"stageName":              diagnosticReportStageLabel,
+	"reportOrigin":           diagnosticReportOrigin,
+	"isRTSP":                 isRTSPProtocol,
+	"rtspReport":             renderRTSPHTML,
+	"rtspEvidenceRows":       renderRTSPEvidenceRows,
+	"rtspFirstPacket":        rtspFirstPacket,
 	"mediaArrival":           mediaArrivalLabel,
 	"phaseDuration":          requestPhaseDuration,
 	"requestKind":            httpTimingKindLabel,
@@ -258,26 +263,30 @@ thead{color:#52657e;background:#f7f9fc}
 <p>规则版本 <code>{{.Report.RuleVersion}}</code></p>
 {{with .Report.Manifest.Observation}}
 <article><h2>采样概况</h2>
-<dl><dt>{{if $.Datagram}}监听地址{{else}}来源{{end}}</dt><dd>{{.Origin}}</dd>
+<dl><dt>{{if $.Datagram}}监听地址{{else}}来源{{end}}</dt><dd>{{reportOrigin $.Report.Manifest.Protocol .Origin}}</dd>
 <dt>开始时间</dt><dd>{{.StartedAt.Format "2006-01-02 15:04:05 UTC"}}</dd>
 <dt>采样时长</dt><dd>{{printf "%.3f" (seconds .ElapsedMS)}} 秒 / 计划 {{.RequestedSeconds}} 秒</dd>
 <dt>结束原因</dt><dd>{{finish .EndReason}}</dd>
 {{if .HTTPStatus}}<dt>HTTP 状态</dt><dd>{{.HTTPStatus}}</dd>{{end}}
-{{if not $.HTTPRequests}}{{with .TTFBMS}}<dt>{{if eq $.Report.Manifest.Protocol "rtmp"}}RTMP 首字节{{else}}响应首字节{{end}}</dt><dd>{{.}} ms</dd>{{end}}{{end}}
+{{if not $.HTTPRequests}}{{with .TTFBMS}}<dt>{{if eq $.Report.Manifest.Protocol "rtmp"}}RTMP 首字节{{else if isRTSP $.Report.Manifest.Protocol}}RTSP 首字节{{else}}响应首字节{{end}}</dt><dd>{{.}} ms</dd>{{end}}{{end}}
 </dl></article>
 {{$metrics := $.Report.Metrics}}
-{{$arrivals := or .FirstPayloadMS $metrics.FirstVideoMS $metrics.FirstAudioMS $metrics.FirstKeyframeMS}}
+{{$firstPayload := .FirstPayloadMS}}
+{{$firstVideo := $metrics.FirstVideoMS}}{{$firstAudio := $metrics.FirstAudioMS}}
+{{if isRTSP $.Report.Manifest.Protocol}}{{$firstPayload = rtspFirstPacket $.Report.RTSP}}{{with $.Report.RTSP}}{{$firstVideo = .FirstVideoRTPMS}}{{$firstAudio = .FirstAudioRTPMS}}{{end}}{{end}}
+{{$arrivals := or $firstPayload $firstVideo $firstAudio $metrics.FirstKeyframeMS}}
 {{if or $.TimingStages $.HTTPRequests $arrivals .FailureStage .FailureCode}}
 <article><h2>采样时序</h2>
 <p class="timing-note">到达时间以采样开始为基准。</p>
 {{$unit := $metrics.MediaTimingUnit}}
+{{if isRTSP $.Report.Manifest.Protocol}}{{$unit = "rtp"}}{{end}}
 {{if not $unit}}{{if eq $.Report.Manifest.Protocol "hls"}}{{$unit = "segment"}}{{else if $.MPEGTS}}{{$unit = "pes"}}{{end}}{{end}}
 <dl>
-<dt>首个载荷到达</dt><dd>{{with .FirstPayloadMS}}{{.}} ms{{else}}未观测{{end}}</dd>
-<dt>{{mediaArrival $unit "视频"}}</dt><dd>{{with $metrics.FirstVideoMS}}{{.}} ms{{else}}未观测{{end}}</dd>
-<dt>{{mediaArrival $unit "音频"}}</dt><dd>{{with $metrics.FirstAudioMS}}{{.}} ms{{else}}未观测{{end}}</dd>
+<dt>{{if isRTSP $.Report.Manifest.Protocol}}首个有效 RTP 包{{else}}首个载荷到达{{end}}</dt><dd>{{with $firstPayload}}{{.}} ms{{else}}未观测{{end}}</dd>
+<dt>{{mediaArrival $unit "视频"}}</dt><dd>{{with $firstVideo}}{{.}} ms{{else}}未观测{{end}}</dd>
+<dt>{{mediaArrival $unit "音频"}}</dt><dd>{{with $firstAudio}}{{.}} ms{{else}}未观测{{end}}</dd>
 {{if eq $.Report.Manifest.Protocol "" "http-flv" "rtmp"}}<dt>首个关键帧到达</dt><dd>{{with $metrics.FirstKeyframeMS}}{{.}} ms{{else}}未观测{{end}}</dd>{{end}}
-{{with .FailureStage}}<dt>故障阶段</dt><dd>{{stageName . $.LegacyRTMP}}</dd>{{end}}
+{{with .FailureStage}}<dt>故障阶段</dt><dd>{{stageName . $.LegacyRTMP $.Report.Manifest.Protocol}}</dd>{{end}}
 {{with .FailureCode}}<dt>故障代码</dt><dd><code>{{.}}</code></dd>{{end}}
 </dl>
 {{if $.HTTPRequests}}
@@ -316,7 +325,7 @@ thead{color:#52657e;background:#f7f9fc}
 {{end}}
 {{if $.TimingStages}}<div class="scroll"><table>
 <thead><tr><th scope="col">阶段</th><th scope="col">开始偏移 (ms)</th><th scope="col">结束偏移 (ms)</th><th scope="col">耗时 (ms)</th></tr></thead>
-<tbody>{{range $.TimingStages}}<tr><th scope="row">{{stageName .Name $.LegacyRTMP}}</th><td>{{.StartMS}}</td><td>{{.EndMS}}</td><td>{{elapsed .StartMS .EndMS}}</td></tr>{{end}}</tbody>
+<tbody>{{range $.TimingStages}}<tr><th scope="row">{{stageName .Name $.LegacyRTMP $.Report.Manifest.Protocol}}</th><td>{{.StartMS}}</td><td>{{.EndMS}}</td><td>{{elapsed .StartMS .EndMS}}</td></tr>{{end}}</tbody>
 </table></div>{{end}}
 </article>
 {{end}}
@@ -475,6 +484,7 @@ thead{color:#52657e;background:#f7f9fc}
 </table></div>{{end}}
 </article>
 {{end}}
+{{else if isRTSP .Report.Manifest.Protocol}}{{rtspReport .Report}}
 {{else}}
 {{with .Report.Metrics}}
 <article><h2>媒体指标</h2><dl>
@@ -497,6 +507,7 @@ thead{color:#52657e;background:#f7f9fc}
 {{if playerEvidence .Evidence}}
 <thead><tr><th scope="col">对象</th><th scope="col">开始偏移 (ms)</th><th scope="col">结束偏移 (ms)</th><th scope="col">耗时 (ms)</th><th scope="col">原始记录</th></tr></thead>
 <tbody>{{range .Evidence}}<tr><td>{{if eq .Kind "player_stall"}}播放器卡顿{{else}}{{.Kind}}{{end}}</td><td>{{.ArrivalMS}}</td><td>{{intervalEnd .ArrivalMS .DurationMS}}</td><td>{{.DurationMS}}</td><td><code>{{.Artifact}}</code></td></tr>{{end}}</tbody>
+{{else if isRTSP $.Report.Manifest.Protocol}}{{rtspEvidenceRows .Evidence}}
 {{else if eq $.Report.Manifest.Protocol "hls"}}
 <thead><tr><th scope="col">对象</th><th scope="col">流</th><th scope="col">分片序号</th><th scope="col">到达 (ms)</th><th scope="col">HTTP</th><th scope="col">请求耗时 (ms)</th><th scope="col">原始包条目</th><th scope="col">长度 (字节)</th></tr></thead>
 <tbody>{{range .Evidence}}<tr><td>{{.Kind}}</td><td>{{if eq .Rendition "audio"}}独立音频{{else if eq .Rendition "main"}}主路{{else}}—{{end}}</td><td>{{with .Sequence}}{{.}}{{else}}—{{end}}</td><td>{{.ArrivalMS}}</td><td>{{if .HTTPStatus}}{{.HTTPStatus}}{{else}}—{{end}}</td><td>{{if or .DurationMS .HTTPStatus}}{{.DurationMS}}{{else}}—{{end}}</td><td>{{with .Artifact}}<code>{{.}}</code>{{else}}—{{end}}</td><td>{{if .Artifact}}{{.Size}}{{else}}—{{end}}</td></tr>{{end}}</tbody>
@@ -586,6 +597,8 @@ func mediaArrivalLabel(unit, track string) string {
 		return "首个" + track + "分片完成"
 	case "pes":
 		return "首个" + track + " PES 起始"
+	case "rtp":
+		return "首个" + track + " RTP 到达"
 	default:
 		return "首个" + track + "帧到达"
 	}
@@ -815,6 +828,10 @@ func RenderHTMLWithAssets(w io.Writer, report Report, explanation *Explanation, 
 		}
 	case ProtocolHLS:
 		protocol = "HLS"
+	case ProtocolRTSP:
+		protocol = "RTSP"
+	case ProtocolRTSPS:
+		protocol = "RTSPS"
 	case ProtocolHTTPTS:
 		protocol, mpegTS = "HTTP MPEG-TS", true
 	case ProtocolUDPTS:

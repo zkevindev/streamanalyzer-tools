@@ -40,6 +40,8 @@
                         <select id="protocol">
                             <option value="http-flv">HTTP-FLV</option>
                             <option value="rtmp">RTMP / RTMPS</option>
+                            <option value="rtsp">RTSP · TCP</option>
+                            <option value="rtsps">RTSPS · TLS/TCP</option>
                             <option value="hls">HLS</option>
                             <option value="http-ts">HTTP MPEG-TS</option>
                             <option value="udp-ts">UDP MPEG-TS</option>
@@ -59,7 +61,8 @@
                     </div>
                     <button type="submit">采样并保存原始流</button>
                 </div>
-                <label class="playback-option"><input id="analyze-playback" type="checkbox"> 同时分析播放器体验</label>
+                <label class="playback-option"><input id="analyze-playback" type="checkbox" aria-describedby="playback-capability-note"> 同时分析播放器体验</label>
+                <p id="playback-capability-note" class="field-hint muted" hidden>浏览器不直接播放 RTSP。原生控制与 RTP 采样仍可使用，本次不采集播放器首屏、缓冲或呈帧指标。</p>
             </form>
         </section>
         <section class="panel" aria-labelledby="import-heading">
@@ -116,6 +119,25 @@
                             </section>
                         </section>
                         <div id="timing-table"></div>
+                    </section>
+                    <section id="rtsp-report" aria-labelledby="rtsp-title" hidden>
+                        <h3 id="rtsp-title" class="report-title">RTSP 会话与 RTP 接收</h3>
+                        <p id="rtsp-capability" class="timing-note muted"></p>
+                        <p id="rtsp-boundary" class="timing-note muted"></p>
+                        <dl id="rtsp-metrics" class="metrics"></dl>
+                        <p id="rtsp-report-state" class="timing-note muted" role="status"></p>
+                        <h4>RTSP 控制请求</h4>
+                        <p class="timing-note muted">时间以采样开始为基准。只展示受控方法、状态与数字时序，不展示请求地址、认证字段或 SDP 原文。</p>
+                        <div id="rtsp-request-table"></div>
+                        <h4>SDP 声明轨道</h4>
+                        <div id="rtsp-declared-tracks"></div>
+                        <h4>实际 RTP 接收</h4>
+                        <div id="rtsp-received-tracks"></div>
+                        <details class="report-details">
+                            <summary>RTP 序号与时间戳统计</summary>
+                            <p id="rtsp-sequence-note" class="timing-note muted"></p>
+                            <div id="rtsp-sequence-table"></div>
+                        </details>
                     </section>
                     <section id="player-report" aria-labelledby="player-report-title" hidden>
                         <h3 id="player-report-title" class="report-title">播放器体验</h3>

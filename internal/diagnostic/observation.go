@@ -313,7 +313,8 @@ func (w payloadWriter) Write(data []byte) (int, error) {
 func validCaptureStage(name string) bool {
 	switch name {
 	case "dns", "connect", "tls", "request_send", "response_first_byte", "response_headers",
-		"listen", "receive", "handshake", "app_connect", "create_stream", "play":
+		"listen", "receive", "handshake", "app_connect", "create_stream", "play",
+		"rtsp_options", "rtsp_describe", "rtsp_setup", "rtsp_play", "rtsp_receive":
 		return true
 	default:
 		return false
@@ -323,7 +324,8 @@ func validCaptureStage(name string) bool {
 func validCaptureFailure(code string) bool {
 	switch code {
 	case "", "timeout", "canceled", "dns_error", "tls_error", "connection_refused", "network_error",
-		"http_status", "redirect_error", "body_error", "udp_bind_error", "udp_read_error", "rtmp_error":
+		"http_status", "redirect_error", "body_error", "udp_bind_error", "udp_read_error", "rtmp_error",
+		"rtsp_error", "rtsp_status", "rtsp_auth_error", "rtsp_transport_error", "rtsp_parse_error":
 		return true
 	default:
 		return false
@@ -408,6 +410,16 @@ func captureFailureText(observation Observation) string {
 		return "读取媒体数据时连接中断，请检查服务端断开和网络连接"
 	case "rtmp_error":
 		return "RTMP 连接或播放协商失败，请检查应用名、流名和服务端状态"
+	case "rtsp_auth_error":
+		return "RTSP 鉴权未通过，请核对摄像头或 NVR 的用户名、密码与播放权限"
+	case "rtsp_status":
+		return "RTSP 控制请求返回失败状态，请查看对应方法及响应码"
+	case "rtsp_transport_error":
+		return "RTSP TCP 交织传输协商失败，请检查设备的 RTP over TCP 支持及通道配置"
+	case "rtsp_parse_error":
+		return "RTSP 响应、SDP 或交织帧结构异常，请结合原始接收证据检查设备输出"
+	case "rtsp_error":
+		return "RTSP 协商或媒体接收失败，请检查控制请求、接收时间线及设备状态"
 	case "dns_error":
 		return "播放地址 DNS 解析失败，请检查域名和本机 DNS 配置"
 	case "tls_error":

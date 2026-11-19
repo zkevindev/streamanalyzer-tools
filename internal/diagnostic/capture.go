@@ -38,7 +38,7 @@ func parseProtocolURL(rawURL, protocol string) (*url.URL, error) {
 		return nil, fmt.Errorf("%w: URL 太长", ErrInvalid)
 	}
 	target, err := url.Parse(rawURL)
-	if err != nil || target.Hostname() == "" || target.User != nil {
+	if err != nil || target.Hostname() == "" || (target.User != nil && protocol != ProtocolRTSP && protocol != ProtocolRTSPS) {
 		return nil, fmt.Errorf("%w: 播放地址格式无效", ErrInvalid)
 	}
 	switch protocol {
@@ -49,6 +49,10 @@ func parseProtocolURL(rawURL, protocol string) (*url.URL, error) {
 	case ProtocolRTMP:
 		if target.Scheme != "rtmp" && target.Scheme != "rtmps" {
 			return nil, fmt.Errorf("%w: 请输入 RTMP 或 RTMPS 播放地址", ErrInvalid)
+		}
+	case ProtocolRTSP, ProtocolRTSPS:
+		if target.Scheme != protocol {
+			return nil, fmt.Errorf("%w: 请输入 %s 播放地址", ErrInvalid, protocol)
 		}
 	case ProtocolUDPTS, ProtocolRTPTS:
 		scheme := "udp"

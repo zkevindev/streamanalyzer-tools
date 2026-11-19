@@ -24,6 +24,8 @@ const (
 	ProtocolHTTPTS  = "http-ts"
 	ProtocolUDPTS   = "udp-ts"
 	ProtocolRTPTS   = "rtp-ts"
+	ProtocolRTSP    = "rtsp"
+	ProtocolRTSPS   = "rtsps"
 )
 
 const (
@@ -33,6 +35,7 @@ const (
 	tsStreamName   = "stream.ts"
 	udpStreamName  = "stream.udp"
 	rtpStreamName  = "stream.rtp"
+	rtspStreamName = "stream.rtsp.zip"
 	timelineName   = "timeline.ndjson"
 	manifestName   = "manifest.json"
 	reportName     = "report.json"
@@ -192,6 +195,7 @@ type Report struct {
 	Metrics             Metrics              `json:"metrics"`
 	HLS                 *HLSMetrics          `json:"hls,omitempty"`
 	MPEGTS              *MPEGTSMetrics       `json:"mpegts,omitempty"`
+	RTSP                *RTSPMetrics         `json:"rtsp,omitempty"`
 	Findings            []Finding            `json:"findings"`
 	Player              *PlayerReport        `json:"player,omitempty"`
 	PlayerNetwork       *PlayerNetworkReport `json:"player_network,omitempty"`
