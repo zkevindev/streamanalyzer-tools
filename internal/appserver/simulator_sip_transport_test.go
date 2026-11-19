@@ -18,6 +18,19 @@ import (
 	"github.com/emiago/sipgo/sip"
 )
 
+type observedSIPListener struct {
+	net.Listener
+	connections chan net.Conn
+}
+
+func (l observedSIPListener) Accept() (net.Conn, error) {
+	conn, err := l.Listener.Accept()
+	if err == nil {
+		l.connections <- conn
+	}
+	return conn, err
+}
+
 func TestSIPStreamTransportRegisterAndCall(t *testing.T) {
 	certServer := httptest.NewTLSServer(http.NotFoundHandler())
 	certificate := certServer.TLS.Certificates[0]
@@ -69,12 +82,13 @@ func TestSIPStreamTransportRegisterAndCall(t *testing.T) {
 				ended <- req.Source()
 				_ = tx.Respond(sip.NewResponseFromRequest(req, 200, "OK", nil))
 			})
+			wire := observedSIPListener{Listener: listener, connections: make(chan net.Conn, 4)}
 			if tc.transport == "tls" {
 				go func() {
-					_ = server.ServeTLS(tls.NewListener(listener, &tls.Config{Certificates: []tls.Certificate{certificate}}))
+					_ = server.ServeTLS(tls.NewListener(wire, &tls.Config{Certificates: []tls.Certificate{certificate}}))
 				}()
 			} else {
-				go func() { _ = server.ServeTCP(listener) }()
+				go func() { _ = server.ServeTCP(wire) }()
 			}
 
 			app := testDiagnosticServer(t, t.TempDir())
@@ -100,6 +114,7 @@ func TestSIPStreamTransportRegisterAndCall(t *testing.T) {
 				t.Fatalf("Digest stage missing: %+v", state.Events)
 			}
 			source := <-registered
+			firstConnection := <-wire.connections
 			diagnosticRequest(t, app, "POST", sipAPI+"/dial", 202, []byte(`{"target":"2002"}`))
 			waitSIPPhone(t, app, "registered", "incall")
 			select {
@@ -127,6 +142,36 @@ func TestSIPStreamTransportRegisterAndCall(t *testing.T) {
 				t.Fatal(err)
 			}
 			waitSIPPhone(t, app, "registered", "ended")
+			// Drop the established signalling flow during a second call.
+			diagnosticRequest(t, app, "POST", sipAPI+"/dial", 202, []byte(`{"target":"2002"}`))
+			old := waitSIPPhone(t, app, "registered", "incall")
+			if err := firstConnection.Close(); err != nil {
+				t.Fatal(err)
+			}
+			state = waitSIPPhone(t, app, "registered", "ended")
+			reconnect := state.Reconnect
+			if reconnect == nil || reconnect.Recovered != 1 || reconnect.Attempts == 0 ||
+				reconnect.OldCallID != old.Call.ID || reconnect.OldMediaReleased.Before(reconnect.DisconnectedAt) ||
+				reconnect.RegisteredAt.Before(reconnect.OldMediaReleased) || state.LocalAddress == source {
+				t.Fatalf("missing signal reconnect / old RTP release: %+v", reconnect)
+			}
+			oldAddress, err := net.ResolveUDPAddr("udp4", old.Call.MediaLocal)
+			if err != nil {
+				t.Fatal(err)
+			}
+			releasedSocket, err := net.ListenUDP("udp4", oldAddress)
+			if err != nil {
+				t.Fatal("old RTP port still in use", err)
+			}
+			releasedSocket.Close()
+			select {
+			case source = <-registered:
+				if source != state.LocalAddress {
+					t.Fatal("new registration did not use the new connection", source)
+				}
+			case <-time.After(time.Second):
+				t.Fatal("missing fresh REGISTER after stream shutdown")
+			}
 			client, err := sipgo.NewClient(pbx, sipgo.WithClientAddr(listener.Addr().String()))
 			if err != nil {
 				t.Fatal(err)
@@ -157,7 +202,21 @@ func TestSIPStreamTransportRegisterAndCall(t *testing.T) {
 			if err := dialog.Ack(ctx); err != nil {
 				t.Fatal(err)
 			}
-			waitSIPPhone(t, app, "registered", "incall")
+			inbound := waitSIPPhone(t, app, "registered", "incall")
+			if inbound.Call.ID == old.Call.ID || inbound.Call.Direction != "inbound" {
+				t.Fatal("new connection did not establish a new inbound dialog")
+			}
+			media.SetReadDeadline(time.Now().Add(time.Second))
+			buf := make([]byte, 512)
+			for {
+				_, addr, err := media.ReadFromUDP(buf)
+				if err != nil {
+					t.Fatal("no RTP from recovered call", err)
+				}
+				if addr.String() == inbound.Call.MediaLocal {
+					break
+				}
+			}
 			if err := dialog.Bye(ctx); err != nil {
 				t.Fatal(err)
 			}

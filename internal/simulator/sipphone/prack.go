@@ -152,7 +152,7 @@ func (a *agent) awaitPRACK(c *phoneCall, tx sip.ServerTransaction, dialog *sipgo
 		case <-c.hangup:
 			respond(dialog.InviteRequest, tx, 603, "Decline")
 			return false, nil
-		case <-a.ctx.Done():
+		case <-a.flow.ctx.Done():
 			respond(dialog.InviteRequest, tx, 480, "Temporarily Unavailable")
 			return false, nil
 		case <-dialog.Context().Done():
