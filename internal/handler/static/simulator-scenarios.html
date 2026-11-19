@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="/static/diagnostics.css">
   <link rel="stylesheet" href="/static/simulators.css">
   <script src="/static/hls.min.js" defer></script>
+  <script src="/static/mpegts.js" defer></script>
   <script src="/static/player-diagnostics.js" defer></script>
   <script src="/static/simulator-scenarios.js" defer></script>
 </head>
@@ -18,7 +19,7 @@
     <nav aria-label="主导航"><a href="/diagnostics">排障工作台</a><a href="/simulators" aria-current="page">模拟器</a></nav>
   </div></header>
   <main id="main" tabindex="-1">
-    <div class="page-heading"><div><h1>场景回归</h1><p class="muted">保存 GB28181 点播或 HLS 直播场景，对比重复运行结果。</p></div></div>
+    <div class="page-heading"><div><h1>场景回归</h1><p class="muted">保存 GB28181、RTSP 和 HLS 场景，对比重复运行结果。</p></div></div>
     <p id="notice" class="error" role="alert" hidden></p>
     <div class="simulator-grid">
       <section class="panel">
@@ -34,6 +35,7 @@
                   <option value="gb-no_rtp">GB28181 ACK 后无 RTP</option>
                   <option value="gb-tcp_recovery">GB28181 SIP TCP 断开后恢复点播</option>
                   <option value="gb-udp_recovery">GB28181 UDP 心跳无应答后恢复点播</option>
+                  <option value="rtsp-reconnect">RTSP 会话断开后重新出画</option>
                   <option value="hls-not_found">HLS 直播首次 404 后恢复</option>
                   <option value="hls-truncate">HLS 直播正文截断后恢复</option>
                 </select></div>
@@ -49,9 +51,9 @@
               <input id="import-preset" type="file" accept=".json,application/json">
             </fieldset>
           </form>
-          <p class="muted field-hint">HLS 场景运行时请保持页面在前台，可观察实际播放器恢复。</p>
+          <p class="muted field-hint">播放场景运行时请保持页面在前台，可观察实际播放器恢复。</p>
           <p class="field-hint" id="progress" role="status">等待运行</p>
-          <video id="scenario-player" controls muted playsinline aria-label="HLS 场景播放器" hidden></video>
+          <video id="scenario-player" controls muted playsinline aria-label="场景播放器" hidden></video>
         </div>
       </section>
       <section class="panel">

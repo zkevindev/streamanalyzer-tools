@@ -68,6 +68,7 @@
                 <div><label for="clock-offset">设备时钟偏差（秒）</label><input id="clock-offset" name="clock_offset_seconds" type="number" min="-3600" max="3600" value="0"></div>
               </div>
               <label class="sim-check"><input id="silent-udp" type="checkbox"> RTSP UDP 握手成功但不发送 RTP</label>
+              <label class="sim-check"><input id="rtsp-outage" type="checkbox"> 点播后断开会话，同一地址 3 秒后恢复</label>
               <label class="sim-check"><input id="video-gap" type="checkbox"> TCP 点播后视频停包 5 秒，测试音持续</label>
               <p class="muted field-hint">填入 SOAP 用户名和密码后，媒体查询要求 UsernameToken PasswordDigest。客户端可读取设备时钟后重试。</p>
             </details>
@@ -102,6 +103,7 @@
             <div><dt>SOAP 鉴权</dt><dd id="soap-auth"></dd></div>
             <div><dt>RTSP 鉴权</dt><dd id="rtsp-auth"></dd></div>
             <div><dt>RTSP 传输观测</dt><dd id="transport-observation"></dd></div>
+            <div id="outage-observation-row" hidden><dt>RTSP 断线恢复</dt><dd id="outage-observation"></dd></div>
             <div id="gap-observation-row" hidden><dt>视频停包</dt><dd id="gap-observation"></dd></div>
             <div><dt>主码流 <span id="main-profile-detail"></span></dt><dd id="rtsp-url"></dd></div>
             <div><dt>子码流 <span id="sub-profile-detail"></span></dt><dd id="rtsp-sub-url"></dd></div>
