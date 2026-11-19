@@ -59,6 +59,9 @@ func planTS(raw []byte, fault string) ([]chunk, error) {
 	if len(raw) < tsPacketBytes || len(raw)%tsPacketBytes != 0 {
 		return nil, errors.New("TS 分包长度无效")
 	}
+	if fault == "program_outage" {
+		return planTwoPrograms(raw)
+	}
 	switchOffset := len(raw)
 	if fault == "pmt_pid_switch" {
 		var err error

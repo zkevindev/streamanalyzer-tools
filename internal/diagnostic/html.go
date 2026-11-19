@@ -475,9 +475,12 @@ thead{color:#52657e;background:#f7f9fc}
 {{end}}
 {{template "codecRows" $.Report.Metrics}}
 </dl>
+{{if .Programs}}<h3>节目连续性</h3>
+<div class="scroll"><table><thead><tr><th>节目 / PMT PID</th><th>媒体 PID</th><th>收到 TS 包</th><th>连续计数错误</th><th>首次切换后收到 TS 包</th><th>首次切换后连续计数错误</th></tr></thead>
+<tbody>{{range .Programs}}{{$program := .}}{{range .Streams}}<tr><td>{{$program.Number}} / {{pid $program.PMTPID}}</td><td>{{pid .PID}}</td><td>{{.Packets}}</td><td>{{.ContinuityErrors}}</td><td>{{if .AfterSwitchPackets}}{{.AfterSwitchPackets}}{{else}}—{{end}}</td><td>{{if .AfterSwitchErrors}}{{.AfterSwitchErrors}}{{else}}—{{end}}</td></tr>{{end}}{{end}}</tbody></table></div>{{end}}
 {{if .ProgramMaps}}<h3>PMT 与媒体 PID 切换</h3>
 <div class="scroll"><table><thead><tr><th scope="col">节目 / PMT PID</th><th scope="col">切换偏移</th><th scope="col">版本</th><th scope="col">PCR PID</th><th scope="col">原媒体 PID</th><th scope="col">新媒体 PID / 首包</th></tr></thead>
-<tbody>{{range .ProgramMaps}}<tr><td>{{.Program}} / {{pid .PMTPID}}</td><td>{{.AtMS}} ms</td><td>{{.Before.Version}} → {{.After.Version}}</td><td>{{pid .Before.PCRPID}} → {{pid .After.PCRPID}}</td>
+<tbody>{{range .ProgramMaps}}<tr><td>{{.Program}} / {{if .BeforePMTPID}}{{pid .BeforePMTPID}} → {{end}}{{pid .PMTPID}}</td><td>{{.AtMS}} ms</td><td>{{.Before.Version}} → {{.After.Version}}</td><td>{{pid .Before.PCRPID}} → {{pid .After.PCRPID}}</td>
 <td>{{range .Before.Streams}}<div>{{pid .PID}}</div>{{end}}</td><td>{{range .After.Streams}}<div>{{pid .PID}} · {{if .FirstPacketMS}}{{.FirstPacketMS}} ms{{else}}未观测{{end}}</div>{{end}}</td></tr>{{end}}</tbody></table></div>{{end}}
 {{if .PIDs}}<h3>PID 明细{{if gt .PIDCount (len .PIDs)}}（显示 {{len .PIDs}} / {{.PIDCount}}）{{end}}</h3>
 <div class="scroll"><table>

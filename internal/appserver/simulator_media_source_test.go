@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net"
 	"net/http"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -83,7 +84,7 @@ func TestMediaSimulatorDatagramFaults(t *testing.T) {
 		protocol, fault string
 		multicast       bool
 	}{
-		{"rtp-ts", "rtp_drop", false}, {"rtp-ts", "rtp_reorder", false}, {"rtp-ts", "rtp_duplicate", false}, {"rtp-ts", "pmt_pid_switch", false}, {"udp-ts", "continuity", true},
+		{"rtp-ts", "rtp_drop", false}, {"rtp-ts", "rtp_reorder", false}, {"rtp-ts", "rtp_duplicate", false}, {"rtp-ts", "pmt_pid_switch", false}, {"rtp-ts", "program_outage", false}, {"udp-ts", "continuity", true},
 	} {
 		t.Run(tc.fault, func(t *testing.T) {
 			t.Parallel()
@@ -112,7 +113,7 @@ func TestMediaSimulatorDatagramFaults(t *testing.T) {
 			config, _ := json.Marshal(cfg)
 			source := decodeDiagnostic[mediasource.Status](t, diagnosticRequest(t, server, "POST", api+"/start", http.StatusCreated, config))
 			seconds := 4
-			if tc.fault == "pmt_pid_switch" {
+			if tc.fault == "pmt_pid_switch" || tc.fault == "program_outage" {
 				seconds = 5
 			}
 			request, _ := json.Marshal(diagnostic.SampleRequest{Protocol: tc.protocol, URL: source.URL, Seconds: seconds})
@@ -162,6 +163,36 @@ func TestMediaSimulatorDatagramFaults(t *testing.T) {
 				afterJSON, _ := json.Marshal(offline.Report.MPEGTS.ProgramMaps)
 				if string(beforeJSON) != string(afterJSON) {
 					t.Fatalf("offline replay lost program map evidence: %s vs %s", beforeJSON, afterJSON)
+				}
+			case "program_outage":
+				if m.RTPMissing != 0 || m.ContinuityErrors != 0 || m.PSIErrors != 0 || len(m.Programs) != 2 || len(m.ProgramMaps) != 1 {
+					t.Fatalf("unexpected multi-program report: %+v", m)
+				}
+				change := m.ProgramMaps[0]
+				if change.Program != 1 || change.BeforePMTPID != 4096 || change.PMTPID != 4100 || change.After.PCRPID != 300 ||
+					m.Programs[1].Number != 2 || m.Programs[1].PMTPID != 4097 || len(m.Programs[1].Streams) != 2 {
+					t.Fatalf("incorrect multi-program maps: %+v / %+v", change, m.Programs)
+				}
+				for _, stream := range change.After.Streams {
+					if stream.FirstPacketMS == nil || *stream.FirstPacketMS-change.AtMS < 750 {
+						t.Fatalf("program 1 outage not observed: %#v", stream)
+					}
+				}
+				for _, stream := range m.Programs[1].Streams {
+					if stream.AfterSwitchPackets == nil || *stream.AfterSwitchPackets == 0 || stream.AfterSwitchErrors == nil || *stream.AfterSwitchErrors != 0 {
+						t.Fatalf("program 2 continuity missing: %+v", stream)
+					}
+				}
+				path := "/api/diagnostics/runs/" + run.ID
+				html := diagnosticRequest(t, server, "GET", path+"/report.html", http.StatusOK, nil)
+				if !strings.Contains(string(html), "节目连续性") {
+					t.Fatal("report missed program continuity")
+				}
+				bundle := diagnosticRequest(t, server, "GET", path+"/evidence.zip", http.StatusOK, nil)
+				replay := decodeDiagnostic[diagnostic.Run](t, diagnosticRequest(t, server, "POST", "/api/diagnostics/import", http.StatusCreated, bundle))
+				offline := waitDiagnostic(t, server, "/api/diagnostics/runs/"+replay.ID)
+				if !reflect.DeepEqual(m.Programs, offline.Report.MPEGTS.Programs) {
+					t.Fatal("program continuity changed after reimport")
 				}
 			case "continuity":
 				if m.ContinuityErrors != 1 {

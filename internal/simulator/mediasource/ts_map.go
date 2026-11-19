@@ -33,6 +33,10 @@ func newFixturePID(pid uint16) uint16 {
 }
 
 func switchFixturePMT(packet []byte) error {
+	return rewriteFixturePMT(packet, 1, true, newFixturePID)
+}
+
+func rewriteFixturePMT(packet []byte, program uint16, bump bool, mapPID func(uint16) uint16) error {
 	payload := 4
 	if packet[3]&0x20 != 0 {
 		payload += int(packet[4]) + 1
@@ -49,11 +53,14 @@ func switchFixturePMT(packet []byte) error {
 		return errors.New("TS 测试流 PMT 长度无效")
 	}
 	section := packet[start:end]
-	version := (section[5] >> 1) & 31
-	section[5] = section[5]&0xc1 | ((version+1)&31)<<1
+	binary.BigEndian.PutUint16(section[3:], program)
+	if bump {
+		version := (section[5] >> 1) & 31
+		section[5] = section[5]&0xc1 | ((version+1)&31)<<1
+	}
 	replacePID := func(b []byte) {
 		value := binary.BigEndian.Uint16(b)
-		binary.BigEndian.PutUint16(b, value&0xe000|newFixturePID(value&0x1fff))
+		binary.BigEndian.PutUint16(b, value&0xe000|mapPID(value&0x1fff))
 	}
 	replacePID(section[8:])
 	i := 12 + int(binary.BigEndian.Uint16(section[10:])&0x0fff)
@@ -67,6 +74,11 @@ func switchFixturePMT(packet []byte) error {
 	if i != len(section)-4 {
 		return errors.New("TS 测试流 PMT 流描述长度无效")
 	}
+	writeFixtureCRC(section)
+	return nil
+}
+
+func writeFixtureCRC(section []byte) {
 	crc := ^uint32(0)
 	for _, value := range section[:len(section)-4] {
 		crc ^= uint32(value) << 24
@@ -79,7 +91,6 @@ func switchFixturePMT(packet []byte) error {
 		}
 	}
 	binary.BigEndian.PutUint32(section[len(section)-4:], crc)
-	return nil
 }
 
 func switchFixturePacket(packet []byte, pid uint16) error {
@@ -87,8 +98,12 @@ func switchFixturePacket(packet []byte, pid uint16) error {
 		return switchFixturePMT(packet)
 	}
 	if dst := newFixturePID(pid); dst != pid {
-		packet[1] = packet[1]&0xe0 | byte(dst>>8)
-		packet[2] = byte(dst)
+		setFixturePID(packet, dst)
 	}
 	return nil
+}
+
+func setFixturePID(packet []byte, pid uint16) {
+	packet[1] = packet[1]&0xe0 | byte(pid>>8)
+	packet[2] = byte(pid)
 }

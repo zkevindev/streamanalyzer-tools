@@ -19,11 +19,12 @@ type TSProgramMap struct {
 }
 
 type TSProgramMapChange struct {
-	Program uint16       `json:"program"`
-	PMTPID  uint16       `json:"pmt_pid"`
-	AtMS    int64        `json:"at_ms"`
-	Before  TSProgramMap `json:"before"`
-	After   TSProgramMap `json:"after"`
+	BeforePMTPID uint16       `json:"before_pmt_pid,omitempty"`
+	Program      uint16       `json:"program"`
+	PMTPID       uint16       `json:"pmt_pid"`
+	AtMS         int64        `json:"at_ms"`
+	Before       TSProgramMap `json:"before"`
+	After        TSProgramMap `json:"after"`
 }
 
 func sameProgramStreams(a, b []TSProgramPID) bool {
@@ -43,27 +44,37 @@ func (a *tsAnalyzer) programMap(state *tsPID, section []byte, pcr uint16, stream
 		next.Streams = append(next.Streams, TSProgramPID{PID: stream.pid, StreamType: stream.kind})
 	}
 	sort.Slice(next.Streams, func(i, j int) bool { return next.Streams[i].PID < next.Streams[j].PID })
-	if state.lastMap != nil && state.lastMap.Version == next.Version {
+	program := a.pmt[state.metrics.PID]
+	previous, known := a.programs[program]
+	if known && previous.pmt == state.metrics.PID && previous.mapping.Version == next.Version {
 		return
 	}
-	previous := state.lastMap
-	state.lastMap = &next
-	if previous == nil || previous.PCRPID == next.PCRPID && sameProgramStreams(previous.Streams, next.Streams) {
+	if !known && len(a.programs) >= tsReportPIDs {
 		return
+	}
+	a.programs[program] = tsProgramState{pmt: state.metrics.PID, mapping: next}
+	if !known || previous.pmt == state.metrics.PID && previous.mapping.PCRPID == next.PCRPID && sameProgramStreams(previous.mapping.Streams, next.Streams) {
+		return
+	}
+	if a.programSwitchBaseline == nil {
+		a.recordProgramBaselines()
 	}
 	if len(a.report.MPEGTS.ProgramMaps) >= 16 {
 		return
 	}
-	change := TSProgramMapChange{Program: a.pmt[state.metrics.PID], PMTPID: state.metrics.PID, AtMS: observed.ArrivalMS,
-		Before: TSProgramMap{Version: previous.Version, PCRPID: previous.PCRPID, Streams: slices.Clone(previous.Streams)},
+	change := TSProgramMapChange{Program: program, PMTPID: state.metrics.PID, AtMS: observed.ArrivalMS,
+		Before: TSProgramMap{Version: previous.mapping.Version, PCRPID: previous.mapping.PCRPID, Streams: slices.Clone(previous.mapping.Streams)},
 		After:  TSProgramMap{Version: next.Version, PCRPID: next.PCRPID, Streams: slices.Clone(next.Streams)}}
+	if previous.pmt != state.metrics.PID {
+		change.BeforePMTPID = previous.pmt
+	}
 	a.report.MPEGTS.ProgramMaps = append(a.report.MPEGTS.ProgramMaps, change)
 	for i := range change.After.Streams {
 		pid := &change.After.Streams[i]
 		a.pendingPMTPackets[pid.PID] = append(a.pendingPMTPackets[pid.PID], pid)
 	}
-	a.note("ts_program_map_change", "info", fmt.Sprintf("节目 %d 的 PMT 版本由 %d 切换为 %d，媒体或 PCR PID 已变化",
-		change.Program, previous.Version, next.Version), observed)
+	a.note("ts_program_map_change", "info", fmt.Sprintf("节目 %d 的节目映射已变化（PMT 版本 %d → %d）",
+		change.Program, previous.mapping.Version, next.Version), observed)
 }
 
 func (a *tsAnalyzer) firstAfterProgramMap(pid uint16, at int64) {

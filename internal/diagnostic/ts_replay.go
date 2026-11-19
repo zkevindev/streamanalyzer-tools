@@ -14,6 +14,7 @@ const (
 )
 
 type MPEGTSMetrics struct {
+	Programs         []TSProgramSummary   `json:"programs,omitempty"`
 	ProgramMaps      []TSProgramMapChange `json:"program_map_changes,omitempty"`
 	Packets          int                  `json:"packets"`
 	PacketSize       int                  `json:"packet_size,omitempty"`
@@ -52,25 +53,26 @@ type MPEGTSPIDMetrics struct {
 }
 
 type tsAnalyzer struct {
-	pendingPMTPackets map[uint16][]*TSProgramPID
-	onMedia           func(Event)
-	report            Report
-	seen              map[string]int
-	pids              map[uint16]*tsPID
-	pmt               map[uint16]uint16
-	patID             uint16
-	patVersion        byte
-	patSeen           bool
-	pcrPIDs           map[uint16]bool
-	rtp               map[uint32]*tsRTPSource
-	lastSSRC          uint32
-	hasSSRC           bool
-	rtpGap            []Event
-	generation        uint64
+	programs              map[uint16]tsProgramState
+	programSwitchBaseline map[uint16]MPEGTSPIDMetrics
+	pendingPMTPackets     map[uint16][]*TSProgramPID
+	onMedia               func(Event)
+	report                Report
+	seen                  map[string]int
+	pids                  map[uint16]*tsPID
+	pmt                   map[uint16]uint16
+	patID                 uint16
+	patVersion            byte
+	patSeen               bool
+	pcrPIDs               map[uint16]bool
+	rtp                   map[uint32]*tsRTPSource
+	lastSSRC              uint32
+	hasSSRC               bool
+	rtpGap                []Event
+	generation            uint64
 }
 
 type tsPID struct {
-	lastMap         *TSProgramMap
 	mediaKind       string
 	mediaGeneration uint64
 	generation      uint64
@@ -99,7 +101,7 @@ func newTSAnalyzer(manifest Manifest) *tsAnalyzer {
 			Metrics: Metrics{MediaTimingUnit: "pes"},
 		},
 		seen: make(map[string]int), pids: make(map[uint16]*tsPID), pmt: make(map[uint16]uint16),
-		pendingPMTPackets: make(map[uint16][]*TSProgramPID), pcrPIDs: make(map[uint16]bool), rtp: make(map[uint32]*tsRTPSource),
+		programs: make(map[uint16]tsProgramState), pendingPMTPackets: make(map[uint16][]*TSProgramPID), pcrPIDs: make(map[uint16]bool), rtp: make(map[uint32]*tsRTPSource),
 	}
 }
 
@@ -389,6 +391,7 @@ func (a *tsAnalyzer) finish() Report {
 		a.add(obs.EndReason, "info", endReasonText(obs.EndReason), obs.ElapsedMS, obs.ElapsedMS)
 	}
 
+	a.summarizeTSPrograms()
 	m.PIDCount = len(a.pids)
 	for _, state := range a.pids {
 		m.PIDs = append(m.PIDs, state.metrics)
