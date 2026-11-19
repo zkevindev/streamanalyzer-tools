@@ -24,10 +24,15 @@
         <form id="form" class="panel-body">
           <fieldset id="settings" disabled>
             <div class="sim-fields">
-              <div><label for="protocol">协议</label><select id="protocol"><option value="http-flv">HTTP-FLV</option><option value="http-ts">HTTP MPEG-TS</option></select></div>
+              <div><label for="protocol">协议</label><select id="protocol"><option value="http-flv">HTTP-FLV</option><option value="http-ts">HTTP MPEG-TS</option><option value="udp-ts">UDP MPEG-TS</option><option value="rtp-ts">RTP MPEG-TS</option></select></div>
               <div><label for="fault">场景</label><select id="fault"></select></div>
             </div>
-            <p class="muted field-hint">每次 GET 从头按原节奏发送，可用同一地址重复采样。</p>
+            <div id="datagram-config" class="sim-fields" hidden>
+              <div><label for="target">IPv4 目的地址</label><input id="target" value="127.0.0.1" placeholder="单播或组播地址"></div>
+              <div><label for="target-port">目的端口</label><input id="target-port" type="number" min="1" max="65535" value="5000"></div>
+              <div><label for="network-interface">组播网卡</label><input id="network-interface" placeholder="例如 en0"></div>
+            </div>
+            <p id="transport-hint" class="muted field-hint">每次 GET 从头按原节奏发送，可用同一地址重复采样。</p>
           </fieldset>
           <div class="sim-controls"><button id="start" disabled>启动媒体源</button><button type="button" id="stop" class="secondary" disabled>停止</button></div>
         </form>
@@ -45,7 +50,8 @@
             <div><dt>最近触发时间</dt><dd id="last-fault">—</dd></div>
             <div><dt>源地址</dt><dd id="url"></dd></div>
           </dl>
-          <div class="sim-controls"><a id="open" class="button" hidden>打开排障工作台</a></div>
+          <div class="sim-controls"><a id="open" class="button" hidden>打开排障工作台</a><button id="send-datagrams" class="secondary" type="button" hidden>发送一轮</button></div>
+          <p id="sender-info" class="field-hint" hidden></p>
         </div>
       </section>
     </div>

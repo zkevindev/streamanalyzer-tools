@@ -2,6 +2,7 @@ package appserver
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
 	"slices"
 	"strings"
@@ -73,6 +74,75 @@ func TestMediaSimulatorReportsControlledFaults(t *testing.T) {
 			}
 			diagnosticRequest(t, server, "POST", api+"/stop", http.StatusOK, nil)
 			diagnosticRequest(t, server, "GET", started.URL, http.StatusNotFound, nil)
+		})
+	}
+}
+
+func TestMediaSimulatorDatagramFaults(t *testing.T) {
+	for _, tc := range []struct {
+		protocol, fault string
+		multicast       bool
+	}{
+		{"rtp-ts", "rtp_drop", false}, {"rtp-ts", "rtp_reorder", false}, {"rtp-ts", "rtp_duplicate", false}, {"udp-ts", "continuity", true},
+	} {
+		t.Run(tc.fault, func(t *testing.T) {
+			t.Parallel()
+			const api = "/api/simulators/media"
+			server := testDiagnosticServer(t, t.TempDir())
+			reservation := openSimulatorUDP(t)
+			port := reservation.LocalAddr().(*net.UDPAddr).Port
+			reservation.Close()
+			cfg := mediasource.Config{Protocol: tc.protocol, Fault: tc.fault, TargetIP: "127.0.0.1", TargetPort: port}
+			if tc.multicast {
+				nics, err := net.Interfaces()
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, nic := range nics {
+					if nic.Flags&net.FlagLoopback != 0 {
+						cfg.Interface = nic.Name
+						break
+					}
+				}
+				if cfg.Interface == "" {
+					t.Skip("loopback interface unavailable")
+				}
+				cfg.TargetIP = "239.255.103.220"
+			}
+			config, _ := json.Marshal(cfg)
+			source := decodeDiagnostic[mediasource.Status](t, diagnosticRequest(t, server, "POST", api+"/start", http.StatusCreated, config))
+			request, _ := json.Marshal(diagnostic.SampleRequest{Protocol: tc.protocol, URL: source.URL, Seconds: 4})
+			run := decodeDiagnostic[diagnostic.Run](t, diagnosticRequest(t, server, "POST", "/api/diagnostics/runs", http.StatusAccepted, request))
+			time.Sleep(150 * time.Millisecond)
+			diagnosticRequest(t, server, "POST", api+"/send", http.StatusAccepted, nil)
+			report := waitDiagnostic(t, server, "/api/diagnostics/runs/"+run.ID).Report
+			if report == nil || report.MPEGTS == nil || report.MPEGTS.Packets == 0 {
+				t.Fatal("MPEG-TS packets did not reach diagnostic capture")
+			}
+			m := report.MPEGTS
+			switch tc.fault {
+			case "rtp_drop":
+				if m.RTPMissing != 1 {
+					t.Fatalf("wrong RTP missing count: %+v", m)
+				}
+			case "rtp_reorder":
+				if m.RTPOutOfOrder != 1 || m.RTPMissing != 0 {
+					t.Fatalf("wrong RTP reorder count: %+v", m)
+				}
+			case "rtp_duplicate":
+				if m.RTPDuplicates != 1 {
+					t.Fatalf("wrong RTP duplicates: %+v", m)
+				}
+			case "continuity":
+				if m.ContinuityErrors != 1 {
+					t.Fatalf("wrong TS continuity errors: %+v", m)
+				}
+			}
+			sent := decodeDiagnostic[mediasource.Status](t, diagnosticRequest(t, server, "GET", api, http.StatusOK, nil))
+			if sent.SentDatagrams == 0 || sent.FaultHits != 1 || sent.SendError != "" {
+				t.Fatalf("wrong sender evidence: %+v", sent)
+			}
+			diagnosticRequest(t, server, "POST", api+"/stop", http.StatusOK, nil)
 		})
 	}
 }
