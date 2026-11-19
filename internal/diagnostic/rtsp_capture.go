@@ -190,7 +190,7 @@ func (capture *rtspCapture) dial(ctx context.Context, network, address string, c
 	capture.connections = append(capture.connections, connection)
 	id := len(capture.connections)
 	capture.metadata.Connections = id
-	if capture.metadata.Version == 2 {
+	if capture.metadata.Transport == "udp" {
 		if address, ok := connection.RemoteAddr().(*net.TCPAddr); ok {
 			capture.metadata.ControlPeerIP = address.IP.String()
 		}
@@ -234,7 +234,7 @@ func (capture *rtspCapture) onRequest(request *base.Request) {
 	capture.mu.Lock()
 	defer capture.mu.Unlock()
 	cseq, _ := strconv.Atoi(rtspHeader(request.Header, "CSeq"))
-	if capture.metadata.Version == 2 && request.Method == base.Setup {
+	if capture.metadata.Transport == "udp" && request.Method == base.Setup {
 		var transport headers.Transport
 		if transport.Unmarshal(request.Header["Transport"]) == nil && transport.ClientPorts != nil {
 			capture.udpClientPorts[cseq] = *transport.ClientPorts
@@ -365,6 +365,11 @@ func sampleRTSPTransportWithTLS(ctx context.Context, dir string, target *url.URL
 	observation := Observation{Origin: origin(target), StartedAt: start.UTC(), RequestedSeconds: seconds}
 	failureStage := "rtsp_describe"
 	playing := false
+	var preview *rtspPreview
+	if player := capturePlayer(ctx); player != nil {
+		preview = newRTSPPreview(player)
+		capture.metadata.Version = rtspPreviewArchiveVersion
+	}
 	var desc *description.Session
 	if err = client.Start(); err == nil {
 		desc, _, err = client.Describe(u)
@@ -412,6 +417,9 @@ func sampleRTSPTransportWithTLS(ctx context.Context, dir string, target *url.URL
 			}
 		}
 		if err == nil {
+			if preview != nil {
+				preview.start(client, desc)
+			}
 			failureStage = "rtsp_play"
 			_, err = client.Play(nil)
 			playing = err == nil
@@ -423,6 +431,16 @@ func sampleRTSPTransportWithTLS(ctx context.Context, dir string, target *url.URL
 			capture.stage("rtsp_receive", receiveStart)
 		}
 		client.Close()
+	}
+	if preview != nil {
+		if !preview.started {
+			preview.fail("capture_setup_failed")
+			close(preview.done)
+		} else if !playing && !preview.failed {
+			preview.fail("capture_setup_failed")
+		}
+		result := preview.finish()
+		capture.metadata.Preview = &result
 	}
 	observation.ElapsedMS = capture.now()
 	capture.mu.Lock()
@@ -534,7 +552,7 @@ func writeRTSPArchive(dir string, metadata rtspArchiveMetadata, sdp []byte) (Art
 		return Artifact{}, ErrInvalid
 	}
 	names := []string{rtspWireName, rtspSDPName, rtspMetadataName}
-	if metadata.Version == 2 {
+	if metadata.Transport == "udp" {
 		names = append(names, rtspUDPDataName, rtspUDPIndexName)
 	}
 	for _, name := range names {

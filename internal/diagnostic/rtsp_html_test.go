@@ -76,7 +76,7 @@ func TestRTSPHTMLNoRTPAndMissingNativeMetrics(t *testing.T) {
 				t.Fatal(err)
 			}
 			body := output.String()
-			if !strings.Contains(body, tc.want) || !strings.Contains(body, "当前版本不提供浏览器 RTSP 预览") || !strings.Contains(body, "首个有效 RTP 包</dt><dd>未观测</dd>") {
+			if !strings.Contains(body, tc.want) || !strings.Contains(body, "未记录转封装能力") || !strings.Contains(body, "首个有效 RTP 包</dt><dd>未观测</dd>") {
 				t.Fatal("missing native fields or raw RTSP bytes became a measured RTP arrival")
 			}
 			if tc.metrics != nil && !strings.Contains(body, "TLS 阶段</dt><dd>不适用（RTSP）</dd>") {
@@ -98,5 +98,28 @@ func TestRTSPHTMLFragmentEscapesText(t *testing.T) {
 	}
 	if report.RTSP.Tracks[0].Codec != `<img src=x onerror="alert(1)">` {
 		t.Fatal("HTML formatting mutated its input report")
+	}
+}
+
+func TestRTSPPreviewHTMLSeparatesPipelineFromDecodedPlayback(t *testing.T) {
+	for _, tc := range []struct{ state, reason, expect string }{
+		{"ready", "", "已输出媒体"}, {"unsupported", "codec_unsupported", "编码或封装暂不支持"}, {"failed", "queue_limit", "本机预览队列达到上限"},
+	} {
+		t.Run(tc.state, func(t *testing.T) {
+			report := Report{Manifest: Manifest{Protocol: ProtocolRTSP}, RTSP: &RTSPMetrics{Preview: &RTSPPreviewReport{Version: 1, State: tc.state, ReasonCode: tc.reason, ClockAlignment: "receiver_rtp", VideoTrackID: 1, VideoCodec: "h264", AudioReason: "codec_unsupported", VideoAUs: 12}}}
+			var output bytes.Buffer
+			if err := RenderHTML(&output, report, nil, ""); err != nil {
+				t.Fatal(err)
+			}
+			body := output.String()
+			for _, expected := range []string{tc.expect, "同次采样本机预览", "不另建拉流连接", "不代表已验证源端音画同步", "不是解码或呈帧数", "音轨预览不支持，已静音", "音频访问单元</dt><dd>0</dd>"} {
+				if !strings.Contains(body, expected) {
+					t.Errorf("missing %s", expected)
+				}
+			}
+			if strings.Contains(body, "未记录转封装能力") {
+				t.Fatal("recorded capability rendered as unknown")
+			}
+		})
 	}
 }

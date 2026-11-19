@@ -15,7 +15,7 @@ import (
 )
 
 func validRTSPUDPMetadata(metadata rtspArchiveMetadata, session *description.Session, responses map[int]*base.Response) (map[int]rtspUDPTransport, error) {
-	if metadata.Version != 2 || metadata.Transport != "udp" || len(metadata.Channels) != 0 || len(metadata.UDPSockets) > maxRTSPUDPSockets || len(metadata.UDPTransports) > maxRTSPTracks {
+	if (metadata.Version != 2 && metadata.Version != rtspPreviewArchiveVersion) || metadata.Transport != "udp" || len(metadata.Channels) != 0 || len(metadata.UDPSockets) > maxRTSPUDPSockets || len(metadata.UDPTransports) > maxRTSPTracks {
 		return nil, ErrInvalid
 	}
 	if metadata.Connections == 0 {
@@ -209,4 +209,23 @@ func validRTSPLegacyArchiveFields(metadata rtspArchiveMetadata, data []byte) boo
 		}
 	}
 	return true
+}
+
+// TCP archives never carry UDP socket/peer metadata, including empty fields.
+// Version 3's preview field is intentionally allowed by this shape check.
+func validRTSPTCPArchiveFields(data []byte) bool {
+	for _, key := range []string{"transport", "control_peer_ip", "udp_sockets", "udp_transports"} {
+		if rtspArchiveHasField(data, key) {
+			return false
+		}
+	}
+	return true
+}
+func rtspArchiveHasField(data []byte, key string) bool {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(data, &fields) != nil {
+		return true
+	}
+	_, exists := fields[key]
+	return exists
 }

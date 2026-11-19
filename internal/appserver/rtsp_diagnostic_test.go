@@ -43,7 +43,7 @@ func TestRTSPDiagnosticHTTPWorkflow(t *testing.T) {
 	target, _ := url.Parse(status.StreamURL)
 	target.User = url.UserPassword("camera-user-private", "camera-password-private")
 	target.RawQuery = "token=camera-token-private"
-	request, _ := json.Marshal(diagnostic.SampleRequest{Protocol: diagnostic.ProtocolRTSP, URL: target.String(), Seconds: 1, Playback: true})
+	request, _ := json.Marshal(diagnostic.SampleRequest{Protocol: diagnostic.ProtocolRTSP, URL: target.String(), Seconds: 1, Playback: false})
 	const api = "/api/diagnostics"
 	run := decodeDiagnostic[diagnostic.Run](t, diagnosticRequest(t, server, http.MethodPost, api+"/runs", http.StatusAccepted, request))
 	if run.Player != nil {

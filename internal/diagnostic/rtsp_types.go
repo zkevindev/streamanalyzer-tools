@@ -57,6 +57,7 @@ type RTSPTrackMetrics struct {
 }
 
 type RTSPMetrics struct {
+	Preview               *RTSPPreviewReport  `json:"preview,omitempty"`
 	Boundary              string              `json:"boundary"`
 	Transport             string              `json:"transport"`
 	Secure                bool                `json:"secure"`
@@ -100,6 +101,7 @@ type rtspChannel struct {
 }
 
 type rtspArchiveMetadata struct {
+	Preview           *RTSPPreviewReport  `json:"preview,omitempty"`
 	Version           int                 `json:"version"`
 	Connections       int                 `json:"connections"`
 	SDPConnectionID   int                 `json:"sdp_connection_id"`

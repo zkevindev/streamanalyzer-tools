@@ -80,11 +80,11 @@
                     this.received += data.byteLength;
                     this.onDataArrival(data, offset, this.received);
                 };
-                socket.onclose = ({code}) => {
+                socket.onclose = ({code, reason}) => {
                     this.socket = null;
                     // Queue overflow and failed subscription are transport errors, not capture EOF.
                     if (code !== socketNormalClose) {
-                        this.fail(code);
+                        this.fail(code, reason);
                         return;
                     }
                     this._status = LoaderStatus.kComplete;
@@ -92,9 +92,9 @@
                 };
             }
 
-            fail(code) {
+            fail(code, reason = '') {
                 this._status = LoaderStatus.kError;
-                this.onError(LoaderErrors.EXCEPTION, {code, msg: 'Capture WebSocket closed unexpectedly'});
+                this.onError(LoaderErrors.EXCEPTION, {code, preview: reason.startsWith('rtsp_preview:') ? (code === 1003 ? 'preview_unsupported' : code === 1013 ? 'preview_queue_limit' : 'preview_failed') : '', msg: 'Capture WebSocket closed unexpectedly'});
             }
 
             abort() {
@@ -607,7 +607,8 @@
             this.releaseMedia = () => player.destroy();
             player.on(mpegts.Events.ERROR, (type, detail, info) => {
                 if (type === mpegts.ErrorTypes.NETWORK_ERROR) {
-                    this.event('error', {code: info?.code === socketUnavailable ? 'no_stream' : 'network_error'});
+                    const preview = ['preview_unsupported', 'preview_queue_limit', 'preview_failed'].includes(info?.preview) ? info.preview : '';
+                    this.event(preview === 'preview_unsupported' ? 'unsupported' : 'error', {code: preview || (info?.code === socketUnavailable ? 'no_stream' : 'network_error')});
                 } else if (detail === mpegts.ErrorDetails.MEDIA_CODEC_UNSUPPORTED) {
                     this.event('unsupported', {code: 'unsupported'});
                 } else {

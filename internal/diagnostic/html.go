@@ -729,6 +729,11 @@ func playerReportState(player *PlayerReport) string {
 		}
 		return "采集完成"
 	case "unsupported":
+		for _, event := range player.Events {
+			if event.Kind == "unsupported" && event.Code == "preview_unsupported" {
+				return "RTSP 本机预览编码或封装不支持"
+			}
+		}
 		return "当前环境不支持该播放格式"
 	case "autoplay_blocked":
 		return "自动播放受限"
@@ -745,6 +750,10 @@ func playerReportState(player *PlayerReport) string {
 				return "播放器网络请求失败"
 			case "no_stream":
 				return "播放器未收到媒体流"
+			case "preview_failed":
+				return "RTSP 本机转封装失败，详见原生预览原因"
+			case "preview_queue_limit":
+				return "RTSP 本机预览队列达到上限"
 			}
 			break
 		}

@@ -69,7 +69,7 @@
                     <button type="submit">采样并保存原始流</button>
                 </div>
                 <label class="playback-option"><input id="analyze-playback" type="checkbox" aria-describedby="playback-capability-note"> 同时分析播放器体验</label>
-                <p id="playback-capability-note" class="field-hint muted" hidden>浏览器不直接播放 RTSP。原生控制与 RTP 采样仍可使用，本次不采集播放器首屏、缓冲或呈帧指标。</p>
+                <p id="playback-capability-note" class="field-hint muted" hidden>RTSP 预览复用同次采样的 RTP，在本机转封装 H.264 / AAC-LC 后播放。其他编码仍可采样和 dump；不支持的音轨将明确标记并静音，不进行转码。</p>
             </form>
         </section>
         <section class="panel" aria-labelledby="import-heading">
@@ -138,6 +138,7 @@
                         <p id="rtsp-boundary" class="timing-note muted"></p>
                         <dl id="rtsp-metrics" class="metrics"></dl>
                         <p id="rtsp-report-state" class="timing-note muted" role="status"></p>
+                        <dl id="rtsp-preview-metrics" class="metrics"></dl>
                         <h4>RTSP 控制请求</h4>
                         <p class="timing-note muted">时间以采样开始为基准。只展示受控方法、状态与数字时序，不展示请求地址、认证字段或 SDP 原文。</p>
                         <div id="rtsp-request-table"></div>
