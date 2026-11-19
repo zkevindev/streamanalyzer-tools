@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>模拟器场景回归 · Stream Analyzer</title>
+  <link rel="stylesheet" href="/static/workbench-theme.css">
+  <link rel="stylesheet" href="/static/diagnostics.css">
+  <link rel="stylesheet" href="/static/simulators.css">
+  <script src="/static/hls.min.js" defer></script>
+  <script src="/static/player-diagnostics.js" defer></script>
+  <script src="/static/simulator-scenarios.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">跳转到主要内容</a>
+  <header class="topbar"><div class="topbar-inner">
+    <a class="wordmark" href="/"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>Stream Analyzer</a>
+    <nav aria-label="主导航"><a href="/diagnostics">排障工作台</a><a href="/simulators" aria-current="page">模拟器</a></nav>
+  </div></header>
+  <main id="main" tabindex="-1">
+    <div class="page-heading"><div><h1>场景回归</h1><p class="muted">保存 GB28181 点播或 HLS 直播场景，对比重复运行结果。</p></div></div>
+    <p id="notice" class="error" role="alert" hidden></p>
+    <div class="simulator-grid">
+      <section class="panel">
+        <div class="panel-heading"><h2>场景配置</h2></div>
+        <div class="panel-body">
+          <form id="scenario-form">
+            <fieldset id="config">
+              <div class="sim-fields">
+                <div><label for="name">名称</label><input id="name" maxlength="80" value="GB28181 点播回环" required></div>
+                <div><label for="scenario">预期场景</label><select id="scenario">
+                  <option value="gb-passed">GB28181 收到关键帧</option>
+                  <option value="gb-no_ack">GB28181 暂缓 ACK</option>
+                  <option value="gb-no_rtp">GB28181 ACK 后无 RTP</option>
+                  <option value="hls-not_found">HLS 直播首次 404 后恢复</option>
+                  <option value="hls-truncate">HLS 直播正文截断后恢复</option>
+                </select></div>
+              </div>
+              <label for="preset">已保存预设</label>
+              <select id="preset"><option value="">选择预设</option></select>
+              <div class="sim-controls">
+                <button id="run" type="submit">运行场景</button>
+                <button id="save" type="button" class="secondary">保存预设</button>
+                <button id="export-preset" type="button" class="secondary">导出预设</button>
+              </div>
+              <label for="import-preset">导入预设 JSON</label>
+              <input id="import-preset" type="file" accept=".json,application/json">
+            </fieldset>
+          </form>
+          <p class="muted field-hint">HLS 场景运行时请保持页面在前台，可观察实际播放器恢复。</p>
+          <p class="field-hint" id="progress" role="status">等待运行</p>
+          <video id="scenario-player" controls muted playsinline aria-label="HLS 场景播放器" hidden></video>
+        </div>
+      </section>
+      <section class="panel">
+        <div class="panel-heading"><h2>运行记录</h2></div>
+        <div class="panel-body">
+          <p id="comparison" class="field-hint" hidden></p>
+          <p id="empty-history" class="muted">暂无运行记录</p>
+          <ol id="run-history" class="session-timeline" hidden></ol>
+        </div>
+      </section>
+    </div>
+  </main>
+</body>
+</html>
