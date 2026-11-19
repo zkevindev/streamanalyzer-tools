@@ -72,6 +72,7 @@ const selectedStalls = new Map();
 const pendingStallRequests = new Set();
 const pendingStallExplanations = new Set();
 const pendingStallStops = new Set();
+const openPlayerNetworkDetails = new Set();
 let currentReport;
 const investigationStates = { queued: '等待补查', running: '补查中', complete: '补查完成', partial: '保留部分结果', failed: '补查失败', canceled: '补查已停止' };
 const investigationMediaStates = { ready: '片段与截图已提取', partial: '媒体产物部分可用', unavailable: '媒体产物不可用', failed: '媒体提取失败' };
@@ -694,8 +695,57 @@ const playerNetworkOutcomes = { complete: '完成', http_error: '上游 HTTP 错
 const playerNetworkOffset = (value) => value == null ? '未观测' : String(value);
 const playerNetworkBoundaryNote = '本地代理记录实际播放连接的上游请求：响应头、首段响应体和读取字节均在代理侧观测。结束偏移可能包含向播放器写出数据的时间；写出完成不代表浏览器已接收、解码或可播放。';
 const playerNetworkTimingNote = '偏移从后端采样开始计时；未完成请求的结束列标为“截至”，表示快照时刻。缺失字段显示“未观测”，0 为已观测值。';
+const playerNetworkPhases = [['dns', 'DNS'], ['connect', 'TCP 建连'], ['tls', 'TLS 握手'], ['request_send', '发送请求'], ['response_first_byte', '等待首字节'], ['response_headers', '接收响应头'], ['receive', '上游响应体阶段']];
+const playerNetworkFailureStages = { ...stageLabels, receive: '上游响应体阶段', proxy_write: '向播放器写出', proxy_limit: '代理资源限制', playlist: '播放列表处理' };
+const playerNetworkFailureCodes = { dns_error: 'DNS 失败', tls_error: 'TLS 失败', connection_refused: '连接被拒绝', timeout: '超时', canceled: '已取消', transport_error: '传输错误', redirect_error: '重定向失败', http_error: 'HTTP 错误', limit_exceeded: '达到限制', invalid_playlist: '播放列表无效', proxy_write_error: '向播放器写出失败' };
+const playerNetworkPhaseNote = '阶段耗时来自本地代理的上游观测，TTFB 从本跳开始计时。上游响应体阶段从响应头起至上游读取结束，可能受下游写出影响，不代表浏览器接收完成。未完成请求仅展示已记录部分。复用连接或未触发相关事件时，DNS/TCP/TLS 保持未观测；同阶段多次观测用 / 分列。';
 
-function renderPlayerNetworkRequests(requests) {
+function playerNetworkFailureLabel(stage, code) {
+    return [[stage, playerNetworkFailureStages], [code, playerNetworkFailureCodes]].filter(([value]) => value).map(([value, labels]) => labels[value] ? `${labels[value]} [${value}]` : value).join(' · ') || '未记录';
+}
+
+function playerNetworkPhaseDuration(stages, name) {
+    const observed = (stages || []).slice(0, 16).filter((stage) => stage.name === name);
+    return observed.length ? observed.map((stage) => String(stage.end_ms - stage.start_ms)).join(' / ') : '未观测';
+}
+
+function renderPlayerNetworkPhaseDetails(request, context) {
+    const details = element('details', '', 'player-network-phase-detail');
+    details.dataset.requestNumber = request.number;
+    const hops = (request.hops || []).slice(0, 8);
+    const chain = hops.map((hop) => hop.http_status > 0 ? String(hop.http_status) : '未观测').join(' → ');
+    details.append(element('summary', `#${request.number} · ${request.resource_id || '未标注资源'} · ${hops.length} 跳${chain ? ` · HTTP ${chain}` : ''}`));
+    let rendered = false;
+    const render = () => {
+        if (rendered) return;
+        rendered = true;
+        if (request.failure_stage || request.failure_code) details.append(element('p', `请求终止阶段 / 原因：${playerNetworkFailureLabel(request.failure_stage, request.failure_code)}`, 'timing-note network-terminal-failure'));
+        if (request.dropped_hops > 0) details.append(element('p', `逐跳记录达到采集上限或元数据预算，另有 ${request.dropped_hops} 跳未保存，重定向链可能不完整。`, 'timing-note network-hop-dropped'));
+        if (!hops.length) details.append(element('p', '此请求未包含可展示的逐跳阶段记录。', 'timing-note muted'));
+        else {
+            const table = renderTable(['跳', '上游 HTTP', '开始偏移 (ms)', '结束 / 已记录至偏移 (ms)', '连接复用', 'TTFB (ms)', ...playerNetworkPhases.map(([, label]) => `${label} (ms)`), '本跳故障阶段 / 原因'], hops.map((hop) => [
+                `#${hop.number}`, hop.http_status > 0 ? String(hop.http_status) : '未观测', playerNetworkOffset(hop.start_ms), playerNetworkOffset(hop.end_ms),
+                hop.connection_reused == null ? '未观测' : hop.connection_reused ? '已复用' : '未复用', playerNetworkOffset(hop.ttfb_ms),
+                ...playerNetworkPhases.map(([name]) => playerNetworkPhaseDuration(hop.stages, name)), playerNetworkFailureLabel(hop.failure_stage, hop.failure_code),
+            ]));
+            table.tabIndex = 0;
+            table.setAttribute('role', 'region');
+            table.setAttribute('aria-label', `请求 ${request.number} 的逐跳阶段耗时，可横向滚动`);
+            details.append(table);
+        }
+        if ((request.hops || []).length > hops.length) details.append(element('p', `页面仅展示前 ${hops.length} 跳，另有 ${request.hops.length - hops.length} 跳已保存记录可在报告 JSON 或证据包中查看。`, 'timing-note muted'));
+        if (hops.some((hop) => hop.stages?.length > 16)) details.append(element('p', '页面仅展示每跳前 16 条阶段观测，其余已保存记录可在报告 JSON 或证据包中查看。', 'timing-note muted'));
+    };
+    const key = `${currentID}/${context}/${request.number}`;
+    details.addEventListener('toggle', () => {
+        if (details.open) { openPlayerNetworkDetails.add(key); render(); }
+        else openPlayerNetworkDetails.delete(key);
+    });
+    if (openPlayerNetworkDetails.has(key)) { render(); details.open = true; }
+    return details;
+}
+
+function renderPlayerNetworkRequests(requests, context = 'global') {
     const block = element('div', '', 'player-network-requests');
     if (!requests?.length) {
         block.append(element('p', '当前记录未包含实际播放请求。', 'timing-note muted'));
@@ -712,6 +762,14 @@ function renderPlayerNetworkRequests(requests) {
     table.setAttribute('role', 'region');
     table.setAttribute('aria-label', 'HLS 实际播放请求记录，可横向滚动');
     block.append(table);
+    const detailed = shown.filter((request) => request.hops?.length || request.dropped_hops > 0 || request.failure_stage || request.failure_code);
+    if (detailed.length) {
+        const phases = element('section', '', 'player-network-phase-list');
+        phases.append(element(context === 'global' ? 'h4' : 'h6', '逐跳阶段耗时'), element('p', playerNetworkPhaseNote, 'timing-note muted'));
+        for (const request of detailed) phases.append(renderPlayerNetworkPhaseDetails(request, context));
+        if (detailed.length < shown.length) phases.append(element('p', `另有 ${shown.length - detailed.length} 条已展示请求未包含逐跳阶段记录。`, 'timing-note muted network-phase-unobserved'));
+        block.append(phases);
+    } else block.append(element('p', '当前请求记录未包含逐跳阶段耗时，重新采样可补充。', 'timing-note muted network-phase-unobserved'));
     if (requests.length > shown.length) block.append(element('p', `页面仅展示前 ${shown.length} 条，另有 ${requests.length - shown.length} 条已保存记录可在报告 JSON 或证据包中查看。`, 'timing-note muted player-network-omitted'));
     return block;
 }
@@ -737,9 +795,11 @@ function renderPlayerNetwork(report) {
         ['上限外丢弃请求', network.dropped_requests ?? '未观测'],
     ]);
     node('player-network-table').replaceChildren(renderPlayerNetworkRequests(network.requests || []));
-    const dropped = network.dropped_requests || 0;
-    node('player-network-dropped').hidden = dropped <= 0;
-    node('player-network-dropped').textContent = dropped > 0 ? `采集达到上限，另有 ${dropped} 条请求未写入本记录，不能按完整请求历史分析。` : '';
+    const notices = [];
+    if (network.dropped_requests > 0) notices.push(`采集达到上限，另有 ${network.dropped_requests} 条请求未写入本记录，不能按完整请求历史分析。`);
+    if (network.dropped_hops > 0) notices.push(`逐跳记录达到采集上限或元数据预算，共有 ${network.dropped_hops} 跳未保存。`);
+    node('player-network-dropped').hidden = !notices.length;
+    node('player-network-dropped').textContent = notices.join(' ');
 }
 
 function renderStallSelection(stalls) {
@@ -952,7 +1012,7 @@ function renderInvestigation(item) {
     if (c.requests?.length) card.append(element('h5', '关联采样 HTTP 请求'), renderTable(['请求', '对象', 'HTTP', '开始偏移', '响应头偏移', 'TTFB'], c.requests.map((request) => [`#${request.number}`, requestKinds[request.kind] || request.kind || '媒体请求', request.http_status || '—', time(request.start_ms), time(request.end_ms), time(request.ttfb_ms)])));
     if (c.player_requests?.length || currentReport.manifest.protocol === 'hls') {
         const requests = element('section', '', 'stall-player-requests');
-        requests.append(element('h5', '关联实际播放请求'), element('p', playerNetworkBoundaryNote, 'timing-note muted'), element('p', playerNetworkTimingNote, 'timing-note muted'), renderPlayerNetworkRequests(c.player_requests || []));
+        requests.append(element('h5', '关联实际播放请求'), element('p', playerNetworkBoundaryNote, 'timing-note muted'), element('p', playerNetworkTimingNote, 'timing-note muted'), renderPlayerNetworkRequests(c.player_requests || [], item.id));
         card.append(requests);
     }
     card.append(element('h5', '关联证据'));

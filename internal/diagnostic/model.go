@@ -63,6 +63,7 @@ const explanationPrompt = "你是流媒体排障助手。请用中文，仅返�
 	"assessment 为基于观测的分层排查方向，不是根因判定。请遵循其限制，将候选方向写成待验证假设。" +
 	"player_network 和 player_requests 是实际 HLS 播放代理的请求证据，区别于采样连接 requests；首正文和字节数为代理上游观测，不能当作浏览器已接收、追加或解码。" +
 	"scheduling 区分浏览器长任务和定时器延后，区间已按前台播放覆盖裁剪；unsupported 或缺少指标不表示零次。时间重合不能证明 CPU 占用、解码故障或画面冻结，不得插值推断阻塞期间缓冲。" +
+	"播放请求 hops 是逐跳数字证据，ttfb_ms 为跳内相对耗时，其余时刻为采样偏移；未观测阶段不按零处理。dropped_hops 表示未采集，model_omitted_hops/stages 表示本次模型摘要省略。" +
 	"没有足够证据时，给出简洁摘要并返回空 hypotheses。"
 
 type modelClient struct {
@@ -214,7 +215,7 @@ type modelStallInvestigation struct {
 	BufferSamples         []PlayerBufferSample   `json:"buffer_samples"`
 	Keyframes             []Event                `json:"keyframes"`
 	Requests              []modelHTTPRequest     `json:"requests,omitempty"`
-	PlayerRequests        []PlayerNetworkRequest `json:"player_requests,omitempty"`
+	PlayerRequests        []modelPlayerRequest   `json:"player_requests,omitempty"`
 	PlayerNetworkRecorded bool                   `json:"player_network_recorded,omitempty"`
 	Scheduling            *modelPlayerScheduling `json:"scheduling,omitempty"`
 	Notes                 []string               `json:"notes"`
@@ -227,14 +228,15 @@ type modelStallInvestigation struct {
 }
 
 type modelPlayerNetwork struct {
-	Boundary        string                 `json:"boundary"`
-	Complete        bool                   `json:"complete"`
-	DroppedRequests int                    `json:"dropped_requests"`
-	OmittedRequests int                    `json:"omitted_requests"`
-	Requests        []PlayerNetworkRequest `json:"requests"`
+	Boundary        string               `json:"boundary"`
+	Complete        bool                 `json:"complete"`
+	DroppedRequests int                  `json:"dropped_requests"`
+	DroppedHops     int                  `json:"dropped_hops,omitempty"`
+	OmittedRequests int                  `json:"omitted_requests"`
+	Requests        []modelPlayerRequest `json:"requests"`
 }
 
-func modelPlayerRequests(network *PlayerNetworkReport) *modelPlayerNetwork {
+func modelPlayerRequests(network *PlayerNetworkReport, budget *modelPhaseBudget) *modelPlayerNetwork {
 	if network == nil {
 		return nil
 	}
@@ -247,8 +249,8 @@ func modelPlayerRequests(network *PlayerNetworkReport) *modelPlayerNetwork {
 		requests = requests[:maximum]
 		slices.SortStableFunc(requests, func(a, b PlayerNetworkRequest) int { return cmp.Compare(a.Number, b.Number) })
 	}
-	return &modelPlayerNetwork{Boundary: network.Boundary, Complete: network.Complete, DroppedRequests: network.DroppedRequests,
-		OmittedRequests: len(network.Requests) - len(requests), Requests: requests}
+	return &modelPlayerNetwork{Boundary: network.Boundary, Complete: network.Complete, DroppedRequests: network.DroppedRequests, DroppedHops: network.DroppedHops,
+		OmittedRequests: len(network.Requests) - len(requests), Requests: modelPlaybackRequests(requests, budget)}
 }
 
 func modelRequestTimings(requests []HTTPRequestTiming) []modelHTTPRequest {
@@ -292,7 +294,7 @@ func modelInput(report Report) ([]byte, error) {
 		Findings: []modelFinding{},
 	}
 	input.Requests = modelRequestTimings(report.Requests)
-	input.PlayerNetwork = modelPlayerRequests(report.PlayerNetwork)
+	phaseBudget := &modelPhaseBudget{hops: 48, stages: 192}
 	input.RequestsTruncated = report.RequestsTruncated
 	if player := report.Player; player != nil {
 		input.Player = &modelPlayer{
@@ -313,7 +315,7 @@ func modelInput(report Report) ([]byte, error) {
 			Gaps: item.Correlation.Gaps, BufferSamples: item.Correlation.BufferSamples, Keyframes: item.Correlation.Keyframes,
 			Requests: modelRequestTimings(item.Correlation.Requests), Notes: item.Correlation.Notes,
 			MediaStatus: item.Media.Status, MediaAlignment: item.Media.Alignment, Assessment: item.Assessment,
-			PlayerRequests: item.Correlation.PlayerRequests, PlayerNetworkRecorded: item.Correlation.PlayerNetworkRecorded,
+			PlayerRequests: modelPlaybackRequests(item.Correlation.PlayerRequests, phaseBudget), PlayerNetworkRecorded: item.Correlation.PlayerNetworkRecorded,
 			Scheduling: modelScheduling(item.Correlation.Scheduling)}
 		for _, asset := range item.Media.Assets {
 			if asset.Kind == "clip" {
@@ -324,6 +326,7 @@ func modelInput(report Report) ([]byte, error) {
 		}
 		input.StallInvestigations = append(input.StallInvestigations, entry)
 	}
+	input.PlayerNetwork = modelPlayerRequests(report.PlayerNetwork, phaseBudget)
 	for _, finding := range report.Findings {
 		input.Findings = append(input.Findings, modelFinding{
 			ID: finding.ID, Code: finding.Code, Severity: finding.Severity, Message: finding.Message,

@@ -23,17 +23,21 @@ const (
 // PlayerNetworkRequest describes the local proxy's upstream observation, never
 // delivery to the browser, SourceBuffer append, or decoder consumption.
 type PlayerNetworkRequest struct {
-	Number      int    `json:"number"`
-	ResourceID  string `json:"resource_id"`
-	Kind        string `json:"kind"`
-	Method      string `json:"method"`
-	StartMS     int64  `json:"start_ms"`
-	HeaderMS    *int64 `json:"header_ms,omitempty"`
-	FirstBodyMS *int64 `json:"first_body_ms,omitempty"`
-	EndMS       int64  `json:"end_ms"`
-	HTTPStatus  int    `json:"http_status,omitempty"`
-	Bytes       int64  `json:"bytes"`
-	Outcome     string `json:"outcome"`
+	Number       int                `json:"number"`
+	ResourceID   string             `json:"resource_id"`
+	Kind         string             `json:"kind"`
+	Method       string             `json:"method"`
+	StartMS      int64              `json:"start_ms"`
+	HeaderMS     *int64             `json:"header_ms,omitempty"`
+	FirstBodyMS  *int64             `json:"first_body_ms,omitempty"`
+	EndMS        int64              `json:"end_ms"`
+	HTTPStatus   int                `json:"http_status,omitempty"`
+	Bytes        int64              `json:"bytes"`
+	Outcome      string             `json:"outcome"`
+	Hops         []PlayerNetworkHop `json:"hops,omitempty"`
+	DroppedHops  int                `json:"dropped_hops,omitempty"`
+	FailureStage string             `json:"failure_stage,omitempty"`
+	FailureCode  string             `json:"failure_code,omitempty"`
 }
 
 type PlayerNetworkReport struct {
@@ -43,11 +47,16 @@ type PlayerNetworkReport struct {
 	Complete        bool                   `json:"complete"`
 	DroppedRequests int                    `json:"dropped_requests"`
 	Requests        []PlayerNetworkRequest `json:"requests"`
+	DroppedHops     int                    `json:"dropped_hops,omitempty"`
 }
 
 type playerNetworkEntry struct {
-	request PlayerNetworkRequest
-	done    bool
+	request          PlayerNetworkRequest
+	done             bool
+	hopCount         int
+	receiveActive    bool
+	lastFailureStage string
+	lastFailureCode  string
 }
 
 type playerNetwork struct {
@@ -59,6 +68,7 @@ type playerNetwork struct {
 	stopped         bool
 	frozen          bool
 	last            *PlayerNetworkReport
+	metadataBytes   int
 }
 
 func newPlayerNetwork() *playerNetwork { return &playerNetwork{origin: time.Now()} }
@@ -139,6 +149,7 @@ func clonePlayerNetwork(value *PlayerNetworkReport) *PlayerNetworkReport {
 	copy := *value
 	copy.Requests = slices.Clone(value.Requests)
 	for i := range copy.Requests {
+		copy.Requests[i].Hops = clonePlayerNetworkHops(copy.Requests[i].Hops)
 		if p := copy.Requests[i].HeaderMS; p != nil {
 			v := *p
 			copy.Requests[i].HeaderMS = &v
@@ -157,14 +168,23 @@ func (n *playerNetwork) snapshot(revision int, complete bool) *PlayerNetworkRepo
 	if n.last != nil && (n.frozen || n.last.PlayerRevision == revision) {
 		return clonePlayerNetwork(n.last)
 	}
-	result := &PlayerNetworkReport{Version: 1, Boundary: "upstream_proxy", PlayerRevision: revision, Complete: complete, DroppedRequests: n.dropped, Requests: []PlayerNetworkRequest{}}
+	result := &PlayerNetworkReport{Version: 2, Boundary: "upstream_proxy", PlayerRevision: revision, Complete: complete, DroppedRequests: n.dropped, Requests: []PlayerNetworkRequest{}}
 	cutoff := min(int64(maxPlayerNetworkOffsetMS), n.offset())
 	for _, entry := range n.entries {
 		request := entry.request
+		request.Hops = clonePlayerNetworkHops(request.Hops)
 		if !entry.done {
 			request.EndMS, request.Outcome = cutoff, "incomplete"
+			if entry.receiveActive && len(request.Hops) > 0 {
+				hop := &request.Hops[len(request.Hops)-1]
+				hop.EndMS = cutoff
+				if len(hop.Stages) > 0 {
+					hop.Stages[len(hop.Stages)-1].EndMS = cutoff
+				}
+			}
 		}
 		result.Requests = append(result.Requests, request)
+		result.DroppedHops += request.DroppedHops
 	}
 	n.last, n.frozen = clonePlayerNetwork(result), complete
 	return clonePlayerNetwork(result)
@@ -179,6 +199,14 @@ func (n *playerNetwork) stop() {
 	cutoff := min(int64(maxPlayerNetworkOffsetMS), n.offset())
 	for _, entry := range n.entries {
 		if !entry.done {
+			if entry.receiveActive && len(entry.request.Hops) > 0 {
+				hop := &entry.request.Hops[len(entry.request.Hops)-1]
+				hop.EndMS = cutoff
+				if len(hop.Stages) > 0 {
+					hop.Stages[len(hop.Stages)-1].EndMS = cutoff
+				}
+				entry.receiveActive = false
+			}
 			entry.request.EndMS, entry.request.Outcome, entry.done = cutoff, "incomplete", true
 		}
 	}
@@ -196,6 +224,7 @@ type playerNetworkReader struct {
 func (r *playerNetworkReader) Read(data []byte) (int, error) {
 	n, err := r.ReadCloser.Read(data)
 	r.network.body(r.entry, n)
+	r.network.receive(r.entry, false, err != nil)
 	if err != nil && err != io.EOF {
 		r.err = err
 	}
@@ -222,7 +251,7 @@ func playerNetworkOutcome(err error, contextErr error) string {
 var playerNetworkResourcePattern = regexp.MustCompile(`^(index\.m3u8|r[1-9][0-9]{0,3}\.(m3u8|ts|m4s|mp4|aac|mp3|vtt|bin))$`)
 
 func validatePlayerNetwork(report *PlayerNetworkReport, player *PlayerReport, protocol string, complete bool) error {
-	if report == nil || player == nil || protocol != ProtocolHLS || report.Version != 1 || report.Boundary != "upstream_proxy" || report.PlayerRevision != player.Revision || report.Complete != complete || report.DroppedRequests < 0 || report.DroppedRequests > 1_000_000_000 || len(report.Requests) > maxPlayerNetworkRequests || report.Requests == nil {
+	if report == nil || player == nil || protocol != ProtocolHLS || (report.Version != 1 && report.Version != 2) || report.Boundary != "upstream_proxy" || report.PlayerRevision != player.Revision || report.Complete != complete || report.DroppedRequests < 0 || report.DroppedRequests > 1_000_000_000 || len(report.Requests) > maxPlayerNetworkRequests || report.Requests == nil {
 		return ErrInvalid
 	}
 	previous := int64(-60000)
@@ -256,6 +285,12 @@ func validatePlayerNetwork(report *PlayerNetworkReport, player *PlayerReport, pr
 			return ErrInvalid
 		}
 	}
-	_, err := json.Marshal(report)
+	if err := validatePlayerNetworkPhases(report); err != nil {
+		return err
+	}
+	data, err := json.Marshal(report)
+	if len(data) > maxPlayerNetworkBytes {
+		return ErrInvalid
+	}
 	return err
 }

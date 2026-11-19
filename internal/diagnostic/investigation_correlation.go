@@ -111,6 +111,17 @@ func correlateStall(dir string, report Report, id string, stallIndex int) (Stall
 				Event{Kind: "player_request", Artifact: "player-network.json", ArrivalMS: request.StartMS, DurationMS: request.EndMS - request.StartMS, Sequence: &number, HTTPStatus: request.HTTPStatus})
 		}
 	}
+	phaseFindings := playerPhaseFindings(result.PlayerRequests, stall)
+	if len(phaseFindings) == 6 {
+		result.Notes = append(result.Notes, "逐跳阶段关联证据最多保留 6 条；完整的已采集阶段可在实际播放请求详情中查看。")
+	}
+	for _, finding := range phaseFindings {
+		before := len(result.Findings)
+		add(finding.Code, finding.Severity, finding.Message, finding.StartMS, finding.EndMS, finding.Evidence...)
+		if len(result.Findings) > before {
+			result.Findings[len(result.Findings)-1].NextCheck = finding.NextCheck
+		}
+	}
 
 	events, notes, err := stallCaptureEvents(dir, report.Manifest)
 	if err != nil {

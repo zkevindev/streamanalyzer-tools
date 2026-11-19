@@ -140,6 +140,13 @@ button:disabled { opacity: .55; cursor: wait; }
 .player-network-requests tbody tr:nth-child(even) { background: var(--surface-inset); }
 .player-network-requests .scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .player-network-requests p, #player-network-note { overflow-wrap: anywhere; }
+.player-network-phase-list { margin-top: .8rem; }
+.player-network-phase-list h4, .player-network-phase-list h6 { margin: .65rem 0 .4rem; font-size: .875rem; }
+.player-network-phase-detail { margin-block: .5rem; border: 1px solid var(--border); border-radius: .375rem; padding: 0 .7rem; }
+.player-network-phase-detail summary { min-height: 2.75rem; padding-block: .55rem; cursor: pointer; font-size: .825rem; font-weight: 600; overflow-wrap: anywhere; }
+.player-network-phase-detail p { white-space: normal; }
+.player-network-phase-detail .scroll { margin-bottom: .6rem; }
+.network-terminal-failure { color: #854b16; }
 .stall-player-requests { margin-block: .8rem; }
 #http-headers { margin-top: 1rem; }
 .http-header-block { border: 1px solid var(--border); border-radius: .375rem; padding: 0 .7rem; margin: .5rem 0; }

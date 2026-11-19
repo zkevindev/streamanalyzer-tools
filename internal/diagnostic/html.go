@@ -58,6 +58,15 @@ var reportPage = template.Must(template.New("report").Funcs(template.FuncMap{
 	"networkEnd":             playerNetworkEndLabel,
 	"networkRows":            playerNetworkVisibleRequests,
 	"networkOmitted":         playerNetworkOmittedRequests,
+	"networkDetails":         playerNetworkDetailedRequests,
+	"networkPhaseMissing":    playerNetworkPhaseMissingRequests,
+	"networkHops":            playerNetworkVisibleHops,
+	"networkHopChain":        playerNetworkHopChain,
+	"networkHopPhase":        playerNetworkPhaseDurationLabel,
+	"networkConnection":      playerNetworkConnectionLabel,
+	"networkFailure":         playerNetworkFailureLabel,
+	"networkHopOmitted":      playerNetworkOmittedHops,
+	"networkStageOmitted":    playerNetworkHasOmittedStages,
 	"schedulingView":         playerSchedulingView,
 	"schedulingSupport":      playerSchedulingSupportLabel,
 }).Parse(`{{define "codecRows"}}
@@ -100,6 +109,19 @@ var reportPage = template.Must(template.New("report").Funcs(template.FuncMap{
 <thead><tr><th scope="col">请求</th><th scope="col">类型</th><th scope="col">资源标识</th><th scope="col">方法</th><th scope="col">开始偏移 (ms)</th><th scope="col">上游响应头偏移 (ms)</th><th scope="col">上游首段响应体偏移 (ms)</th><th scope="col">代理结束 / 截至偏移 (ms)</th><th scope="col">上游 HTTP</th><th scope="col">上游读取字节</th><th scope="col">结果</th></tr></thead>
 <tbody>{{range networkRows .}}<tr><th scope="row">#{{.Number}}</th><td>{{networkKind .Kind}}</td><td>{{.ResourceID}}</td><td>{{.Method}}</td><td>{{.StartMS}}</td><td>{{networkOffset .HeaderMS}}</td><td>{{networkOffset .FirstBodyMS}}</td><td>{{networkEnd .}}</td><td>{{if .HTTPStatus}}{{.HTTPStatus}}{{else}}未观测{{end}}</td><td>{{.Bytes}}</td><td>{{networkOutcome .Outcome}}</td></tr>{{end}}</tbody>
 </table></div>{{with networkOmitted .}}<p class="timing-note">页面仅展示前 200 条，另有 {{.}} 条已保存记录可在报告 JSON 或证据包中查看。</p>{{end}}
+{{$details := networkDetails .}}{{if $details}}<section class="player-network-phase-list"><h3>逐跳阶段耗时</h3>
+<p class="timing-note">阶段耗时来自本地代理的上游观测，TTFB 从本跳开始计时。上游响应体阶段从响应头起至上游读取结束，可能受下游写出影响，不代表浏览器接收完成。未完成请求仅展示已记录部分。复用连接或未触发相关事件时，DNS/TCP/TLS 保持未观测；同阶段多次观测用 / 分列。</p>
+{{range $details}}<details class="player-network-phase-detail"><summary>#{{.Number}} · {{.ResourceID}} · {{len (networkHops .Hops)}} 跳{{networkHopChain .Hops}}</summary>
+{{if or .FailureStage .FailureCode}}<p class="timing-note network-terminal-failure">请求终止阶段 / 原因：{{networkFailure .FailureStage .FailureCode}}</p>{{end}}
+{{if .DroppedHops}}<p class="timing-note">逐跳记录达到采集上限或元数据预算，另有 {{.DroppedHops}} 跳未保存，重定向链可能不完整。</p>{{end}}
+{{if .Hops}}<div class="scroll player-network-hop-table" role="region" tabindex="0" aria-label="请求逐跳阶段耗时，可横向滚动"><table><thead><tr><th scope="col">跳</th><th scope="col">上游 HTTP</th><th scope="col">开始偏移 (ms)</th><th scope="col">结束 / 已记录至偏移 (ms)</th><th scope="col">连接复用</th><th scope="col">TTFB (ms)</th><th scope="col">DNS (ms)</th><th scope="col">TCP 建连 (ms)</th><th scope="col">TLS 握手 (ms)</th><th scope="col">发送请求 (ms)</th><th scope="col">等待首字节 (ms)</th><th scope="col">接收响应头 (ms)</th><th scope="col">上游响应体阶段 (ms)</th><th scope="col">本跳故障阶段 / 原因</th></tr></thead>
+<tbody>{{range networkHops .Hops}}<tr><th scope="row">#{{.Number}}</th><td>{{if .HTTPStatus}}{{.HTTPStatus}}{{else}}未观测{{end}}</td><td>{{.StartMS}}</td><td>{{.EndMS}}</td><td>{{networkConnection .ConnectionReused}}</td><td>{{networkOffset .TTFBMS}}</td><td>{{networkHopPhase .Stages "dns"}}</td><td>{{networkHopPhase .Stages "connect"}}</td><td>{{networkHopPhase .Stages "tls"}}</td><td>{{networkHopPhase .Stages "request_send"}}</td><td>{{networkHopPhase .Stages "response_first_byte"}}</td><td>{{networkHopPhase .Stages "response_headers"}}</td><td>{{networkHopPhase .Stages "receive"}}</td><td>{{networkFailure .FailureStage .FailureCode}}</td></tr>{{end}}</tbody></table></div>
+{{else}}<p class="timing-note">此请求未包含可展示的逐跳阶段记录。</p>{{end}}
+{{with networkHopOmitted .Hops}}<p class="timing-note">页面仅展示前 8 跳，另有 {{.}} 跳已保存记录可在报告 JSON 或证据包中查看。</p>{{end}}
+{{if networkStageOmitted .Hops}}<p class="timing-note">页面仅展示每跳前 16 条阶段观测，其余已保存记录可在报告 JSON 或证据包中查看。</p>{{end}}
+</details>{{end}}
+{{with networkPhaseMissing .}}<p class="timing-note">另有 {{.}} 条已展示请求未包含逐跳阶段记录。</p>{{end}}
+</section>{{else}}<p class="timing-note">当前请求记录未包含逐跳阶段耗时，重新采样可补充。</p>{{end}}
 {{else}}<p class="timing-note">当前记录未包含实际播放请求。</p>{{end}}
 {{end}}{{define "schedulingMetrics"}}
 <dl class="scheduling-metrics"><dt>区间数</dt><dd>{{with .}}{{.Count}}{{else}}未观测{{end}}</dd><dt>区间累计时长</dt><dd>{{with .}}{{.TotalMS}} ms{{else}}未观测{{end}}</dd><dt>最长区间</dt><dd>{{with .}}{{.MaxMS}} ms{{else}}未观测{{end}}</dd></dl>
@@ -148,6 +170,15 @@ thead{color:#52657e;background:#f7f9fc}
 .player-network-requests thead th{position:sticky;top:0;background:#f7f9fc}
 .player-network-requests tbody tr:nth-child(even){background:#f7f9fc}
 .player-network-requests:focus-visible{outline:2px solid #164d92;outline-offset:2px}
+.player-network-phase-list{margin-top:.8rem}
+.player-network-phase-detail{border:1px solid #d5deea;border-radius:.375rem;margin-block:.5rem;padding:0 .7rem}
+.player-network-phase-detail summary{min-height:2.75rem;padding-block:.55rem;cursor:pointer;font-size:.85rem;font-weight:600;overflow-wrap:anywhere}
+.player-network-phase-detail p{overflow-wrap:anywhere}
+.player-network-hop-table{max-height:24rem;border:1px solid #d5deea;border-radius:.375rem}
+.player-network-hop-table th,.player-network-hop-table td{white-space:nowrap;font-size:.8rem}
+.player-network-hop-table thead th{position:sticky;top:0;background:#f7f9fc}
+.player-network-hop-table:focus-visible{outline:2px solid #164d92;outline-offset:2px}
+.network-terminal-failure{color:#854b16}
 .http-header-block{border:1px solid #d5deea;border-radius:.375rem;margin:.5rem 0;padding:0 .7rem}
 .http-header-block summary{cursor:pointer;min-height:2.75rem;padding:.55rem 0;font-size:.85rem;font-weight:650;overflow-wrap:anywhere;box-sizing:border-box}
 .http-header-offset{margin-left:.75rem;color:#52657e;font:400 .75rem ui-monospace,monospace;white-space:nowrap}
@@ -191,7 +222,7 @@ thead{color:#52657e;background:#f7f9fc}
 .direction-state{display:inline-block;font:.75rem system-ui,sans-serif;font-weight:650;padding:.12rem .42rem;border-radius:.25rem;color:#465b73;background:#ecf1f7}
 .stall-direction[data-state="observed"] .direction-state{color:#216247;background:#e5f3eb}
 .stall-direction[data-state="candidate"] .direction-state{color:#774705;background:#fff2d7}
-@media print{body{background:#fff}article{break-inside:avoid}.request-timing th,.request-timing td{white-space:normal}.http-header-block:not([open])>:not(summary){display:block}.player-network-requests,.player-scheduling-report .scroll{max-height:none}}
+@media print{body{background:#fff}article{break-inside:avoid}.request-timing th,.request-timing td{white-space:normal}.http-header-block:not([open])>:not(summary),.player-network-phase-detail:not([open])>:not(summary){display:block}.player-network-requests,.player-network-hop-table,.player-scheduling-report .scroll{max-height:none}}
 </style>
 </head>
 <body><main>
@@ -302,6 +333,7 @@ thead{color:#52657e;background:#f7f9fc}
 {{template "playerNetworkNotes" .}}
 <dl><dt>观测边界</dt><dd>{{networkBoundary .Boundary}}</dd><dt>记录状态</dt><dd>{{if .Complete}}已结束{{else}}部分请求快照{{end}}</dd><dt>已保存请求</dt><dd>{{len .Requests}}</dd><dt>上限外丢弃请求</dt><dd>{{.DroppedRequests}}</dd></dl>
 {{if .DroppedRequests}}<p class="timing-note">采集达到上限，另有 {{.DroppedRequests}} 条请求未写入本记录，不能按完整请求历史分析。</p>{{end}}
+{{if .DroppedHops}}<p class="timing-note">逐跳记录达到采集上限或元数据预算，共有 {{.DroppedHops}} 跳未保存。</p>{{end}}
 {{template "playerNetworkRequests" .Requests}}
 </article>
 {{else}}{{if and .Report.Player (eq .Report.Manifest.Protocol "hls")}}<article id="player-network-report"><h2>HLS 实际播放请求 · 代理观测</h2>{{template "playerNetworkNotes" .}}<p class="timing-note">该记录未采集实际播放请求，重新采样可补充代理侧请求证据。</p></article>{{end}}{{end}}
@@ -948,6 +980,108 @@ func playerSchedulingView(report *PlayerSchedulingReport, stalls ...PlayerStall)
 }
 
 const playerNetworkHTMLRowLimit = 200
+
+var playerNetworkFailureStageLabels = map[string]string{
+	"dns": "DNS 解析", "connect": "TCP 建连", "tls": "TLS 握手", "request_send": "发送请求",
+	"response_first_byte": "等待响应首字节", "response_headers": "HTTP 响应头", "receive": "上游响应体阶段",
+	"proxy_write": "向播放器写出", "proxy_limit": "代理资源限制", "playlist": "播放列表处理",
+}
+
+var playerNetworkFailureCodeLabels = map[string]string{
+	"dns_error": "DNS 失败", "tls_error": "TLS 失败", "connection_refused": "连接被拒绝", "timeout": "超时", "canceled": "已取消",
+	"transport_error": "传输错误", "redirect_error": "重定向失败", "http_error": "HTTP 错误", "limit_exceeded": "达到限制",
+	"invalid_playlist": "播放列表无效", "proxy_write_error": "向播放器写出失败",
+}
+
+func playerNetworkFailureLabel(stage, code string) string {
+	var parts []string
+	for _, item := range []struct {
+		value  string
+		labels map[string]string
+	}{{stage, playerNetworkFailureStageLabels}, {code, playerNetworkFailureCodeLabels}} {
+		if item.value == "" {
+			continue
+		}
+		label := item.value
+		if text := item.labels[item.value]; text != "" {
+			label = text + " [" + item.value + "]"
+		}
+		parts = append(parts, label)
+	}
+	if len(parts) == 0 {
+		return "未记录"
+	}
+	return strings.Join(parts, " · ")
+}
+
+func playerNetworkDetailedRequests(requests []PlayerNetworkRequest) []PlayerNetworkRequest {
+	var details []PlayerNetworkRequest
+	for _, request := range playerNetworkVisibleRequests(requests) {
+		if len(request.Hops) > 0 || request.DroppedHops > 0 || request.FailureStage != "" || request.FailureCode != "" {
+			details = append(details, request)
+		}
+	}
+	return details
+}
+
+func playerNetworkPhaseMissingRequests(requests []PlayerNetworkRequest) int {
+	return len(playerNetworkVisibleRequests(requests)) - len(playerNetworkDetailedRequests(requests))
+}
+
+func playerNetworkVisibleHops(hops []PlayerNetworkHop) []PlayerNetworkHop {
+	return hops[:min(len(hops), maxPlayerNetworkHops)]
+}
+
+func playerNetworkOmittedHops(hops []PlayerNetworkHop) int {
+	return max(0, len(hops)-maxPlayerNetworkHops)
+}
+
+func playerNetworkHasOmittedStages(hops []PlayerNetworkHop) bool {
+	for _, hop := range playerNetworkVisibleHops(hops) {
+		if len(hop.Stages) > maxPlayerNetworkHopStages {
+			return true
+		}
+	}
+	return false
+}
+
+func playerNetworkHopChain(hops []PlayerNetworkHop) string {
+	var statuses []string
+	for _, hop := range playerNetworkVisibleHops(hops) {
+		status := "未观测"
+		if hop.HTTPStatus > 0 {
+			status = strconv.Itoa(hop.HTTPStatus)
+		}
+		statuses = append(statuses, status)
+	}
+	if len(statuses) == 0 {
+		return ""
+	}
+	return " · HTTP " + strings.Join(statuses, " → ")
+}
+
+func playerNetworkPhaseDurationLabel(stages []CaptureStage, name string) string {
+	var durations []string
+	for _, stage := range stages[:min(len(stages), maxPlayerNetworkHopStages)] {
+		if stage.Name == name {
+			durations = append(durations, strconv.FormatInt(stage.EndMS-stage.StartMS, 10))
+		}
+	}
+	if len(durations) == 0 {
+		return "未观测"
+	}
+	return strings.Join(durations, " / ")
+}
+
+func playerNetworkConnectionLabel(reused *bool) string {
+	if reused == nil {
+		return "未观测"
+	}
+	if *reused {
+		return "已复用"
+	}
+	return "未复用"
+}
 
 func playerNetworkKindLabel(kind string) string {
 	switch kind {
