@@ -24,6 +24,7 @@ const (
 )
 
 var (
+	ErrReboot = errors.New("当前 ONVIF 端点无法重启")
 	ErrActive = errors.New("ONVIF 模拟器正在运行")
 	ErrClosed = errors.New("ONVIF 模拟器服务已关闭")
 	ErrConfig = errors.New("ONVIF 配置无效")
@@ -150,7 +151,17 @@ func (c *Config) normalize() (net.IP, *net.Interface, error) {
 	return nil, nil, fmt.Errorf("%w：所选 IPv4 地址未绑定到可用网卡", ErrConfig)
 }
 
+type RebootStatus struct {
+	PreviousDeviceURL string    `json:"previous_device_url"`
+	PreviousStreamURL string    `json:"previous_stream_url"`
+	PreviousInstance  uint32    `json:"previous_instance"`
+	Instance          uint32    `json:"instance"`
+	ByeSentAt         time.Time `json:"bye_sent_at,omitzero"`
+	HelloSentAt       time.Time `json:"hello_sent_at,omitzero"`
+}
+
 type Status struct {
+	Reboot             *RebootStatus           `json:"reboot,omitempty"`
 	UDPSourceFault     *UDPSourceFaultStatus   `json:"udp_source_fault,omitempty"`
 	ResolutionSwitchAt time.Time               `json:"resolution_switch_at,omitzero"`
 	RTCPClockStepMS    int                     `json:"rtcp_clock_step_ms,omitempty"`
@@ -183,6 +194,8 @@ type Status struct {
 }
 
 type camera struct {
+	config        Config
+	nic           *net.Interface
 	recording     *recordingFixture
 	events        eventBroker
 	auth          soapAuth
@@ -208,6 +221,7 @@ type Manager struct {
 	camera                *camera
 	last                  Status
 	lastDiscoveryInstance uint32
+	reboot                *RebootStatus
 	closed                bool
 }
 
@@ -245,16 +259,64 @@ func (m *Manager) StartFiles(ctx context.Context, cfg Config, files [2]LocalVide
 	if m.closed {
 		return Status{}, ErrClosed
 	}
+	c, err := m.prepareCamera(cfg, ip, nic, profiles)
+	if err != nil {
+		return Status{}, err
+	}
+	m.reboot = nil
+	m.activate(c)
+	return c.snapshot(), nil
+}
+
+func (m *Manager) Reboot(deviceURL string) (Status, error) {
+	if !m.prepare.TryLock() {
+		return Status{}, ErrReboot
+	}
+	defer m.prepare.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	old := m.camera
+	if old == nil || old.status.DeviceURL != deviceURL {
+		return Status{}, ErrReboot
+	}
+	cfg := old.config
+	cfg.HTTPPort, cfg.RTSPPort = 0, 0
+	profiles := make([]*profileVideo, len(old.profiles))
+	old.ptzMu.Lock()
+	for i, profile := range old.profiles {
+		next := *profile
+		next.ptz = ptzState{}
+		profiles[i] = &next
+	}
+	old.ptzMu.Unlock()
+
+	// Reserve the new ports while the old services still hold theirs. The
+	// original camera stays available if setting up the replacement fails.
+	replacement, err := m.prepareCamera(cfg, old.discovery.ip, old.nic, profiles)
+	if err != nil {
+		return Status{}, err
+	}
+	reboot := &RebootStatus{PreviousDeviceURL: old.status.DeviceURL, PreviousStreamURL: old.status.StreamURL,
+		PreviousInstance: old.discovery.instance, Instance: replacement.discovery.instance}
+	reboot.ByeSentAt = old.discovery.announce(old, "Bye")
+	m.stop()
+	m.activate(replacement)
+	reboot.HelloSentAt = replacement.discovery.announce(replacement, "Hello")
+	m.reboot = reboot
+	return m.snapshotLocked(), nil
+}
+
+func (m *Manager) prepareCamera(cfg Config, ip net.IP, nic *net.Interface, profiles []*profileVideo) (*camera, error) {
 	listener, err := net.Listen("tcp4", net.JoinHostPort(cfg.BindIP, strconv.Itoa(cfg.HTTPPort)))
 	if err != nil {
-		return Status{}, fmt.Errorf("无法监听 ONVIF HTTP 端口：%w", err)
+		return nil, fmt.Errorf("无法监听 ONVIF HTTP 端口：%w", err)
 	}
 	discovery, err := openDiscovery(ip, nic)
 	if err != nil {
 		listener.Close()
-		return Status{}, fmt.Errorf("无法监听 WS-Discovery：%w", err)
+		return nil, fmt.Errorf("无法监听 WS-Discovery：%w", err)
 	}
-	c := &camera{listener: listener, discovery: discovery, profiles: profiles}
+	c := &camera{config: cfg, nic: nic, listener: listener, discovery: discovery, profiles: profiles}
 	origin := "http://" + listener.Addr().String()
 	if cfg.RecordingFixture {
 		c.recording = newRecordingFixture(cfg.ClockOffset, cfg.RecordingGapSeconds)
@@ -265,7 +327,7 @@ func (m *Manager) StartFiles(ctx context.Context, cfg Config, files [2]LocalVide
 	if err != nil {
 		discovery.close()
 		listener.Close()
-		return Status{}, fmt.Errorf("无法启动 RTSP：%w", err)
+		return nil, fmt.Errorf("无法启动 RTSP：%w", err)
 	}
 	c.video = video
 	if cfg.SOAPUsername != "" {
@@ -300,6 +362,10 @@ func (m *Manager) StartFiles(ctx context.Context, cfg Config, files [2]LocalVide
 		Handler: mux, ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second, IdleTimeout: 15 * time.Second,
 		MaxHeaderBytes: 16 << 10,
 	}
+	return c, nil
+}
+
+func (m *Manager) activate(c *camera) {
 	runCtx, cancel := context.WithCancel(context.Background())
 	c.cancel = cancel
 	c.workers.Go(func() { _ = c.http.Serve(c.listener) })
@@ -311,7 +377,6 @@ func (m *Manager) StartFiles(ctx context.Context, cfg Config, files [2]LocalVide
 		}
 	}
 	m.camera = c
-	return c.snapshot(), nil
 }
 
 func (c *camera) snapshot() Status {
@@ -347,10 +412,16 @@ func (c *camera) snapshot() Status {
 func (m *Manager) Status() Status {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.camera != nil {
-		return m.camera.snapshot()
+	return m.snapshotLocked()
+}
+
+func (m *Manager) snapshotLocked() Status {
+	if m.camera == nil {
+		return m.last
 	}
-	return m.last
+	status := m.camera.snapshot()
+	status.Reboot = m.reboot
+	return status
 }
 
 func (m *Manager) stop() {
@@ -362,7 +433,7 @@ func (m *Manager) stop() {
 		c.discovery.close()
 		c.workers.Wait()
 		c.video.close()
-		m.last = c.snapshot()
+		m.last = m.snapshotLocked()
 		m.last.Active = false
 		m.last.Events.Subscriptions = 0
 		m.camera = nil
