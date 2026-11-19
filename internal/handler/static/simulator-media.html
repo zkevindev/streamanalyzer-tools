@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>HTTP-FLV / MPEG-TS 模拟器 · Stream Analyzer</title>
+  <link rel="stylesheet" href="/static/workbench-theme.css">
+  <link rel="stylesheet" href="/static/diagnostics.css">
+  <link rel="stylesheet" href="/static/simulators.css">
+  <script src="/static/simulator-media.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">跳转到主要内容</a>
+  <header class="topbar"><div class="topbar-inner">
+    <a class="wordmark" href="/"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>Stream Analyzer</a>
+    <nav aria-label="主导航"><a href="/diagnostics">排障工作台</a><a href="/simulators" aria-current="page">模拟器</a></nav>
+  </div></header>
+  <main id="main" tabindex="-1">
+    <div class="page-heading"><div><h1>HTTP-FLV / MPEG-TS 模拟器</h1><p class="muted">用可重复的关键帧、时间戳和 TS 连续计数异常验证排障报告。</p></div></div>
+    <p id="notice" class="error" role="alert" hidden></p>
+    <div class="simulator-grid">
+      <section class="panel">
+        <div class="panel-heading"><h2>媒体配置</h2></div>
+        <form id="form" class="panel-body">
+          <fieldset id="settings" disabled>
+            <div class="sim-fields">
+              <div><label for="protocol">协议</label><select id="protocol"><option value="http-flv">HTTP-FLV</option><option value="http-ts">HTTP MPEG-TS</option></select></div>
+              <div><label for="fault">场景</label><select id="fault"></select></div>
+            </div>
+            <p class="muted field-hint">每次 GET 从头按原节奏发送，可用同一地址重复采样。</p>
+          </fieldset>
+          <div class="sim-controls"><button id="start" disabled>启动媒体源</button><button type="button" id="stop" class="secondary" disabled>停止</button></div>
+        </form>
+      </section>
+      <section class="panel">
+        <div class="panel-heading"><h2>媒体源状态</h2><span id="state" class="status" role="status">正在读取</span></div>
+        <div class="panel-body">
+          <dl class="metrics sim-metrics">
+            <div><dt>GET 请求</dt><dd id="requests">0</dd></div>
+            <div><dt>故障触发</dt><dd id="faults">0</dd></div>
+          </dl>
+          <dl id="info" class="onvif-addresses" hidden>
+            <div><dt>当前场景</dt><dd id="scenario"></dd></div>
+            <div><dt>源时长</dt><dd id="duration"></dd></div>
+            <div><dt>最近触发时间</dt><dd id="last-fault">—</dd></div>
+            <div><dt>源地址</dt><dd id="url"></dd></div>
+          </dl>
+          <div class="sim-controls"><a id="open" class="button" hidden>打开排障工作台</a></div>
+        </div>
+      </section>
+    </div>
+  </main>
+</body>
+</html>
