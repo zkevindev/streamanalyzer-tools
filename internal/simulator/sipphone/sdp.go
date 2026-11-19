@@ -36,6 +36,10 @@ func audioDirection(attrs []sdp.Attribute, fallback string) string {
 }
 
 func negotiateAudio(body []byte, answering bool) (*sdp.SessionDescription, int, audioParameters, error) {
+	return negotiateSDPAudio(body, answering, false)
+}
+
+func negotiateSDPAudio(body []byte, answering, allowHold bool) (*sdp.SessionDescription, int, audioParameters, error) {
 	fail := func(message string) (*sdp.SessionDescription, int, audioParameters, error) {
 		return nil, -1, audioParameters{}, errors.New(message)
 	}
@@ -57,12 +61,15 @@ func negotiateAudio(body []byte, answering bool) (*sdp.SessionDescription, int, 
 			continue
 		}
 		ip, err := netip.ParseAddr(connection.Address.Address)
-		if err != nil || !isUnicast(ip) {
+		if err != nil || !isUnicast(ip) && !(allowHold && ip == netip.IPv4Unspecified()) {
 			continue
 		}
 		remoteDirection := audioDirection(media.Attributes, sessionDirection)
 		send, recv := remoteDirection != "sendonly" && remoteDirection != "inactive", remoteDirection != "recvonly" && remoteDirection != "inactive"
-		if !send && !recv {
+		if ip.IsUnspecified() {
+			send, recv = false, false
+		}
+		if !send && !recv && !allowHold {
 			continue
 		}
 		mapping := make(map[string]string)
@@ -123,18 +130,22 @@ func negotiateAudio(body []byte, answering bool) (*sdp.SessionDescription, int, 
 	return fail("对端 SDP 未提供可用的 IPv4 G.711 RTP 音频")
 }
 
-func sdpBase(local netip.AddrPort, id uint32) string {
+func sdpBase(local netip.AddrPort, id, version uint32) string {
 	return fmt.Sprintf("v=0\r\no=- %d %d IN IP4 %s\r\ns=Stream Analyzer SIP\r\nc=IN IP4 %s\r\nt=0 0\r\n",
-		id, id, local.Addr(), local.Addr())
+		id, version, local.Addr(), local.Addr())
 }
 
 func makeOffer(local netip.AddrPort, id uint32) []byte {
-	return fmt.Appendf([]byte(sdpBase(local, id)), "m=audio %d RTP/AVP 0 8 101\r\na=rtpmap:0 PCMU/8000\r\na=rtpmap:8 PCMA/8000\r\na=rtpmap:101 telephone-event/8000\r\na=fmtp:101 0-15\r\na=ptime:20\r\na=sendrecv\r\n", local.Port())
+	return fmt.Appendf([]byte(sdpBase(local, id, id)), "m=audio %d RTP/AVP 0 8 101\r\na=rtpmap:0 PCMU/8000\r\na=rtpmap:8 PCMA/8000\r\na=rtpmap:101 telephone-event/8000\r\na=fmtp:101 0-15\r\na=ptime:20\r\na=sendrecv\r\n", local.Port())
 }
 
 func makeAnswer(local netip.AddrPort, id uint32, offer *sdp.SessionDescription, accepted int, audio audioParameters) []byte {
+	return makeAnswerVersion(local, id, id, offer, accepted, audio)
+}
+
+func makeAnswerVersion(local netip.AddrPort, id, version uint32, offer *sdp.SessionDescription, accepted int, audio audioParameters) []byte {
 	var result strings.Builder
-	result.WriteString(sdpBase(local, id))
+	result.WriteString(sdpBase(local, id, version))
 	for i, media := range offer.MediaDescriptions {
 		if i != accepted {
 			m := media.MediaName
@@ -142,7 +153,9 @@ func makeAnswer(local netip.AddrPort, id uint32, offer *sdp.SessionDescription, 
 			continue
 		}
 		direction := "sendrecv"
-		if !audio.recv {
+		if !audio.send && !audio.recv {
+			direction = "inactive"
+		} else if !audio.recv {
 			direction = "sendonly"
 		} else if !audio.send {
 			direction = "recvonly"
