@@ -5,9 +5,11 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 )
@@ -16,26 +18,60 @@ import (
 // Slow qualification must never consume the one-second source observation.
 func TestRTSPG711NativeToolFailuresKeepCaptureAndExactReplay(t *testing.T) {
 	tool := rtspG711TestTool(t)
+	var probeOutput, probeMetadata rtspG711ProbeBuffer
+	prepareProbe := func(t *testing.T) {
+		t.Helper()
+		if probeOutput.Len() != 0 {
+			return
+		}
+		// Runtime failures require a successful qualification first. Produce its
+		// real AAC/CRC bytes before observation, so a cold FFmpeg startup cannot
+		// turn these cases into the separate slow-qualification queue-limit case.
+		ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+		command := exec.CommandContext(ctx, tool, rtspG711Args(rtspG711Config{codec: "pcmu", rate: 8000, channels: 1})...)
+		command.WaitDelay = 250 * time.Millisecond
+		command.Stdin = bytes.NewReader(make([]byte, 320))
+		command.Stdout, command.Stderr = &probeOutput, &probeMetadata
+		err := command.Run()
+		cancel()
+		if err != nil || probeOutput.over || probeMetadata.over || probeOutput.Len() == 0 || probeMetadata.Len() == 0 {
+			t.Fatalf("could not prepare real qualification output: %v", err)
+		}
+	}
+	quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'" }
+	octal := func(data []byte) string {
+		var encoded strings.Builder
+		for _, value := range data {
+			fmt.Fprintf(&encoded, "\\%03o", value)
+		}
+		return encoded.String()
+	}
 	for _, mode := range []string{"missing", "slow", "runtime", "partial"} {
 		t.Run(mode, func(t *testing.T) {
 			if runtime.GOOS == "windows" && mode != "missing" {
 				t.Skip("POSIX encoder wrapper regression")
 			}
 			var lookup func() (string, error)
+			var traceDir string
 			switch mode {
 			case "missing":
 				lookup = func() (string, error) { return "", os.ErrNotExist }
 			default:
 				dir := t.TempDir()
+				traceDir = dir
 				wrapper := filepath.Join(dir, "ffmpeg")
 				marker := filepath.Join(dir, "probe")
 				script := "#!/bin/sh\n"
 				if mode == "slow" {
 					script += "sleep 2\nexit 1\n"
 				} else {
-					script += fmt.Sprintf("if [ ! -e %q ]; then touch %q; exec %q \"$@\"; fi\n", marker, marker, tool)
+					prepareProbe(t)
+					// The normal production qualifier still parses ADTS and verifies
+					// each frame CRC. Builtins avoid introducing additional process
+					// startup into this already-qualified runtime-failure fixture.
+					script += fmt.Sprintf("if [ ! -e %s ]; then : >%s; read -r probe_input || :; : >%s; printf %s; printf %s >&2; : >%s; exit 0; fi\n: >%s\n", quote(marker), quote(filepath.Join(dir, "probeBegin")), quote(marker), quote(octal(probeOutput.Bytes())), quote(octal(probeMetadata.Bytes())), quote(filepath.Join(dir, "probeEnd")), quote(filepath.Join(dir, "runtimeBegin")))
 					if mode == "partial" {
-						script += fmt.Sprintf("head -c 3200 | %q \"$@\"\n", tool)
+						script += fmt.Sprintf("head -c 3200 | %s \"$@\"\n", quote(tool))
 					} else {
 						script += "exit 1\n"
 					}
@@ -54,6 +90,7 @@ func TestRTSPG711NativeToolFailuresKeepCaptureAndExactReplay(t *testing.T) {
 			defer player.Close()
 			dir := t.TempDir()
 			target, _ := parseProtocolURL(fixture.address(), ProtocolRTSP)
+			sampleStart := time.Now()
 			report, err := sampleRTSPTransportWithPreviewLookup(withPlayerSession(context.Background(), player), dir, target, 1, ProtocolRTSP, "tcp", nil, lookup)
 			if err != nil {
 				t.Fatal(err)
@@ -69,8 +106,22 @@ func TestRTSPG711NativeToolFailuresKeepCaptureAndExactReplay(t *testing.T) {
 			if mode == "slow" {
 				want = "g711_queue_limit"
 			}
+			clock := func(value *int64) string {
+				if value == nil {
+					return "unset"
+				}
+				return fmt.Sprint(*value)
+			}
+			trace := map[string]int64{}
+			for _, name := range []string{"probeBegin", "probeEnd", "runtimeBegin"} {
+				trace[name] = -1
+				if info, err := os.Stat(filepath.Join(traceDir, name)); traceDir != "" && err == nil {
+					trace[name] = info.ModTime().Sub(sampleStart).Milliseconds()
+				}
+			}
+			t.Logf("tool_check_ms=%s startup_ms=%s wrapper_offsets_ms=%v input_packets=%d output_aus=%d", clock(preview.G711.ToolCheckMS), clock(preview.G711.StartupMS), trace, preview.G711.InputPackets, preview.G711.OutputAUs)
 			if preview.G711.ReasonCode != want || preview.G711.State == "ready" || preview.ReasonCode == "network_error" || preview.AudioAUs != preview.G711.OutputAUs {
-				t.Fatalf("wrong local failure or output counts: %+v nested=%+v", preview, preview.G711)
+				t.Fatalf("wrong local failure or output counts: %+v nested=%+v tool_check_ms=%s startup_ms=%s wrapper_offsets_ms=%v", preview, preview.G711, clock(preview.G711.ToolCheckMS), clock(preview.G711.StartupMS), trace)
 			}
 			if mode == "partial" && preview.G711.OutputAUs == 0 {
 				t.Fatalf("fixture failed to exercise retained partial output: %+v", preview.G711)
