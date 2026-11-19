@@ -14,6 +14,7 @@ import (
 
 	"github.com/bluenviron/gortsplib/v5/pkg/base"
 	"github.com/bluenviron/gortsplib/v5/pkg/conn"
+	"github.com/bluenviron/gortsplib/v5/pkg/description"
 	"github.com/bluenviron/gortsplib/v5/pkg/headers"
 	"github.com/pion/rtcp"
 )
@@ -54,7 +55,16 @@ func walkRTSPMediaEvents(dir string, manifest Manifest, visit func(Event)) error
 	return err
 }
 
+type rtspWireExport struct {
+	describe func(*description.Session) error
+	packet   func(media int, data []byte, arrival int64) error
+}
+
 func replayRTSPWithEvents(dir string, manifest Manifest, visit func(Event)) (Report, error) {
+	return readRTSPWire(dir, manifest, visit, nil)
+}
+
+func readRTSPWire(dir string, manifest Manifest, visit func(Event), export *rtspWireExport) (Report, error) {
 	archive, archiveFile, err := openEvidenceZIP(filepath.Join(dir, rtspStreamName))
 	if err != nil {
 		return Report{}, fmt.Errorf("%w: RTSP 原始证据不可读", ErrInvalid)
@@ -122,6 +132,14 @@ func replayRTSPWithEvents(dir string, manifest Manifest, visit func(Event)) (Rep
 	invalidSDP := err != nil
 	if invalidSDP {
 		session, tracks = nil, []RTSPTrackMetrics{}
+	}
+	if export != nil {
+		if udp {
+			return Report{}, ErrInvalid
+		}
+		if err := export.describe(session); err != nil {
+			return Report{}, err
+		}
 	}
 	if metadata.Version < rtspLegacyPreviewArchiveVersion && metadata.Preview != nil || metadata.Version >= rtspLegacyPreviewArchiveVersion && (!validRTSPPreview(metadata.Preview, tracks) || metadata.Preview.State == "not_requested") || !validRTSPPreviewArchiveVersion(metadata, metadataData) {
 		return Report{}, ErrInvalid
@@ -248,7 +266,19 @@ func replayRTSPWithEvents(dir string, manifest Manifest, visit func(Event)) (Rep
 				}
 				continue
 			}
-			observeRTSPRTP(metrics, states, channel.MediaID, value.Payload, rtspWireName, offset, at, &events, visit)
+			walk := visit
+			var exportErr error
+			if export != nil {
+				walk = func(event Event) {
+					if event.Codec != "unknown" {
+						exportErr = export.packet(channel.MediaID, value.Payload, at)
+					}
+				}
+			}
+			observeRTSPRTP(metrics, states, channel.MediaID, value.Payload, rtspWireName, offset, at, &events, walk)
+			if exportErr != nil {
+				return Report{}, exportErr
+			}
 		}
 	}
 	if _, err := io.Copy(io.Discard, counter); err != nil || counter.readErr != nil {
