@@ -84,7 +84,7 @@ func TestPlayerVideoValidationAndRecordingVersions(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, change := range []func(*PlayerRecording){
-		func(r *PlayerRecording) { r.Version = 1 }, func(r *PlayerRecording) { r.Version = 3 },
+		func(r *PlayerRecording) { r.Version = 1 }, func(r *PlayerRecording) { r.Version = 4 },
 		func(r *PlayerRecording) { r.Samples[0].Video.QualitySource = "unknown" },
 		func(r *PlayerRecording) { r.Samples[0].Video.TotalFrames = videoTestNumber(-1) },
 		func(r *PlayerRecording) { r.Samples[0].Video.TotalFrames = videoTestNumber(maxPlayerVideoCounter + 1) },

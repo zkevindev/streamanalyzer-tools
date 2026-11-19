@@ -26,17 +26,18 @@ type ReceptionGap struct {
 }
 
 type StallCorrelation struct {
-	Source                string                 `json:"source"`
-	WindowStartMS         int64                  `json:"window_start_ms"`
-	WindowEndMS           int64                  `json:"window_end_ms"`
-	BufferSamples         []PlayerBufferSample   `json:"buffer_samples"`
-	Gaps                  []ReceptionGap         `json:"gaps"`
-	Keyframes             []Event                `json:"keyframes"`
-	Requests              []HTTPRequestTiming    `json:"requests,omitempty"`
-	PlayerRequests        []PlayerNetworkRequest `json:"player_requests,omitempty"`
-	PlayerNetworkRecorded bool                   `json:"player_network_recorded,omitempty"`
-	Findings              []Finding              `json:"findings"`
-	Notes                 []string               `json:"notes"`
+	Source                string                  `json:"source"`
+	WindowStartMS         int64                   `json:"window_start_ms"`
+	WindowEndMS           int64                   `json:"window_end_ms"`
+	BufferSamples         []PlayerBufferSample    `json:"buffer_samples"`
+	Gaps                  []ReceptionGap          `json:"gaps"`
+	Keyframes             []Event                 `json:"keyframes"`
+	Requests              []HTTPRequestTiming     `json:"requests,omitempty"`
+	PlayerRequests        []PlayerNetworkRequest  `json:"player_requests,omitempty"`
+	PlayerNetworkRecorded bool                    `json:"player_network_recorded,omitempty"`
+	Scheduling            *PlayerSchedulingReport `json:"scheduling,omitempty"`
+	Findings              []Finding               `json:"findings"`
+	Notes                 []string                `json:"notes"`
 }
 
 type DerivedArtifact struct {

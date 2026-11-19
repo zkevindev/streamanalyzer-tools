@@ -11,6 +11,7 @@ import (
 	"io"
 	"math"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -57,6 +58,8 @@ var reportPage = template.Must(template.New("report").Funcs(template.FuncMap{
 	"networkEnd":             playerNetworkEndLabel,
 	"networkRows":            playerNetworkVisibleRequests,
 	"networkOmitted":         playerNetworkOmittedRequests,
+	"schedulingView":         playerSchedulingView,
+	"schedulingSupport":      playerSchedulingSupportLabel,
 }).Parse(`{{define "codecRows"}}
 {{with .VideoCodecs}}<dt>视频编码</dt><dd>{{join . " / "}}</dd>{{end}}
 {{with .AudioCodecs}}<dt>音频编码</dt><dd>{{join . " / "}}</dd>{{end}}
@@ -98,6 +101,26 @@ var reportPage = template.Must(template.New("report").Funcs(template.FuncMap{
 <tbody>{{range networkRows .}}<tr><th scope="row">#{{.Number}}</th><td>{{networkKind .Kind}}</td><td>{{.ResourceID}}</td><td>{{.Method}}</td><td>{{.StartMS}}</td><td>{{networkOffset .HeaderMS}}</td><td>{{networkOffset .FirstBodyMS}}</td><td>{{networkEnd .}}</td><td>{{if .HTTPStatus}}{{.HTTPStatus}}{{else}}未观测{{end}}</td><td>{{.Bytes}}</td><td>{{networkOutcome .Outcome}}</td></tr>{{end}}</tbody>
 </table></div>{{with networkOmitted .}}<p class="timing-note">页面仅展示前 200 条，另有 {{.}} 条已保存记录可在报告 JSON 或证据包中查看。</p>{{end}}
 {{else}}<p class="timing-note">当前记录未包含实际播放请求。</p>{{end}}
+{{end}}{{define "schedulingMetrics"}}
+<dl class="scheduling-metrics"><dt>区间数</dt><dd>{{with .}}{{.Count}}{{else}}未观测{{end}}</dd><dt>区间累计时长</dt><dd>{{with .}}{{.TotalMS}} ms{{else}}未观测{{end}}</dd><dt>最长区间</dt><dd>{{with .}}{{.MaxMS}} ms{{else}}未观测{{end}}</dd></dl>
+{{end}}{{define "playerScheduling"}}
+<section class="player-scheduling-report"><h3>{{.Title}}</h3>
+{{with .Report}}
+<dl class="scheduling-coverage"><dt>长任务接口</dt><dd>{{schedulingSupport .LongTaskSupport}}</dd><dt>观测区间</dt><dd>{{.ObservationStartMS}}–{{.ObservationEndMS}} ms</dd><dt>前台播放有效覆盖</dt><dd>{{.ActiveCoverageMS}} ms</dd></dl>
+<p class="timing-note">调度区间按前台播放和观测窗口裁切，区间数与时长表示裁切后的有效片段。定时器每 250 ms 检查，仅采集原始延后 ≥100 ms 的记录；裁切后的区间可能更短。</p>
+<p class="timing-note">长任务和定时器延后分别观测。页面负载、系统调度等都可能影响结果，不能单独证明 CPU 瓶颈或解码故障；与卡顿重合用于安排进一步验证。</p>
+{{if eq .LongTaskSupport "unsupported"}}<p class="timing-note">长任务未观测不代表没有长任务，定时器延后仍单独记录。</p>{{end}}
+{{if eq .ActiveCoverageMS 0}}<p class="timing-note">本记录没有可用于统计的前台播放覆盖区间，异常区间数保持未观测。</p>{{end}}
+<section data-kind="long_task"><h4>浏览器长任务</h4>{{template "schedulingMetrics" $.Native}}</section>
+<section data-kind="timer_delay"><h4>定时器延后（原始延后 ≥100 ms）</h4>{{template "schedulingMetrics" .TimerDelays}}</section>
+{{if or .DroppedLongTasks .DroppedTimerDelays}}<p class="timing-note">采集上限外未记录：长任务 {{.DroppedLongTasks}} 条，定时器延后 {{.DroppedTimerDelays}} 条。当前统计可能不完整。</p>{{end}}
+{{end}}
+{{if .Rows}}<div class="scroll scheduling-intervals" role="region" tabindex="0" aria-label="页面调度有效区间，可横向滚动"><table><thead><tr><th scope="col">类型</th><th scope="col">开始偏移 (ms)</th><th scope="col">结束偏移 (ms)</th><th scope="col">有效区间时长 (ms)</th>{{if .HasStall}}<th scope="col">与本次卡顿重合 (ms)</th>{{end}}</tr></thead>
+<tbody>{{range .Rows}}<tr><td>{{.Kind}}</td><td>{{.StartMS}}</td><td>{{.EndMS}}</td><td>{{.DurationMS}}</td>{{if $.HasStall}}<td>{{.OverlapMS}}</td>{{end}}</tr>{{end}}</tbody></table></div>
+{{else}}{{if .Report}}<p class="timing-note">当前记录未包含可展示的调度区间。</p>{{end}}{{end}}
+{{with .Omitted}}<p class="timing-note">页面仅展示前 200 个有效区间，另有 {{.}} 个已保存区间可在报告 JSON 或证据包中查看。</p>{{end}}
+{{if not .Report}}<p class="timing-note">{{if .HasStall}}该补查未包含页面调度数据，可重新采样后补查。{{else}}该记录未采集页面调度数据，重新采样可补充长任务和定时器延后证据。{{end}}</p>{{end}}
+</section>
 {{end}}<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -144,6 +167,13 @@ thead{color:#52657e;background:#f7f9fc}
 .player-buffer-chart .point{fill:#164d92}
 .player-buffer-chart .stall{fill:#ecc781;opacity:.55}
 .player-video-report{margin-block:.9rem}
+.player-scheduling-report{margin-block:.9rem}
+.player-scheduling-report h4{font-size:.9rem;margin-bottom:.4rem}
+.player-scheduling-report .scroll{max-height:24rem;border:1px solid #d5deea;border-radius:.375rem}
+.player-scheduling-report th,.player-scheduling-report td{white-space:nowrap;font-size:.8rem}
+.player-scheduling-report thead th{position:sticky;top:0;background:#f7f9fc}
+.player-scheduling-report p{overflow-wrap:anywhere}
+.player-scheduling-report .scroll:focus-visible{outline:2px solid #164d92;outline-offset:2px}
 .video-window-samples summary{cursor:pointer;min-height:2.75rem;padding-block:.5rem;font-size:.875rem;font-weight:600}
 .video-window-samples table{white-space:nowrap}
 .stall-investigation{border-color:#9fb4ce}
@@ -161,7 +191,7 @@ thead{color:#52657e;background:#f7f9fc}
 .direction-state{display:inline-block;font:.75rem system-ui,sans-serif;font-weight:650;padding:.12rem .42rem;border-radius:.25rem;color:#465b73;background:#ecf1f7}
 .stall-direction[data-state="observed"] .direction-state{color:#216247;background:#e5f3eb}
 .stall-direction[data-state="candidate"] .direction-state{color:#774705;background:#fff2d7}
-@media print{body{background:#fff}article{break-inside:avoid}.request-timing th,.request-timing td{white-space:normal}.http-header-block:not([open])>:not(summary){display:block}.player-network-requests{max-height:none}}
+@media print{body{background:#fff}article{break-inside:avoid}.request-timing th,.request-timing td{white-space:normal}.http-header-block:not([open])>:not(summary){display:block}.player-network-requests,.player-scheduling-report .scroll{max-height:none}}
 </style>
 </head>
 <body><main>
@@ -249,6 +279,7 @@ thead{color:#52657e;background:#f7f9fc}
 </dl>
 <p class="timing-note">卡顿统计从开始播放到采样结束，计入{{with .StallThresholdMS}}至少 {{.}} ms 的{{end}}等待。暂停、跳转和后台期间停止计时。正常结束后可短暂补记首屏。</p>
 {{template "playerVideo" .Video}}
+{{template "playerScheduling" (schedulingView .Scheduling)}}
 {{with $.PlayerChart}}
 <figure class="player-buffer-chart"><figcaption>可播放缓冲{{if .Stalls}} · 阴影为卡顿区间{{end}}</figcaption>
 <svg viewBox="0 0 615 152" role="img" aria-label="可播放缓冲，横轴是距采样开始的秒数">
@@ -300,6 +331,7 @@ thead{color:#52657e;background:#f7f9fc}
 <p class="timing-note">此处显示采样时的原始累计计数；距最近呈帧回调的时间受播放器状态和页面调度影响。</p>
 <div class="scroll"><table><thead><tr><th scope="col">采样偏移 (ms)</th><th scope="col">播放状态</th><th scope="col">视频帧计数</th><th scope="col">丢帧计数</th><th scope="col">呈帧计数</th><th scope="col">距最近呈帧回调</th></tr></thead>
 <tbody>{{range .VideoSamples}}<tr><td>{{.OffsetMS}}</td><td>{{videoSampleState .}}</td>{{with .Video}}<td>{{videoCount .TotalFrames}}</td><td>{{videoCount .DroppedFrames}}</td><td>{{videoCount .PresentedFrames}}</td><td>{{videoMS .FrameAgeMS}}</td>{{end}}</tr>{{end}}</tbody></table></div></details>{{end}}
+{{template "playerScheduling" (schedulingView .Correlation.Scheduling .Stall)}}
 <h3>关联收流间隔</h3>
 {{if .Correlation.Gaps}}<div class="scroll"><table><thead><tr><th scope="col">媒体</th><th scope="col">开始偏移 (ms)</th><th scope="col">结束偏移 (ms)</th><th scope="col">间隔 (ms)</th></tr></thead>
 <tbody>{{range .Correlation.Gaps}}<tr><td>{{if eq .Kind "video"}}视频{{else if eq .Kind "audio"}}音频{{else}}{{.Kind}}{{end}}</td><td>{{.StartMS}}</td><td>{{.EndMS}}</td><td>{{.DurationMS}}</td></tr>{{end}}</tbody></table></div>
@@ -846,6 +878,73 @@ func investigationHTMLItems(items []StallInvestigation, backURL string, assets m
 		result = append(result, view)
 	}
 	return result
+}
+
+type schedulingHTMLData struct {
+	Report   *PlayerSchedulingReport
+	Native   *PlayerSchedulingMetrics
+	Title    string
+	HasStall bool
+	Rows     []schedulingHTMLInterval
+	Omitted  int
+}
+
+type schedulingHTMLInterval struct {
+	Kind       string
+	StartMS    int64
+	EndMS      int64
+	DurationMS int64
+	OverlapMS  int64
+}
+
+func playerSchedulingSupportLabel(support string) string {
+	switch support {
+	case "supported":
+		return "支持 Long Tasks API"
+	case "unsupported":
+		return "当前环境不支持 Long Tasks API"
+	default:
+		return "接口支持状态未记录"
+	}
+}
+
+func playerSchedulingView(report *PlayerSchedulingReport, stalls ...PlayerStall) schedulingHTMLData {
+	view := schedulingHTMLData{Report: report, Title: "页面调度观测", HasStall: len(stalls) > 0}
+	if view.HasStall {
+		view.Title = "补查窗口页面调度"
+	}
+	if report == nil {
+		return view
+	}
+	if report.LongTaskSupport == "supported" {
+		view.Native = report.LongTasks
+	}
+	for _, group := range []struct {
+		kind    string
+		metrics *PlayerSchedulingMetrics
+	}{{"浏览器长任务", view.Native}, {"定时器延后", report.TimerDelays}} {
+		if group.metrics == nil {
+			continue
+		}
+		for _, interval := range group.metrics.Intervals {
+			row := schedulingHTMLInterval{Kind: group.kind, StartMS: interval.StartMS, EndMS: interval.EndMS, DurationMS: interval.EndMS - interval.StartMS}
+			if view.HasStall {
+				row.OverlapMS = max(0, min(interval.EndMS, stalls[0].EndMS)-max(interval.StartMS, stalls[0].StartMS))
+			}
+			view.Rows = append(view.Rows, row)
+		}
+	}
+	sort.SliceStable(view.Rows, func(i, j int) bool {
+		if view.Rows[i].StartMS == view.Rows[j].StartMS {
+			return view.Rows[i].EndMS < view.Rows[j].EndMS
+		}
+		return view.Rows[i].StartMS < view.Rows[j].StartMS
+	})
+	if len(view.Rows) > 200 {
+		view.Omitted = len(view.Rows) - 200
+		view.Rows = view.Rows[:200]
+	}
+	return view
 }
 
 const playerNetworkHTMLRowLimit = 200

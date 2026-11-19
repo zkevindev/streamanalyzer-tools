@@ -62,6 +62,7 @@ const explanationPrompt = "你是流媒体排障助手。请用中文，仅返�
 	"stall_investigations 为选定卡顿的补查时序证据。截图和片段像素未提供给你，不得声称已看见画面、黑屏或解码结果。请引用真实证据 ID，明确观测和待验证假设。" +
 	"assessment 为基于观测的分层排查方向，不是根因判定。请遵循其限制，将候选方向写成待验证假设。" +
 	"player_network 和 player_requests 是实际 HLS 播放代理的请求证据，区别于采样连接 requests；首正文和字节数为代理上游观测，不能当作浏览器已接收、追加或解码。" +
+	"scheduling 区分浏览器长任务和定时器延后，区间已按前台播放覆盖裁剪；unsupported 或缺少指标不表示零次。时间重合不能证明 CPU 占用、解码故障或画面冻结，不得插值推断阻塞期间缓冲。" +
 	"没有足够证据时，给出简洁摘要并返回空 hypotheses。"
 
 type modelClient struct {
@@ -168,23 +169,24 @@ type modelFinding struct {
 }
 
 type modelPlayer struct {
-	State             string             `json:"state"`
-	Source            string             `json:"source"`
-	Engine            string             `json:"engine"`
-	StartOffsetMS     int64              `json:"start_offset_ms"`
-	FirstScreenMS     *int64             `json:"first_screen_ms,omitempty"`
-	FirstScreenMethod string             `json:"first_screen_method,omitempty"`
-	FirstPlayingMS    *int64             `json:"first_playing_ms,omitempty"`
-	StallCount        int                `json:"stall_count"`
-	TotalStallMS      int64              `json:"total_stall_ms"`
-	MaxStallMS        int64              `json:"max_stall_ms"`
-	ActiveMS          int64              `json:"active_ms"`
-	StallRatio        float64            `json:"stall_ratio"`
-	MinBufferMS       *int64             `json:"min_buffer_ms,omitempty"`
-	MaxBufferMS       int64              `json:"max_buffer_ms"`
-	StallThresholdMS  int64              `json:"stall_threshold_ms"`
-	Stalls            []PlayerStall      `json:"stalls"`
-	Video             *PlayerVideoReport `json:"video,omitempty"`
+	State             string                 `json:"state"`
+	Source            string                 `json:"source"`
+	Engine            string                 `json:"engine"`
+	StartOffsetMS     int64                  `json:"start_offset_ms"`
+	FirstScreenMS     *int64                 `json:"first_screen_ms,omitempty"`
+	FirstScreenMethod string                 `json:"first_screen_method,omitempty"`
+	FirstPlayingMS    *int64                 `json:"first_playing_ms,omitempty"`
+	StallCount        int                    `json:"stall_count"`
+	TotalStallMS      int64                  `json:"total_stall_ms"`
+	MaxStallMS        int64                  `json:"max_stall_ms"`
+	ActiveMS          int64                  `json:"active_ms"`
+	StallRatio        float64                `json:"stall_ratio"`
+	MinBufferMS       *int64                 `json:"min_buffer_ms,omitempty"`
+	MaxBufferMS       int64                  `json:"max_buffer_ms"`
+	StallThresholdMS  int64                  `json:"stall_threshold_ms"`
+	Stalls            []PlayerStall          `json:"stalls"`
+	Video             *PlayerVideoReport     `json:"video,omitempty"`
+	Scheduling        *modelPlayerScheduling `json:"scheduling,omitempty"`
 }
 
 // Keep connection metadata and header text local even as the report grows.
@@ -214,6 +216,7 @@ type modelStallInvestigation struct {
 	Requests              []modelHTTPRequest     `json:"requests,omitempty"`
 	PlayerRequests        []PlayerNetworkRequest `json:"player_requests,omitempty"`
 	PlayerNetworkRecorded bool                   `json:"player_network_recorded,omitempty"`
+	Scheduling            *modelPlayerScheduling `json:"scheduling,omitempty"`
 	Notes                 []string               `json:"notes"`
 	MediaStatus           string                 `json:"media_status"`
 	MediaAlignment        string                 `json:"media_alignment,omitempty"`
@@ -298,7 +301,7 @@ func modelInput(report Report) ([]byte, error) {
 			StallCount: player.StallCount, TotalStallMS: player.TotalStallMS, MaxStallMS: player.MaxStallMS, ActiveMS: player.ActiveMS,
 			StallRatio: player.StallRatio, MinBufferMS: player.MinBufferMS, MaxBufferMS: player.MaxBufferMS, StallThresholdMS: player.StallThresholdMS,
 			Stalls: player.Stalls[:min(20, len(player.Stalls))],
-			Video:  player.Video,
+			Video:  player.Video, Scheduling: modelScheduling(player.Scheduling),
 		}
 	}
 	if len(input.Requests) == 0 {
@@ -310,7 +313,8 @@ func modelInput(report Report) ([]byte, error) {
 			Gaps: item.Correlation.Gaps, BufferSamples: item.Correlation.BufferSamples, Keyframes: item.Correlation.Keyframes,
 			Requests: modelRequestTimings(item.Correlation.Requests), Notes: item.Correlation.Notes,
 			MediaStatus: item.Media.Status, MediaAlignment: item.Media.Alignment, Assessment: item.Assessment,
-			PlayerRequests: item.Correlation.PlayerRequests, PlayerNetworkRecorded: item.Correlation.PlayerNetworkRecorded}
+			PlayerRequests: item.Correlation.PlayerRequests, PlayerNetworkRecorded: item.Correlation.PlayerNetworkRecorded,
+			Scheduling: modelScheduling(item.Correlation.Scheduling)}
 		for _, asset := range item.Media.Assets {
 			if asset.Kind == "clip" {
 				entry.ClipCount++
