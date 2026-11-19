@@ -432,6 +432,7 @@ func sampleRTSPTransportWithTLS(ctx context.Context, dir string, target *url.URL
 		}
 		client.Close()
 	}
+	receiveEndMS := capture.now()
 	if preview != nil {
 		if !preview.started {
 			preview.fail("capture_setup_failed")
@@ -443,6 +444,9 @@ func sampleRTSPTransportWithTLS(ctx context.Context, dir string, target *url.URL
 		capture.metadata.Preview = &result
 	}
 	observation.ElapsedMS = capture.now()
+	if capture.metadata.Version == rtspPreviewArchiveVersion {
+		observation.ElapsedMS = receiveEndMS
+	}
 	capture.mu.Lock()
 	observation.EndReason = capture.reason
 	if observation.EndReason == "" {

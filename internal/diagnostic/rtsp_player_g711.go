@@ -297,6 +297,13 @@ func (encoder *rtspG711Encoder) writeInput() {
 			}
 			item = value
 		}
+		if item.pts < -2*int64(encoder.config.rate) || item.pts > maxPlayerElapsedMS*int64(encoder.config.rate)/1000 {
+			encoder.mu.Lock()
+			encoder.report.TimelineResets++
+			encoder.mu.Unlock()
+			encoder.fail("g711_timeline_discontinuity")
+			return
+		}
 		samples := int64(len(item.payload) / encoder.config.channels)
 		if !initialized {
 			encoder.mu.Lock()
@@ -457,15 +464,20 @@ func (encoder *rtspG711Encoder) finish() RTSPG711PreviewReport {
 	cancel := encoder.cancel
 	encoder.mu.Unlock()
 	if cancel != nil {
-		timer := time.AfterFunc(1500*time.Millisecond, func() { encoder.fail("ffmpeg_drain_timeout") })
+		timeoutDone := make(chan struct{})
+		timer := time.AfterFunc(1500*time.Millisecond, func() { encoder.fail("ffmpeg_drain_timeout"); close(timeoutDone) })
 		<-encoder.done
-		timer.Stop()
+		if !timer.Stop() {
+			<-timeoutDone
+		}
 	} else {
 		<-encoder.done
 	}
 	encoder.mu.Lock()
 	elapsed := time.Since(start).Milliseconds()
-	encoder.report.DrainMS = &elapsed
+	if encoder.report.DrainMS == nil {
+		encoder.report.DrainMS = &elapsed
+	}
 	report := encoder.report
 	encoder.mu.Unlock()
 	return cloneRTSPG711Report(report)

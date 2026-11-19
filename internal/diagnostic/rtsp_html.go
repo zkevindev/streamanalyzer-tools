@@ -129,7 +129,7 @@ func rtspArtifactName(name string) string {
 }
 
 var rtspReportPage = template.Must(template.New("rtsp").Funcs(template.FuncMap{
-	"previewState": rtspPreviewStateLabel, "previewReason": rtspPreviewReasonLabel, "previewReasonFor": rtspPreviewReasonLabelFor, "ms": playerVideoObservedTime, "kind": rtspKindLabel, "failure": rtspFailureLabel, "duration": rtspRequestDuration, "counter": rtspObservedCounter, "transport": rtspTransportLabel,
+	"previewState": rtspPreviewStateLabel, "previewReason": rtspPreviewReasonLabel, "previewReasonFor": rtspPreviewReasonLabelFor, "g711State": rtspG711StateLabel, "g711Reason": rtspG711ReasonLabel, "sampleCount": playerVideoObservedCount, "ms": playerVideoObservedTime, "kind": rtspKindLabel, "failure": rtspFailureLabel, "duration": rtspRequestDuration, "counter": rtspObservedCounter, "transport": rtspTransportLabel,
 }).Parse(`<article id="rtsp-report"><h2>RTSP 会话与 RTP 接收</h2>
 {{if not .Metrics}}<p class="timing-note">原生 RTSP/RTP 采样不依赖浏览器预览。未记录转封装能力，播放器首屏、缓冲和呈帧指标以实际保存的播放器记录为准。</p>{{else}}{{if not .Metrics.Preview}}<p class="timing-note">原生 RTSP/RTP 采样不依赖浏览器预览。未记录转封装能力，播放器首屏、缓冲和呈帧指标以实际保存的播放器记录为准。</p>{{end}}{{end}}
 <p class="timing-note">首音视频时间表示对应 RTP 包到达本接收点，不是解码首帧。SDP 声明的轨道与编码单独列出，不代表已收到或解码媒体。</p>
@@ -138,8 +138,13 @@ var rtspReportPage = template.Must(template.New("rtsp").Funcs(template.FuncMap{
 <dl><dt>本机转封装状态</dt><dd>{{previewState .State}}</dd><dt>预览原因</dt><dd>{{previewReasonFor . .ReasonCode}}</dd>
 <dt>预览视频</dt><dd>{{if .VideoTrackID}}#{{.VideoTrackID}} · {{.VideoCodec}}{{else}}未选择{{end}}</dd><dt>视频说明</dt><dd>{{previewReasonFor . .VideoReason}}</dd>
 <dt>预览音频</dt><dd>{{if .AudioTrackID}}#{{.AudioTrackID}} · {{.AudioCodec}}{{else}}未选择{{end}}</dd><dt>音频说明</dt><dd>{{if eq .AudioReason "codec_unsupported"}}音轨预览不支持，已静音；原始 RTP 仍保留{{else}}{{previewReasonFor . .AudioReason}}{{end}}</dd>
-{{if eq .Version 2}}<dt>编码能力版本</dt><dd>{{.CodecCapabilitiesVersion}}</dd><dt>视频预览输出</dt><dd>{{if .VideoOutputCodec}}{{.VideoOutputCodec}}{{else}}未选择{{end}}</dd><dt>视频处理</dt><dd>{{if eq .VideoTransform "native_remux"}}原生转封装{{else}}{{if .VideoTransform}}{{.VideoTransform}}{{else}}未选择{{end}}{{end}}</dd><dt>音频预览输出</dt><dd>{{if .AudioOutputCodec}}{{.AudioOutputCodec}}{{else}}未选择{{end}}</dd><dt>音频处理</dt><dd>{{if eq .AudioTransform "native_remux"}}原生转封装{{else}}{{if .AudioTransform}}{{.AudioTransform}}{{else}}未选择{{end}}{{end}}</dd>{{end}}
-<dt>视频访问单元</dt><dd>{{.VideoAUs}}</dd><dt>音频访问单元</dt><dd>{{.AudioAUs}}</dd><dt>转封装包错误</dt><dd>{{.PacketErrors}}</dd><dt>预览队列丢弃</dt><dd>{{.DroppedPackets}}</dd></dl>{{end}}
+{{if eq .Version 2}}<dt>编码能力版本</dt><dd>{{.CodecCapabilitiesVersion}}</dd><dt>视频预览输出</dt><dd>{{if .VideoOutputCodec}}{{.VideoOutputCodec}}{{else}}未选择{{end}}</dd><dt>视频处理</dt><dd>{{if eq .VideoTransform "native_remux"}}原生转封装{{else}}{{if .VideoTransform}}{{.VideoTransform}}{{else}}未选择{{end}}{{end}}</dd><dt>音频预览输出</dt><dd>{{if .AudioOutputCodec}}{{.AudioOutputCodec}}{{else}}未选择{{end}}</dd><dt>音频处理</dt><dd>{{if eq .AudioTransform "native_remux"}}原生转封装{{else}}{{if eq .AudioTransform "g711_to_aac"}}本机 G.711 → AAC 转码{{else}}{{if .AudioTransform}}{{.AudioTransform}}{{else}}未选择{{end}}{{end}}{{end}}</dd>{{end}}
+<dt>视频访问单元</dt><dd>{{.VideoAUs}}</dd><dt>音频访问单元</dt><dd>{{.AudioAUs}}</dd><dt>转封装包错误</dt><dd>{{.PacketErrors}}</dd><dt>预览队列丢弃</dt><dd>{{.DroppedPackets}}</dd></dl>
+{{with .G711}}<h4>G.711 本机音频转码</h4><p class="timing-note">同次 RTP 的 PCMA/PCMU 解码后经本机 FFmpeg 转为 AAC，属于有损预览。原始 G.711 RTP 不变；样本数按每声道统计，输入、补静音与迟到丢弃使用输入采样率，输出及编码预延迟/填充使用输出采样率。补静音依据 RTP 时间缺口，不代表源端发送了静音。工具检查、首个编码输出和排空耗时属于本机处理，不能解释为网络收流耗时。</p><dl>
+<dt>转码状态</dt><dd>{{g711State .State}}</dd><dt>转码原因</dt><dd>{{if .ReasonCode}}{{g711Reason .ReasonCode}}{{else}}无{{end}}</dd><dt>本机编码器</dt><dd>{{.Encoder}}</dd>
+<dt>输入采样率</dt><dd>{{.InputSampleRate}} Hz</dd><dt>输出采样率</dt><dd>{{.OutputSampleRate}} Hz</dd><dt>音频声道</dt><dd>{{.Channels}}</dd>
+<dt>输入 G.711 包</dt><dd>{{.InputPackets}}</dd><dt>输入样本</dt><dd>{{.InputSamples}}</dd><dt>按 RTP 缺口补静音样本</dt><dd>{{.InsertedSilenceSamples}}</dd><dt>迟到丢弃样本</dt><dd>{{.DroppedLateSamples}}</dd><dt>转码丢弃包</dt><dd>{{.DroppedPackets}}</dd><dt>转码包错误</dt><dd>{{.PacketErrors}}</dd><dt>时钟不连续次数</dt><dd>{{.TimelineResets}}</dd>
+<dt>输出 AAC 访问单元</dt><dd>{{.OutputAUs}}</dd><dt>输出样本</dt><dd>{{.OutputSamples}}</dd><dt>编码预延迟样本</dt><dd>{{sampleCount .EncoderPrimingSamples}}</dd><dt>编码填充样本</dt><dd>{{sampleCount .EncoderPaddingSamples}}</dd><dt>工具检查耗时</dt><dd>{{ms .ToolCheckMS}}</dd><dt>首个编码输出耗时</dt><dd>{{ms .StartupMS}}</dd><dt>编码器排空耗时</dt><dd>{{ms .DrainMS}}</dd></dl>{{end}}{{end}}
 <dl><dt>传输</dt><dd>{{transport .Transport}}</dd><dt>应用字节边界</dt><dd>{{if .Secure}}TLS 解密后的 RTSP/RTP{{else}}RTSP/RTP 应用字节{{end}}</dd><dt>会话连接数</dt><dd>{{.Connections}}</dd>
 <dt>DNS 阶段</dt><dd>{{$.DNS}}</dd><dt>TCP 阶段</dt><dd>{{$.TCP}}</dd><dt>TLS 阶段</dt><dd>{{if .Secure}}{{$.TLS}}{{else}}不适用（RTSP）{{end}}</dd>
 <dt>RTP 包</dt><dd>{{.RTPPackets}}</dd><dt>RTCP 包</dt><dd>{{.RTCPPackets}}</dd><dt>RTP 字节</dt><dd>{{.RTPBytes}}</dd>
@@ -212,6 +217,20 @@ func rtspPreviewStateLabel(state string) string {
 	}
 	return "未记录"
 }
+
+func rtspG711StateLabel(state string) string {
+	switch state {
+	case "ready":
+		return "已输出 AAC"
+	case "no_media":
+		return "未输出音频"
+	case "unavailable":
+		return "本机转码不可用"
+	case "failed":
+		return "本机转码失败"
+	}
+	return "未记录"
+}
 func rtspPreviewReasonLabel(code string) string {
 	switch code {
 	case "":
@@ -246,6 +265,14 @@ func rtspPreviewReasonLabel(code string) string {
 
 func rtspPreviewReasonLabelFor(preview *RTSPPreviewReport, code string) string {
 	if preview != nil && preview.Version == 2 {
+		if preview.CodecCapabilitiesVersion >= 3 {
+			if label := rtspG711ReasonLabel(code); label != "" {
+				return label
+			}
+			if code == "codec_unsupported" {
+				return "本版支持 H.264 / H.265 / AAC-LC / Opus，并可将 G.711 转码为 AAC；其他编码预览暂不支持"
+			}
+		}
 		if preview.CodecCapabilitiesVersion >= 2 && code == "codec_unsupported" {
 			return "本版支持 H.264 / H.265 / AAC-LC / Opus；其他编码预览暂不支持"
 		}

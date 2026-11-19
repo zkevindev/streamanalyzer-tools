@@ -30,6 +30,10 @@ func modelRTSP(source *RTSPMetrics) *modelRTSPMetrics {
 	result.Preview = nil
 	if validRTSPPreview(source.Preview, source.Tracks) {
 		copy := *source.Preview
+		if copy.G711 != nil {
+			value := cloneRTSPG711Report(*copy.G711)
+			copy.G711 = &value
+		}
 		result.Preview = &copy
 	}
 	result.Boundary = "native_rtsp_tcp_receive"

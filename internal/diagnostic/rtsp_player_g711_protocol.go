@@ -51,15 +51,17 @@ type rtspG711CRC struct {
 
 type rtspG711CRCReader struct {
 	scanner                             *bufio.Scanner
+	counted                             *rtspCountingReader
 	rate, channels                      int
 	timebase, codec, sampleRate, layout bool
 	rows                                int
 }
 
 func newRTSPG711CRCReader(reader io.Reader, channels int) *rtspG711CRCReader {
-	scanner := bufio.NewScanner(io.LimitReader(reader, rtspG711MetadataLimit+1))
+	counted := &rtspCountingReader{Reader: io.LimitReader(reader, rtspG711MetadataLimit+1)}
+	scanner := bufio.NewScanner(counted)
 	scanner.Buffer(make([]byte, 1024), 2048)
-	return &rtspG711CRCReader{scanner: scanner, rate: rtspG711OutputRate, channels: channels}
+	return &rtspG711CRCReader{scanner: scanner, counted: counted, rate: rtspG711OutputRate, channels: channels}
 }
 
 func (r *rtspG711CRCReader) next() (rtspG711CRC, error) {
@@ -87,12 +89,16 @@ func (r *rtspG711CRCReader) next() (rtspG711CRC, error) {
 					return rtspG711CRC{}, fmt.Errorf("invalid AAC rate")
 				}
 				r.sampleRate = true
-			case "#channel_layout_name 0":
+			case "#channel_layout_name 0", "#channel_layout 0":
 				want := "mono"
 				if r.channels == 2 {
 					want = "stereo"
 				}
-				if value != want {
+				legacy := "0x4"
+				if r.channels == 2 {
+					legacy = "0x3"
+				}
+				if value != want && value != legacy {
 					return rtspG711CRC{}, fmt.Errorf("invalid AAC layout")
 				}
 				r.layout = true
@@ -123,6 +129,9 @@ func (r *rtspG711CRCReader) next() (rtspG711CRC, error) {
 			return rtspG711CRC{}, fmt.Errorf("too many AAC packets")
 		}
 		return rtspG711CRC{pts: values[2], dts: values[1], duration: values[3], size: int(values[4]), checksum: uint32(checksum)}, nil
+	}
+	if r.counted.count > rtspG711MetadataLimit || r.counted.readErr != nil {
+		return rtspG711CRC{}, fmt.Errorf("AAC metadata exceeds bounds")
 	}
 	if err := r.scanner.Err(); err != nil {
 		return rtspG711CRC{}, err
