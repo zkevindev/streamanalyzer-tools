@@ -21,7 +21,20 @@ const (
 	clipSamples = 20 * sampleRate
 )
 
+type RTPPathStatus struct {
+	ReturnMode      string    `json:"return_mode"`
+	AdvertisedLocal string    `json:"advertised_local"`
+	ObservedSource  string    `json:"observed_source,omitempty"`
+	Destination     string    `json:"destination,omitempty"`
+	LearnedAt       time.Time `json:"learned_at,omitzero"`
+}
+
 type audioSession struct {
+	advertised    netip.AddrPort
+	decoy         *net.UDPConn
+	returnMode    string
+	path          RTPPathStatus
+	learned       netip.AddrPort
 	earlySent     rtpStats
 	earlyReceived rtpStats
 	digits        chan uint8
@@ -38,16 +51,55 @@ type audioSession struct {
 	next    int
 }
 
-func openAudio(ip netip.Addr) (*audioSession, error) {
+func openAudio(ip netip.Addr, returnMode string, differentAdvertisedPort bool) (*audioSession, error) {
 	conn, err := net.ListenUDP("udp4", net.UDPAddrFromAddrPort(netip.AddrPortFrom(ip, 0)))
 	if err != nil {
 		return nil, err
 	}
-	return &audioSession{conn: conn, digits: make(chan uint8, 8), local: conn.LocalAddr().(*net.UDPAddr).AddrPort()}, nil
+	local := conn.LocalAddr().(*net.UDPAddr).AddrPort()
+	session := &audioSession{conn: conn, digits: make(chan uint8, 8), local: local, advertised: local, returnMode: returnMode}
+	if differentAdvertisedPort {
+		// Reserve the advertised socket. The bidirectional media path lives
+		// on the other port, as it does behind a changed NAT mapping.
+		decoy, err := net.ListenUDP("udp4", net.UDPAddrFromAddrPort(netip.AddrPortFrom(ip, 0)))
+		if err != nil {
+			conn.Close()
+			return nil, err
+		}
+		session.decoy = decoy
+		session.advertised = decoy.LocalAddr().(*net.UDPAddr).AddrPort()
+	}
+	return session, nil
+}
+
+func (a *audioSession) close() {
+	a.conn.Close()
+	if a.decoy != nil {
+		a.decoy.Close()
+	}
+}
+
+// The caller holds a.mu when reading endpoint evidence with the audio state.
+func (a *audioSession) pathStatus() RTPPathStatus {
+	status := a.path
+	status.ReturnMode, status.AdvertisedLocal = a.returnMode, a.advertised.String()
+	return status
+}
+
+func (a *audioSession) destination(sdp netip.AddrPort) netip.AddrPort {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.learned.IsValid() {
+		return a.learned
+	}
+	return sdp
 }
 
 func (a *audioSession) run(ctx context.Context, params audioParameters, early bool) func() {
 	ctx, cancel := context.WithCancel(ctx)
+	a.mu.Lock()
+	a.path, a.learned = RTPPathStatus{}, netip.AddrPort{}
+	a.mu.Unlock()
 	var media sync.WaitGroup
 	if params.send {
 		media.Go(func() { a.sendTone(ctx, params, early) })
@@ -89,7 +141,6 @@ func (a *audioSession) sendTone(ctx context.Context, params audioParameters, ear
 		stats = &a.earlySent
 	}
 	var digit *digitSender
-	dist := params.remote
 	buffer := make([]byte, 12+audioFrame)
 	offset := 0
 	for ctx.Err() == nil {
@@ -114,7 +165,13 @@ func (a *audioSession) sendTone(ctx context.Context, params audioParameters, ear
 			if err != nil {
 				return
 			}
-			if _, err := a.conn.WriteToUDPAddrPort(buffer[:n], dist); err == nil {
+			destination := a.destination(params.remote)
+			if _, err := a.conn.WriteToUDPAddrPort(buffer[:n], destination); err == nil {
+				a.mu.Lock()
+				if a.path.Destination != destination.String() {
+					a.path.Destination = destination.String()
+				}
+				a.mu.Unlock()
 				stats.observe(packet.Header, time.Now())
 				if digitDone {
 					a.recordDigit("send", digit.code)
@@ -185,6 +242,11 @@ func (a *audioSession) receive(params audioParameters, early bool) {
 			continue
 		}
 		a.mu.Lock()
+		remote = netip.AddrPortFrom(remote.Addr().Unmap(), remote.Port())
+		a.path.ObservedSource = remote.String()
+		if a.returnMode == "source" && !a.learned.IsValid() {
+			a.learned, a.path.LearnedAt = remote, arrival
+		}
 		for _, sample := range packet.Payload {
 			pcm := decoder(sample)
 			if len(a.samples) < clipSamples {

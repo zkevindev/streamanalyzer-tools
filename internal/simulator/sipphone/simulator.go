@@ -27,6 +27,8 @@ var (
 )
 
 type Config struct {
+	RTPReturn        string `json:"rtp_return,omitempty"`
+	SimulateNATPort  bool   `json:"simulate_nat_port,omitempty"`
 	ReliableEarly    bool   `json:"reliable_early,omitempty"`
 	EarlyMedia       bool   `json:"early_media,omitempty"`
 	Preset           string `json:"preset,omitempty"`
@@ -47,6 +49,13 @@ func isUnicast(ip netip.Addr) bool {
 }
 
 func (c *Config) validate() error {
+	switch c.RTPReturn {
+	case "":
+		c.RTPReturn = "sdp"
+	case "sdp", "source":
+	default:
+		return fmt.Errorf("%w，选择按 SDP 地址或 RTP 来源回包", ErrConfig)
+	}
 	c.Host, c.Domain, c.User = strings.TrimSpace(c.Host), strings.TrimSpace(c.Domain), strings.TrimSpace(c.User)
 	c.Username, c.LocalIP = strings.TrimSpace(c.Username), strings.TrimSpace(c.LocalIP)
 	if c.Port == 0 {
@@ -264,6 +273,7 @@ func (a *agent) snapshot() Status {
 		a.call.audio.mu.Lock()
 		call.DigitEvents = slices.Clone(a.call.audio.digitEvents)
 		call.AudioReady = len(a.call.audio.samples) > 0
+		call.RTPPath = a.call.audio.pathStatus()
 		a.call.audio.mu.Unlock()
 		call.AudioFault = audioFault(a.call.audio.fault.Load()).String()
 		if call.Scenario != nil {

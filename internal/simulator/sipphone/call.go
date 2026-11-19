@@ -16,6 +16,7 @@ import (
 const ringTimeout = 45 * time.Second
 
 type CallStatus struct {
+	RTPPath         RTPPathStatus   `json:"rtp_path"`
 	PRACK           *PRACKStatus    `json:"prack,omitempty"`
 	MediaDirection  string          `json:"media_direction,omitempty"`
 	PreviousRemote  string          `json:"previous_remote,omitempty"`
@@ -65,7 +66,7 @@ type phoneCall struct {
 }
 
 func (a *agent) newCall(direction, peer, state string) (*phoneCall, error) {
-	audio, err := openAudio(a.local.Addr())
+	audio, err := openAudio(a.local.Addr(), a.cfg.RTPReturn, a.cfg.SimulateNATPort)
 	if err != nil {
 		return nil, fmt.Errorf("绑定 RTP 音频端口失败：%w", err)
 	}
@@ -74,7 +75,7 @@ func (a *agent) newCall(direction, peer, state string) (*phoneCall, error) {
 }
 
 func (a *agent) finishCall(c *phoneCall, err error) {
-	c.audio.conn.Close()
+	c.audio.close()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	c.status.Active = false
@@ -154,7 +155,7 @@ func (a *agent) outgoing(ctx context.Context, c *phoneCall, recipient sip.Uri) e
 	proxy.UriParams.Add("lr", "")
 	req.AppendHeader(&sip.RouteHeader{Address: proxy})
 	req.SetTransport("UDP")
-	req.SetBody(makeOffer(c.audio.local, c.sdpID))
+	req.SetBody(makeOffer(c.audio.advertised, c.sdpID))
 	// Keep the SIP address of record in From; Contact contains the local socket.
 	from := &sip.FromHeader{Address: sip.Uri{Scheme: "sip", User: a.cfg.User, Host: a.cfg.Domain}}
 	from.Params.Add("tag", sip.GenerateTagN(16))
@@ -350,7 +351,7 @@ func (a *agent) incoming(req *sip.Request, tx sip.ServerTransaction) {
 	a.mu.Unlock()
 	defer a.workers.Done()
 
-	answer := makeAnswer(c.audio.local, c.sdpID, offer, selected, media)
+	answer := makeAnswer(c.audio.advertised, c.sdpID, offer, selected, media)
 	a.finishCall(c, a.ring(c, tx, dialog, answer, media))
 }
 

@@ -71,6 +71,10 @@
                 <div><label for="preset-duration">故障持续（毫秒）</label><input id="preset-duration" name="preset_duration_ms" type="number" min="300" max="30000" value="5000"></div>
               </div>
             </details>
+            <div><label for="rtp-return">RTP 回包目的地</label>
+              <select id="rtp-return" name="rtp_return"><option value="sdp">对端 SDP 地址</option><option value="source">首个有效 RTP 的来源地址</option></select>
+            </div>
+            <label class="sim-check"><input id="simulate-nat-port" type="checkbox"> 本机 RTP 使用不同于 SDP 声明的端口</label>
             <label class="sim-check"><input id="offer-reliable" type="checkbox"> 对支持 100rel 的呼入等待 PRACK</label>
             <label class="sim-check"><input id="offer-early" type="checkbox"> 呼入振铃时发送 183 和早期测试音</label>
           </fieldset>
@@ -119,8 +123,11 @@
             </section>
             <dl id="media-addresses" class="onvif-addresses" hidden>
               <div><dt>通话对端</dt><dd id="call-peer"></dd></div>
-              <div><dt>本机音频 RTP</dt><dd id="media-local"></dd></div>
-              <div><dt>对端音频 RTP</dt><dd id="media-remote"></dd></div>
+              <div><dt>本机实际 RTP</dt><dd id="media-local"></dd></div>
+              <div><dt>本机 SDP 声明</dt><dd id="media-advertised"></dd></div>
+              <div><dt>对端 SDP 声明</dt><dd id="media-remote"></dd></div>
+              <div><dt>对端 RTP 实际来源</dt><dd id="media-observed"></dd></div>
+              <div><dt>实际 RTP 回包目的地</dt><dd id="media-destination"></dd></div>
               <div id="media-change" hidden><dt>最近一次 SDP 重协商</dt><dd id="media-change-detail"></dd></div>
             </dl>
             <div id="dtmf-panel" class="sip-metrics" hidden>
