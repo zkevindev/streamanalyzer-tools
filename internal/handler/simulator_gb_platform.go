@@ -62,6 +62,17 @@ func registerGBPlatformRoutes(r *gin.Engine, platform *gb28181.PlatformManager, 
 		}
 		c.JSON(http.StatusAccepted, status())
 	})
+	api.POST("/playback-control", func(c *gin.Context) {
+		var action gb28181.PlaybackControl
+		if !bindGBPlatform(c, &action) {
+			return
+		}
+		if err := platform.ControlPlayback(action); err != nil {
+			gbPlatformError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, status())
+	})
 	api.POST("/stop", func(c *gin.Context) {
 		platform.Stop()
 		c.JSON(http.StatusOK, status())

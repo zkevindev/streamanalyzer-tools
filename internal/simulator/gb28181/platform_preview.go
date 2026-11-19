@@ -27,6 +27,10 @@ func (m *PlatformManager) Preview(cfg PreviewConfig) error {
 	if !digits20.MatchString(cfg.ChannelID) || cfg.WindowMS < 500 || cfg.WindowMS > 15000 {
 		return fmt.Errorf("%w，填写 20 位通道编号及 500–15000 毫秒的收流窗口", ErrPlatformConfig)
 	}
+	if cfg.Recording != nil && (cfg.Recording.Start.Unix() <= 0 || cfg.Recording.Start.Unix() >= cfg.Recording.End.Unix() ||
+		cfg.Recovery != "" || cfg.SkipACK || cfg.SkipConnect) {
+		return fmt.Errorf("%w，录像回放需要起止时间和正常点播配置", ErrPlatformConfig)
+	}
 	m.mu.Lock()
 	p := m.run
 	m.mu.Unlock()
@@ -56,7 +60,14 @@ func (m *PlatformManager) Preview(cfg PreviewConfig) error {
 		recovery = &PlatformRecovery{Mode: cfg.Recovery, State: "waiting_media", Before: report}
 		p.ignoredSN = make(map[uint32]struct{})
 	}
-	p.recovery = recovery
+	var playback *platformPlayback
+	if cfg.Recording != nil {
+		report.State = "record_info"
+		report.SSRC += 1000000000
+		report.Recording = &PlatformRecording{PlaybackRange: *cfg.Recording}
+		playback = &platformPlayback{report: report, sn: 1 + rand.Uint32N(99999998), records: make(map[string]struct{}), queryDone: make(chan struct{}), ended: make(chan struct{})}
+	}
+	p.recovery, p.playback = recovery, playback
 	p.preview, p.busy = report, true
 	peer := p.peer
 	p.workers.Go(func() {
@@ -64,7 +75,7 @@ func (m *PlatformManager) Preview(cfg PreviewConfig) error {
 		defer media.close()
 		if recovery != nil {
 			p.runRecovery(cfg, report, media, peer, recovery)
-		} else {
+		} else if playback == nil || p.queryRecording(cfg, peer, playback) {
 			p.runPreview(cfg, report, media, peer, nil)
 		}
 	})
@@ -113,8 +124,15 @@ func (p *platform) runPreview(cfg PreviewConfig, report *PlatformPreview, media 
 		protocol = "TCP/RTP/AVP"
 		attrs = "a=setup:" + strings.TrimPrefix(string(cfg.MediaTransport), "tcp-") + "\r\na=connection:new\r\n"
 	}
-	req.SetBody(fmt.Appendf(nil, "v=0\r\no=%s 0 0 IN IP4 %s\r\ns=Play\r\nc=IN IP4 %s\r\nt=0 0\r\nm=video %d %s 96\r\na=recvonly\r\na=rtpmap:96 PS/90000\r\n%sy=%010d\r\n",
-		p.cfg.PlatformID, ip, ip, media.port, protocol, attrs, report.SSRC))
+	mode, start, end := "Play", int64(0), int64(0)
+	var playback *platformPlayback
+	if cfg.Recording != nil {
+		mode, start, end = "Playback", cfg.Recording.Start.Unix(), cfg.Recording.End.Unix()
+		playback = p.playback
+		p.finish(report, "inviting", "")
+	}
+	req.SetBody(fmt.Appendf(nil, "v=0\r\no=%s 0 0 IN IP4 %s\r\ns=%s\r\nc=IN IP4 %s\r\nt=%d %d\r\nm=video %d %s 96\r\na=recvonly\r\na=rtpmap:96 PS/90000\r\n%sy=%010d\r\n",
+		p.cfg.PlatformID, ip, mode, ip, start, end, media.port, protocol, attrs, report.SSRC))
 	ua := sipgo.DialogUA{Client: p.client, ContactHDR: contact, RewriteContact: true}
 	p.mark(report, "invite", "")
 	ctx, cancel := context.WithTimeoutCause(context.Background(), 5*time.Second, sipgo.WaitAnswerForceCancelErr)
@@ -172,8 +190,20 @@ func (p *platform) runPreview(cfg PreviewConfig, report *PlatformPreview, media 
 		return
 	}
 	p.mark(report, "ack", "")
+	if playback != nil {
+		p.mu.Lock()
+		playback.dialog = dialog
+		p.mu.Unlock()
+	}
 	interrupted := false
 	defer func() {
+		if playback != nil {
+			playback.control.Lock()
+			defer playback.control.Unlock()
+			p.mu.Lock()
+			playback.dialog, playback.wakeRead = nil, nil
+			p.mu.Unlock()
+		}
 		if !interrupted {
 			p.endPreview(report, dialog)
 		}
@@ -186,9 +216,11 @@ func (p *platform) runPreview(cfg PreviewConfig, report *PlatformPreview, media 
 	}
 	deadline := time.Now().Add(time.Duration(cfg.WindowMS) * time.Millisecond)
 	var read func([]byte) (int, string, error)
+	var readDeadline func(time.Time) error
 	if cfg.MediaTransport == mediaUDP {
 		conn := media.udp
 		conn.SetReadDeadline(deadline)
+		readDeadline = conn.SetReadDeadline
 		stop := context.AfterFunc(p.ctx, func() { _ = conn.Close() })
 		defer stop()
 		read = func(buf []byte) (int, string, error) {
@@ -228,12 +260,23 @@ func (p *platform) runPreview(cfg PreviewConfig, report *PlatformPreview, media 
 		stop := context.AfterFunc(p.ctx, func() { _ = conn.Close() })
 		defer stop()
 		conn.SetReadDeadline(deadline)
+		readDeadline = conn.SetReadDeadline
 		p.mu.Lock()
 		report.RTPAddress = conn.LocalAddr().String()
 		p.mu.Unlock()
 		addr := conn.RemoteAddr().String()
 		p.mark(report, "media_connected", addr)
 		read = func(buf []byte) (int, string, error) { n, err := readPreviewFrame(conn, buf); return n, addr, err }
+	}
+	if playback != nil {
+		p.mu.Lock()
+		playback.wakeRead = func() { _ = readDeadline(time.Now().Add(80 * time.Millisecond)) }
+		select {
+		case <-playback.ended:
+			playback.wakeRead()
+		default:
+		}
+		p.mu.Unlock()
 	}
 	p.finish(report, "receiving", "")
 	buf := make([]byte, 65535)
@@ -278,6 +321,18 @@ func (p *platform) runPreview(cfg PreviewConfig, report *PlatformPreview, media 
 			return
 		}
 	}
+	recordingEnded := false
+	if playback != nil && result.Packets > 0 {
+		// The media TCP socket can close just before the out-of-dialog notification.
+		timer := time.NewTimer(350 * time.Millisecond)
+		select {
+		case <-playback.ended:
+			recordingEnded = true
+		case <-timer.C:
+		case <-p.ctx.Done():
+		}
+		timer.Stop()
+	}
 	switch {
 	case p.ctx.Err() != nil:
 		p.finish(report, "stopped", "")
@@ -285,6 +340,8 @@ func (p *platform) runPreview(cfg PreviewConfig, report *PlatformPreview, media 
 		p.finish(report, "no_rtp", "ACK 已发送，观测窗口内未收到匹配的 RTP")
 	case result.Keyframes == 0:
 		p.finish(report, "no_keyframe", "已收到 RTP，观测窗口内未解析出 H.264/H.265 关键帧")
+	case recordingEnded:
+		p.finish(report, "recording_ended", "")
 	default:
 		p.finish(report, "passed", "")
 	}

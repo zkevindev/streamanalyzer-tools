@@ -47,10 +47,15 @@
                 <div><label for="recovery-mode">恢复场景</label><select id="recovery-mode" name="recovery"><option value="">常规点播</option><option value="sip_tcp_disconnect" data-transport="tcp">收到关键帧后断开 SIP TCP</option><option value="udp_keepalive_timeout" data-transport="udp">收到关键帧后忽略 UDP 心跳</option></select></div>
                 <div><label for="window">观测窗口（毫秒）</label><input id="window" name="window_ms" type="number" min="500" max="15000" value="4000" required></div>
               </div>
+              <label class="sim-check"><input id="recording-mode" type="checkbox"> 检索指定时段并回放录像</label>
+              <div class="sim-fields" id="recording-range" hidden>
+                <div><label for="recording-start">录像开始（本地时间）</label><input id="recording-start" type="datetime-local" step="1"></div>
+                <div><label for="recording-end">录像结束（本地时间）</label><input id="recording-end" type="datetime-local" step="1"></div>
+              </div>
               <p id="recovery-hint" class="muted field-hint" hidden>UDP 场景使用 5 秒设备心跳，最多等待 30 秒重新注册。</p>
               <label class="sim-check"><input id="skip-ack" type="checkbox"> 观测窗口内暂缓 ACK</label>
               <label id="skip-connect-control" class="sim-check" hidden><input id="skip-connect" type="checkbox"> 观测窗口内暂缓平台侧 TCP 建连</label>
-              <div class="sim-controls"><button>点播并收流</button></div>
+              <div class="sim-controls"><button id="preview-submit">点播并收流</button></div>
             </fieldset>
           </form>
         </div>
@@ -59,6 +64,16 @@
         <div class="panel-heading"><h2>点播结果</h2><span id="result" class="status" role="status">等待点播</span></div>
         <div class="panel-body">
           <p id="recovery-result" class="field-hint" hidden></p>
+          <p id="recording-summary" class="field-hint" hidden></p>
+          <ul id="recording-list" hidden></ul>
+          <fieldset id="recording-controls" hidden>
+            <div class="sim-controls">
+              <button type="button" id="recording-pause" class="secondary">暂停</button>
+              <button type="button" id="recording-resume" class="secondary">继续</button>
+              <label for="recording-offset">定位秒数</label><input id="recording-offset" type="number" min="0" step="0.001" value="0">
+              <button type="button" id="recording-seek" class="secondary">定位并继续</button>
+            </div>
+          </fieldset>
           <p id="detail" class="field-hint" hidden></p>
           <dl id="stats" class="metrics sim-metrics" hidden>
             <div><dt>收到 RTP</dt><dd id="rtp">0</dd></div>

@@ -3,6 +3,10 @@
 const api = '/api/simulators/gb28181/platform';
 const el = id => document.getElementById(id);
 const outcomes = {
+  record_info: '正在查询录像目录',
+  record_info_failed: '录像目录查询失败',
+  no_recordings: '指定时段无录像',
+  recording_ended: '设备通知录像播放结束',
   inviting: '等待 INVITE 应答',
   receiving: '正在收流',
   invite_failed: '点播协商失败',
@@ -17,6 +21,8 @@ const outcomes = {
   stopped: '观测已停止',
 };
 const stages = {
+  record_info: '发送 RecordInfo', record_info_result: '录像目录条数', recording_info: '回放控制应答',
+  recording_info_failed: '回放控制未获应答', recording_ended: '收到设备播放结束通知',
   invite: 'INVITE', invite_ok: 'INVITE 200 OK', ack: 'ACK',
   ack_withheld: '暂缓 ACK', cleanup_ack: '清理会话时补发 ACK',
   media_connect: '尝试建立媒体连接', media_connected: '媒体就绪', first_rtp: '首个 RTP',
@@ -52,9 +58,14 @@ function applyRecoveryOptions() {
     option.disabled = Boolean(option.dataset.transport && option.dataset.transport !== status?.sip_transport);
   }
   if (choice.selectedOptions[0]?.disabled) choice.value = '';
-  el('skip-ack').disabled = Boolean(choice.value);
-  el('skip-connect').disabled = Boolean(choice.value);
-  el('recovery-hint').hidden = choice.value !== 'udp_keepalive_timeout';
+  const recording = el('recording-mode').checked;
+  choice.disabled = recording;
+  el('skip-ack').disabled = Boolean(choice.value) || recording;
+  el('skip-connect').disabled = Boolean(choice.value) || recording;
+  el('recording-range').hidden = !recording;
+  el('recording-start').required = el('recording-end').required = recording;
+  el('preview-submit').textContent = recording ? '检索并回放' : '点播并收流';
+  el('recovery-hint').hidden = recording || choice.value !== 'udp_keepalive_timeout';
 }
 
 function render() {
@@ -81,6 +92,20 @@ function render() {
     recovery.recovery_ms != null && '恢复到关键帧 ' + recovery.recovery_ms + ' ms', recovery.error].filter(Boolean) : [];
   el('recovery-result').hidden = !recoveryDetails.length;
   el('recovery-result').textContent = recoveryDetails.join(' · ');
+  const recording = preview?.recording;
+  el('recording-controls').hidden = !recording || preview.state !== 'receiving';
+  el('recording-controls').disabled = pending;
+  el('recording-summary').hidden = recording?.total == null;
+  el('recording-summary').textContent = recording?.total == null ? '' :
+    '录像目录 ' + (recording.records?.length || 0) + ' / ' + recording.total + ' 段' +
+    (recording.records?.length > 24 ? ' · 显示前 24 段，完整列表见导出证据' : '');
+  const recordingList = el('recording-list');
+  recordingList.hidden = !recording?.records?.length;
+  recordingList.replaceChildren(...(recording?.records || []).slice(0, 24).map(span => {
+    const item = document.createElement('li');
+    item.textContent = new Date(span.start).toLocaleString() + ' → ' + new Date(span.end).toLocaleString();
+    return item;
+  }));
   el('stats').hidden = !preview;
   el('rtp').textContent = preview?.media.packets || 0;
   el('ps').textContent = preview?.media.ps_units || 0;
@@ -149,13 +174,29 @@ el('preview-form').addEventListener('submit', event => {
   event.preventDefault();
   const config = Object.fromEntries(new FormData(event.currentTarget));
   config.window_ms = Number(config.window_ms);
-  config.skip_ack = !config.recovery && el('skip-ack').checked;
-  config.skip_connect = !config.recovery && config.media_transport === 'tcp-active' && el('skip-connect').checked;
+  if (el('recording-mode').checked) {
+    const start = new Date(el('recording-start').value);
+    const end = new Date(el('recording-end').value);
+    if (!(start < end)) { notice('录像开始时间必须早于结束时间。'); return; }
+    config.recording = {start: start.toISOString(), end: end.toISOString()};
+    delete config.recovery;
+  }
+  config.skip_ack = !config.recording && !config.recovery && el('skip-ack').checked;
+  config.skip_connect = !config.recording && !config.recovery && config.media_transport === 'tcp-active' && el('skip-connect').checked;
   void change('/preview', config);
 });
 el('media-transport').addEventListener('change', () => {
   el('skip-connect-control').hidden = el('media-transport').value !== 'tcp-active';
 });
 el('recovery-mode').addEventListener('change', applyRecoveryOptions);
+el('recording-mode').addEventListener('change', applyRecoveryOptions);
+el('recording-pause').addEventListener('click', () => void change('/playback-control', {method: 'PAUSE'}));
+el('recording-resume').addEventListener('click', () => void change('/playback-control', {method: 'PLAY'}));
+el('recording-seek').addEventListener('click', () => {
+  const offset = el('recording-offset');
+  if (offset.value !== '' && offset.reportValidity()) {
+    void change('/playback-control', {method: 'PLAY', offset: Number(offset.value)});
+  }
+});
 el('stop').addEventListener('click', () => void change('/stop'));
 void poll();
