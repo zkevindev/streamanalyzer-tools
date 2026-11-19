@@ -650,6 +650,16 @@ function renderTransport(protocol, ts) {
             ['格式错误 RTP 数据报', ts.rtp_invalid ?? 0]);
     }
     renderMetrics('transport-metrics', values);
+    const maps = ts.program_map_changes || [];
+    node('ts-map-changes').hidden = maps.length === 0;
+    const mapping = (state, times) => state.streams.map(stream => hexLabel(stream.pid, 4) +
+        (!times ? '' : stream.first_packet_ms == null ? ' · 未观测' : ' · ' + time(stream.first_packet_ms))).join(' / ') || '—';
+    node('ts-map-table').replaceChildren(...(maps.length ? [renderTable(
+        ['节目 / PMT PID', '切换偏移', '版本', 'PCR PID', '原媒体 PID', '新媒体 PID / 首包'],
+        maps.map(change => [change.program + ' / ' + hexLabel(change.pmt_pid, 4), time(change.at_ms),
+            change.before.version + ' → ' + change.after.version,
+            hexLabel(change.before.pcr_pid, 4) + ' → ' + hexLabel(change.after.pcr_pid, 4),
+            mapping(change.before, false), mapping(change.after, true)]))] : []));
     const pids = ts.pids || [];
     node('ts-pids').hidden = pids.length === 0;
     if (!pids.length) {

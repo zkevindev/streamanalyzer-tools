@@ -116,6 +116,10 @@ func (a *tsAnalyzer) observePAT(section []byte, event Event) {
 	version := section[5] >> 1 & 31
 	if !a.patSeen || id != a.patID || version != a.patVersion {
 		clear(a.pmt)
+		for _, state := range a.pids {
+			state.lastMap = nil
+		}
+		clear(a.pendingPMTPackets)
 		a.patID, a.patVersion, a.patSeen = id, version, true
 	}
 	for i := 8; i+4 <= end; i += 4 {
@@ -163,6 +167,7 @@ func (a *tsAnalyzer) observePMT(state *tsPID, section []byte, event Event) {
 	}
 	a.report.MPEGTS.PMTSections++
 	pcrPID := binary.BigEndian.Uint16(section[8:]) & tsNullPID
+	a.programMap(state, section, pcrPID, streams, event)
 	if pcrPID != tsNullPID {
 		a.pcrPIDs[pcrPID] = true
 	}
