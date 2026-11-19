@@ -23,10 +23,16 @@ func (c *camera) scopes() []string {
 func (c *camera) deviceReply(op operation) (string, *soapFault) {
 	switch op.XMLName.Local {
 	case "GetServices":
-		return serviceEntry(deviceNS, c.status.DeviceURL, c.deviceCapabilities(), op.IncludeCapability) +
+		services := serviceEntry(deviceNS, c.status.DeviceURL, c.deviceCapabilities(), op.IncludeCapability) +
 			serviceEntry(mediaNS, c.status.MediaURL, mediaCapabilities, op.IncludeCapability) +
 			serviceEntry(ptzNS, c.status.PTZURL, ptzCapabilities, op.IncludeCapability) +
-			serviceEntry(eventNS, c.status.EventURL, eventCapabilities, op.IncludeCapability), nil
+			serviceEntry(eventNS, c.status.EventURL, eventCapabilities, op.IncludeCapability)
+		if c.recording != nil {
+			services += serviceEntry(recordingNS, c.recording.info.RecordingURL, recordingCaps, op.IncludeCapability) +
+				serviceEntry(searchNS, c.recording.info.SearchURL, searchCaps, op.IncludeCapability) +
+				serviceEntry(replayNS, c.recording.info.ReplayURL, replayCaps, op.IncludeCapability)
+		}
+		return services, nil
 	case "GetCapabilities":
 		var parts strings.Builder
 		if len(op.Category) == 0 || slices.Contains(op.Category, "All") || slices.Contains(op.Category, "Device") {
@@ -42,6 +48,11 @@ func (c *camera) deviceReply(op operation) (string, *soapFault) {
 		}
 		if len(op.Category) == 0 || slices.Contains(op.Category, "All") || slices.Contains(op.Category, "PTZ") {
 			parts.WriteString("<tt:PTZ><tt:XAddr>" + c.status.PTZURL + "</tt:XAddr></tt:PTZ>")
+		}
+		if c.recording != nil && (len(op.Category) == 0 || slices.Contains(op.Category, "All")) {
+			info := c.recording.info
+			parts.WriteString("<tt:Extension><tt:Recording><tt:XAddr>" + info.RecordingURL + "</tt:XAddr><tt:ReceiverSource>false</tt:ReceiverSource><tt:MediaProfileSource>true</tt:MediaProfileSource><tt:DynamicRecordings>false</tt:DynamicRecordings><tt:DynamicTracks>false</tt:DynamicTracks><tt:MaxStringLength>64</tt:MaxStringLength></tt:Recording>" +
+				"<tt:Search><tt:XAddr>" + info.SearchURL + "</tt:XAddr><tt:MetadataSearch>false</tt:MetadataSearch></tt:Search><tt:Replay><tt:XAddr>" + info.ReplayURL + "</tt:XAddr></tt:Replay></tt:Extension>")
 		}
 		return "<tds:Capabilities>" + parts.String() + "</tds:Capabilities>", nil
 	case "GetDeviceInformation":

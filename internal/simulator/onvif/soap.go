@@ -34,6 +34,12 @@ type soapHeader struct {
 }
 
 type operation struct {
+	RecordingToken string
+	SearchToken    string
+	KeepAliveTime  string
+	Scope          struct {
+		IncludedRecordings []string
+	}
 	InitialTerminationTime string
 	TerminationTime        string
 	MessageLimit           string
@@ -233,6 +239,12 @@ func (c *camera) serveSOAPRequest(namespace string, reply func(*http.Request, op
 				} else {
 					action = eventNS + "/EventPortType/" + op.XMLName.Local + "Response"
 				}
+			case recordingNS:
+				prefix = "trc"
+			case searchNS:
+				prefix = "tse"
+			case replayNS:
+				prefix = "trp"
 			case notificationNS:
 				prefix = "wsnt"
 				action = "http://docs.oasis-open.org/wsn/bw-2/SubscriptionManager/" + op.XMLName.Local + "Response"
@@ -254,6 +266,9 @@ func (c *camera) serveSOAPRequest(namespace string, reply func(*http.Request, op
 		}
 		if events {
 			namespaces += ` xmlns:wsa="` + addressNS05 + `" xmlns:wsnt="` + notificationNS + `" xmlns:wstop="http://docs.oasis-open.org/wsn/t-1" xmlns:wsrf="http://docs.oasis-open.org/wsrf/r-2" xmlns:tns1="` + topicNS + `" xmlns:xs="http://www.w3.org/2001/XMLSchema"`
+		}
+		if c.recording != nil && (namespace == deviceNS || namespace == recordingNS || namespace == searchNS || namespace == replayNS) {
+			namespaces += ` xmlns:trc="` + recordingNS + `" xmlns:tse="` + searchNS + `" xmlns:trp="` + replayNS + `"`
 		}
 		if ns != "" {
 			namespaces += ` xmlns:a="` + ns + `"`
