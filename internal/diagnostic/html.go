@@ -69,6 +69,12 @@ var reportPage = template.Must(template.New("report").Funcs(template.FuncMap{
 	"networkStageOmitted":    playerNetworkHasOmittedStages,
 	"schedulingView":         playerSchedulingView,
 	"schedulingSupport":      playerSchedulingSupportLabel,
+	"schedulingCaseView":     playerSchedulingCaseView,
+	"presentationView":       playerPresentationView,
+	"presentationSupport":    playerPresentationSupportLabel,
+	"presentationCount":      playerPresentationCountLabel,
+	"intervalName":           playerIntervalLabel,
+	"investigationTitle":     playerInvestigationIntervalTitle,
 }).Parse(`{{define "codecRows"}}
 {{with .VideoCodecs}}<dt>视频编码</dt><dd>{{join . " / "}}</dd>{{end}}
 {{with .AudioCodecs}}<dt>音频编码</dt><dd>{{join . " / "}}</dd>{{end}}
@@ -130,18 +136,33 @@ var reportPage = template.Must(template.New("report").Funcs(template.FuncMap{
 {{with .Report}}
 <dl class="scheduling-coverage"><dt>长任务接口</dt><dd>{{schedulingSupport .LongTaskSupport}}</dd><dt>观测区间</dt><dd>{{.ObservationStartMS}}–{{.ObservationEndMS}} ms</dd><dt>前台播放有效覆盖</dt><dd>{{.ActiveCoverageMS}} ms</dd></dl>
 <p class="timing-note">调度区间按前台播放和观测窗口裁切，区间数与时长表示裁切后的有效片段。定时器每 250 ms 检查，仅采集原始延后 ≥100 ms 的记录；裁切后的区间可能更短。</p>
-<p class="timing-note">长任务和定时器延后分别观测。页面负载、系统调度等都可能影响结果，不能单独证明 CPU 瓶颈或解码故障；与卡顿重合用于安排进一步验证。</p>
+<p class="timing-note">长任务和定时器延后分别观测。页面负载、系统调度等都可能影响结果，不能单独证明 CPU 瓶颈或解码故障；与异常区间重合用于安排进一步验证。</p>
 {{if eq .LongTaskSupport "unsupported"}}<p class="timing-note">长任务未观测不代表没有长任务，定时器延后仍单独记录。</p>{{end}}
 {{if eq .ActiveCoverageMS 0}}<p class="timing-note">本记录没有可用于统计的前台播放覆盖区间，异常区间数保持未观测。</p>{{end}}
 <section data-kind="long_task"><h4>浏览器长任务</h4>{{template "schedulingMetrics" $.Native}}</section>
 <section data-kind="timer_delay"><h4>定时器延后（原始延后 ≥100 ms）</h4>{{template "schedulingMetrics" .TimerDelays}}</section>
 {{if or .DroppedLongTasks .DroppedTimerDelays}}<p class="timing-note">采集上限外未记录：长任务 {{.DroppedLongTasks}} 条，定时器延后 {{.DroppedTimerDelays}} 条。当前统计可能不完整。</p>{{end}}
 {{end}}
-{{if .Rows}}<div class="scroll scheduling-intervals" role="region" tabindex="0" aria-label="页面调度有效区间，可横向滚动"><table><thead><tr><th scope="col">类型</th><th scope="col">开始偏移 (ms)</th><th scope="col">结束偏移 (ms)</th><th scope="col">有效区间时长 (ms)</th>{{if .HasStall}}<th scope="col">与本次卡顿重合 (ms)</th>{{end}}</tr></thead>
+{{if .Rows}}<div class="scroll scheduling-intervals" role="region" tabindex="0" aria-label="页面调度有效区间，可横向滚动"><table><thead><tr><th scope="col">类型</th><th scope="col">开始偏移 (ms)</th><th scope="col">结束偏移 (ms)</th><th scope="col">有效区间时长 (ms)</th>{{if .HasStall}}<th scope="col">{{.OverlapLabel}}</th>{{end}}</tr></thead>
 <tbody>{{range .Rows}}<tr><td>{{.Kind}}</td><td>{{.StartMS}}</td><td>{{.EndMS}}</td><td>{{.DurationMS}}</td>{{if $.HasStall}}<td>{{.OverlapMS}}</td>{{end}}</tr>{{end}}</tbody></table></div>
 {{else}}{{if .Report}}<p class="timing-note">当前记录未包含可展示的调度区间。</p>{{end}}{{end}}
 {{with .Omitted}}<p class="timing-note">页面仅展示前 200 个有效区间，另有 {{.}} 个已保存区间可在报告 JSON 或证据包中查看。</p>{{end}}
 {{if not .Report}}<p class="timing-note">{{if .HasStall}}该补查未包含页面调度数据，可重新采样后补查。{{else}}该记录未采集页面调度数据，重新采样可补充长任务和定时器延后证据。{{end}}</p>{{end}}
+</section>
+{{end}}{{define "playerPresentation"}}
+<section class="player-presentation-report"><h3>{{.Title}}</h3>
+{{with .Report}}<dl><dt>回调能力</dt><dd>{{presentationSupport .Support}}</dd><dt>观测区间</dt><dd>{{.ObservationStartMS}}–{{.ObservationEndMS}} ms</dd><dt>回调基线就绪偏移</dt><dd>{{videoMS .ReadyAtMS}}</dd><dt>前台播放有效覆盖</dt><dd>{{.ActiveCoverageMS}} ms</dd><dt>{{if $.Window}}窗口关联间隔数{{else}}间隔次数{{end}}</dt><dd>{{presentationCount .Count}}</dd><dt>{{if $.Window}}窗口内重合累计时长{{else}}间隔累计时长{{end}}</dt><dd>{{videoMS .TotalMS}}</dd><dt>{{if $.Window}}最长重合时长{{else}}最长间隔{{end}}</dt><dd>{{videoMS .MaxMS}}</dd></dl>
+<p class="timing-note">至少 3 个有效回调媒体时间增量用于估算间隔基线，记录阈值取 1000 ms 与 3 倍间隔基线中的较大值；基线不等同于源流编码帧率。只保留完整落在同一连续前台播放区间内的间隔，并排除采样结束后的部分。</p>
+<p class="timing-note">回调间隔受内容帧率、浏览器呈现和页面调度影响，不能单凭该记录确认画面冻结或解码故障。与缓冲卡顿重合的时长用于对照，次数与时长不叠加到缓冲卡顿统计。</p>
+{{if $.Window}}<p class="timing-note">窗口统计计算与补查窗口重合的时长；下表保留完整观测到的回调间隔，起止可能超出窗口。与缓冲卡顿重合的时长也按完整间隔保留。</p>{{end}}
+{{if eq .Support "unsupported"}}<p class="timing-note">当前环境未提供 requestVideoFrameCallback，呈帧回调间隔保持未观测。</p>{{else if not .ReadyAtMS}}<p class="timing-note">尚未完成回调基线预热，无法判断是否存在异常回调间隔。</p>{{else if eq .ActiveCoverageMS 0}}<p class="timing-note">预热后没有可用于统计的连续前台播放覆盖区间，间隔统计保持未观测。</p>{{end}}
+{{if .DroppedGaps}}<p class="timing-note">采集达到上限，另有 {{.DroppedGaps}} 条呈帧回调间隔记录未保存，统计可能不完整。</p>{{end}}
+{{end}}
+{{if .Rows}}<div class="scroll" role="region" tabindex="0" aria-label="呈帧回调间隔，可横向滚动"><table><thead><tr><th scope="col">{{if .Window}}窗口间隔{{else}}间隔{{end}}</th><th scope="col">开始偏移 (ms)</th><th scope="col">结束偏移 (ms)</th><th scope="col">{{if .Window}}完整回调间隔时长{{else}}间隔时长{{end}} (ms)</th><th scope="col">回调媒体时间间隔基线 (ms)</th><th scope="col">与缓冲卡顿重合 (ms)</th>{{if .Window}}<th scope="col">与本次补查区间重合 (ms)</th>{{end}}</tr></thead><tbody>
+{{range .Rows}}<tr><th scope="row">#{{.Index}}</th><td>{{.StartMS}}</td><td>{{.EndMS}}</td><td>{{.DurationMS}}</td><td>{{.ExpectedFrameMS}}</td><td>{{.BufferingOverlapMS}}</td>{{if $.Window}}<td>{{.SelectedOverlapMS}}</td>{{end}}</tr>{{end}}
+</tbody></table></div>{{else}}{{with .Report}}<p class="timing-note">{{if eq (presentationCount .Count) "0"}}有效覆盖内未记录到符合阈值的呈帧回调间隔。{{else}}当前记录未包含可展示的呈帧回调间隔。{{end}}</p>{{end}}{{end}}
+{{with .Omitted}}<p class="timing-note">页面仅展示前 128 个间隔，另有 {{.}} 个已保存间隔可在报告 JSON 或证据包中查看。</p>{{end}}
+{{if not .Report}}<p class="timing-note">{{if .Window}}该补查未包含呈帧回调间隔数据，可重新采样后补查。{{else}}该记录未采集呈帧回调间隔数据，重新采样可补充。{{end}}</p>{{end}}
 </section>
 {{end}}<!doctype html>
 <html lang="zh-CN">
@@ -198,6 +219,12 @@ thead{color:#52657e;background:#f7f9fc}
 .player-buffer-chart .point{fill:#164d92}
 .player-buffer-chart .stall{fill:#ecc781;opacity:.55}
 .player-video-report{margin-block:.9rem}
+.player-presentation-report{margin-block:.9rem}
+.player-presentation-report .scroll{max-height:24rem;border:1px solid #d5deea;border-radius:.375rem}
+.player-presentation-report th,.player-presentation-report td{white-space:nowrap;font-size:.8rem}
+.player-presentation-report thead th{position:sticky;top:0;background:#f7f9fc}
+.player-presentation-report .scroll:focus-visible{outline:2px solid #164d92;outline-offset:2px}
+.player-presentation-report p{overflow-wrap:anywhere}
 .player-scheduling-report{margin-block:.9rem}
 .player-scheduling-report h4{font-size:.9rem;margin-bottom:.4rem}
 .player-scheduling-report .scroll{max-height:24rem;border:1px solid #d5deea;border-radius:.375rem}
@@ -222,7 +249,7 @@ thead{color:#52657e;background:#f7f9fc}
 .direction-state{display:inline-block;font:.75rem system-ui,sans-serif;font-weight:650;padding:.12rem .42rem;border-radius:.25rem;color:#465b73;background:#ecf1f7}
 .stall-direction[data-state="observed"] .direction-state{color:#216247;background:#e5f3eb}
 .stall-direction[data-state="candidate"] .direction-state{color:#774705;background:#fff2d7}
-@media print{body{background:#fff}article{break-inside:avoid}.request-timing th,.request-timing td{white-space:normal}.http-header-block:not([open])>:not(summary),.player-network-phase-detail:not([open])>:not(summary){display:block}.player-network-requests,.player-network-hop-table,.player-scheduling-report .scroll{max-height:none}}
+@media print{body{background:#fff}article{break-inside:avoid}.request-timing th,.request-timing td{white-space:normal}.http-header-block:not([open])>:not(summary),.player-network-phase-detail:not([open])>:not(summary){display:block}.player-network-requests,.player-network-hop-table,.player-scheduling-report .scroll,.player-presentation-report .scroll{max-height:none}}
 </style>
 </head>
 <body><main>
@@ -310,6 +337,7 @@ thead{color:#52657e;background:#f7f9fc}
 </dl>
 <p class="timing-note">卡顿统计从开始播放到采样结束，计入{{with .StallThresholdMS}}至少 {{.}} ms 的{{end}}等待。暂停、跳转和后台期间停止计时。正常结束后可短暂补记首屏。</p>
 {{template "playerVideo" .Video}}
+{{template "playerPresentation" (presentationView .Presentation)}}
 {{template "playerScheduling" (schedulingView .Scheduling)}}
 {{with $.PlayerChart}}
 <figure class="player-buffer-chart"><figcaption>可播放缓冲{{if .Stalls}} · 阴影为卡顿区间{{end}}</figcaption>
@@ -322,7 +350,7 @@ thead{color:#52657e;background:#f7f9fc}
 <text x="315" y="149" text-anchor="middle">距采样开始</text>
 </svg></figure>
 {{end}}
-{{if .Stalls}}<h3>卡顿区间</h3><div class="scroll"><table>
+{{if .Stalls}}<h3>缓冲卡顿区间</h3><div class="scroll"><table>
 <thead><tr><th scope="col">开始偏移 (ms)</th><th scope="col">结束偏移 (ms)</th><th scope="col">耗时 (ms)</th></tr></thead>
 <tbody>{{range .Stalls}}<tr><td>{{.StartMS}}</td><td>{{.EndMS}}</td><td>{{.DurationMS}}</td></tr>{{end}}</tbody>
 </table></div>{{end}}
@@ -338,20 +366,23 @@ thead{color:#52657e;background:#f7f9fc}
 </article>
 {{else}}{{if and .Report.Player (eq .Report.Manifest.Protocol "hls")}}<article id="player-network-report"><h2>HLS 实际播放请求 · 代理观测</h2>{{template "playerNetworkNotes" .}}<p class="timing-note">该记录未采集实际播放请求，重新采样可补充代理侧请求证据。</p></article>{{end}}{{end}}
 {{if .Investigations}}
-<h2>卡顿证据补查</h2>
+<h2>播放异常证据补查</h2>
+<p class="timing-note">缓冲卡顿证据补查与呈帧回调间隔补查共享最多 8 个案例，两类区间独立统计。</p>
 <p class="timing-note">时间区间以采样开始为基准。片段与截图来自采样源流，用于复核媒体内容；原拉流等待和播放器停顿保留在时序证据中。</p>
 {{range .Investigations}}
+{{$case := .}}
 <article class="stall-investigation" id="investigation-{{.ID}}">
-<h3>{{.ID}} · 第 {{.StallIndex}} 次卡顿 · {{investigationState .Status}}</h3>
-<dl><dt>卡顿区间</dt><dd>{{.Stall.StartMS}}–{{.Stall.EndMS}} ms · {{.Stall.DurationMS}} ms</dd>
+<h3>{{.ID}} · {{investigationTitle .StallInvestigation}} · {{investigationState .Status}}</h3>
+<dl><dt>{{if eq .IntervalKind "presentation_gap"}}呈帧回调间隔{{else}}缓冲卡顿区间{{end}}</dt><dd>{{.Stall.StartMS}}–{{.Stall.EndMS}} ms · {{.Stall.DurationMS}} ms</dd>
 <dt>补查窗口</dt><dd>{{.Correlation.WindowStartMS}}–{{.Correlation.WindowEndMS}} ms</dd>
 <dt>数据来源</dt><dd>{{playerSource .Correlation.Source}}</dd></dl>
+{{if eq .IntervalKind "presentation_gap"}}<p class="timing-note">本案例分析呈帧回调间隔，不代表已确认画面冻结；与缓冲卡顿重合的部分仍保留在独立统计中。</p>{{end}}
 {{if eq .Correlation.Source "independent_pull"}}<p class="timing-note">播放器与采样使用独立连接，关联结果供对照。</p>{{end}}
 {{range .Correlation.Notes}}<p class="timing-note">{{.}}</p>{{end}}
 {{template "stallAssessment" .StallInvestigation}}
 {{with .Chart}}
-<figure class="player-buffer-chart"><figcaption>补查窗口可播放缓冲 · 阴影为卡顿区间</figcaption>
-<svg viewBox="0 0 615 152" role="img" aria-label="卡顿补查缓冲曲线">
+<figure class="player-buffer-chart"><figcaption>补查窗口可播放缓冲 · 阴影为{{intervalName $case.IntervalKind}}</figcaption>
+<svg viewBox="0 0 615 152" role="img" aria-label="补查窗口缓冲曲线">
 {{range .YTicks}}<line x1="45" y1="{{.Position}}" x2="585" y2="{{.Position}}" class="grid"/><text x="40" y="{{.Position}}" dy=".34em" text-anchor="end">{{.Label}}</text>{{end}}
 {{range .Stalls}}<rect x="{{.X}}" y="18" width="{{.Width}}" height="94" class="stall"/>{{end}}
 <polyline points="{{.Points}}" class="line"/>
@@ -363,7 +394,8 @@ thead{color:#52657e;background:#f7f9fc}
 <p class="timing-note">此处显示采样时的原始累计计数；距最近呈帧回调的时间受播放器状态和页面调度影响。</p>
 <div class="scroll"><table><thead><tr><th scope="col">采样偏移 (ms)</th><th scope="col">播放状态</th><th scope="col">视频帧计数</th><th scope="col">丢帧计数</th><th scope="col">呈帧计数</th><th scope="col">距最近呈帧回调</th></tr></thead>
 <tbody>{{range .VideoSamples}}<tr><td>{{.OffsetMS}}</td><td>{{videoSampleState .}}</td>{{with .Video}}<td>{{videoCount .TotalFrames}}</td><td>{{videoCount .DroppedFrames}}</td><td>{{videoCount .PresentedFrames}}</td><td>{{videoMS .FrameAgeMS}}</td>{{end}}</tr>{{end}}</tbody></table></div></details>{{end}}
-{{template "playerScheduling" (schedulingView .Correlation.Scheduling .Stall)}}
+{{template "playerScheduling" (schedulingCaseView .Correlation.Scheduling .StallInvestigation)}}
+{{template "playerPresentation" (presentationView .Correlation.Presentation .StallInvestigation)}}
 <h3>关联收流间隔</h3>
 {{if .Correlation.Gaps}}<div class="scroll"><table><thead><tr><th scope="col">媒体</th><th scope="col">开始偏移 (ms)</th><th scope="col">结束偏移 (ms)</th><th scope="col">间隔 (ms)</th></tr></thead>
 <tbody>{{range .Correlation.Gaps}}<tr><td>{{if eq .Kind "video"}}视频{{else if eq .Kind "audio"}}音频{{else}}{{.Kind}}{{end}}</td><td>{{.StartMS}}</td><td>{{.EndMS}}</td><td>{{.DurationMS}}</td></tr>{{end}}</tbody></table></div>
@@ -379,6 +411,7 @@ thead{color:#52657e;background:#f7f9fc}
 {{range .Correlation.Findings}}<section id="case-{{.ID}}"><h4>{{.ID}} · {{.Message}}</h4><p class="timing-note">{{.StartMS}}–{{.EndMS}} ms</p>{{with .NextCheck}}<p>{{.}}</p>{{end}}
 {{if .Evidence}}<div class="scroll"><table><thead><tr><th scope="col">对象</th><th scope="col">到达偏移 (ms)</th><th scope="col">DTS (ms)</th><th scope="col">PTS (ms)</th><th scope="col">原始条目 / 偏移</th></tr></thead><tbody>{{range .Evidence}}<tr><td>{{.Kind}}</td><td>{{.ArrivalMS}}</td><td>{{.DTS}}</td><td>{{.PTS}}</td><td>{{if .Artifact}}{{.Artifact}}{{else}}{{.Offset}}{{end}}</td></tr>{{end}}</tbody></table></div>{{end}}</section>{{end}}
 <h3>异常附近的源流片段与截图</h3>
+{{if eq .IntervalKind "presentation_gap"}}<p class="timing-note">同期源流片段和截图供内容对照，不能重现或证明本机画面冻结。</p>{{end}}
 <p>{{investigationMedia .Media.Status}}{{with .Media.Reason}} · {{.}}{{end}}</p>
 {{with .Media.Alignment}}<p class="timing-note">媒体定位方式 {{investigationAlignment .}}</p>{{end}}
 {{if .Media.StartMS}}<p class="timing-note">源流媒体时间 {{.Media.StartMS}}–{{.Media.EndMS}} ms</p>{{end}}
@@ -913,12 +946,13 @@ func investigationHTMLItems(items []StallInvestigation, backURL string, assets m
 }
 
 type schedulingHTMLData struct {
-	Report   *PlayerSchedulingReport
-	Native   *PlayerSchedulingMetrics
-	Title    string
-	HasStall bool
-	Rows     []schedulingHTMLInterval
-	Omitted  int
+	Report       *PlayerSchedulingReport
+	Native       *PlayerSchedulingMetrics
+	Title        string
+	HasStall     bool
+	OverlapLabel string
+	Rows         []schedulingHTMLInterval
+	Omitted      int
 }
 
 type schedulingHTMLInterval struct {
@@ -941,7 +975,7 @@ func playerSchedulingSupportLabel(support string) string {
 }
 
 func playerSchedulingView(report *PlayerSchedulingReport, stalls ...PlayerStall) schedulingHTMLData {
-	view := schedulingHTMLData{Report: report, Title: "页面调度观测", HasStall: len(stalls) > 0}
+	view := schedulingHTMLData{Report: report, Title: "页面调度观测", HasStall: len(stalls) > 0, OverlapLabel: "与本次卡顿重合 (ms)"}
 	if view.HasStall {
 		view.Title = "补查窗口页面调度"
 	}
@@ -977,6 +1011,79 @@ func playerSchedulingView(report *PlayerSchedulingReport, stalls ...PlayerStall)
 		view.Rows = view.Rows[:200]
 	}
 	return view
+}
+
+func playerSchedulingCaseView(report *PlayerSchedulingReport, item StallInvestigation) schedulingHTMLData {
+	view := playerSchedulingView(report, item.Stall)
+	if item.IntervalKind == IntervalPresentationGap {
+		view.OverlapLabel = "与呈帧回调间隔重合 (ms)"
+	}
+	return view
+}
+
+type presentationHTMLData struct {
+	Report  *PlayerPresentationReport
+	Title   string
+	Window  bool
+	Rows    []presentationHTMLGap
+	Omitted int
+}
+
+type presentationHTMLGap struct {
+	PlayerPresentationGapReport
+	Index             int
+	SelectedOverlapMS int64
+}
+
+func playerPresentationSupportLabel(support string) string {
+	switch support {
+	case "supported":
+		return "支持视频帧回调"
+	case "unsupported":
+		return "当前环境不支持视频帧回调"
+	default:
+		return "未记录"
+	}
+}
+
+func playerPresentationCountLabel(count *int) string {
+	if count == nil {
+		return "未观测"
+	}
+	return strconv.Itoa(*count)
+}
+
+func playerPresentationView(report *PlayerPresentationReport, cases ...StallInvestigation) presentationHTMLData {
+	view := presentationHTMLData{Report: report, Title: "呈帧回调间隔", Window: len(cases) > 0}
+	if view.Window {
+		view.Title = "补查窗口呈帧回调间隔"
+	}
+	if report == nil {
+		return view
+	}
+	for index, gap := range report.Gaps[:min(len(report.Gaps), maxPlayerPresentationGaps)] {
+		row := presentationHTMLGap{PlayerPresentationGapReport: gap, Index: index + 1}
+		if view.Window {
+			row.SelectedOverlapMS = max(0, min(gap.EndMS, cases[0].Stall.EndMS)-max(gap.StartMS, cases[0].Stall.StartMS))
+		}
+		view.Rows = append(view.Rows, row)
+	}
+	view.Omitted = max(0, len(report.Gaps)-maxPlayerPresentationGaps)
+	return view
+}
+
+func playerIntervalLabel(kind string) string {
+	if kind == IntervalPresentationGap {
+		return "呈帧回调间隔"
+	}
+	return "缓冲卡顿"
+}
+
+func playerInvestigationIntervalTitle(item StallInvestigation) string {
+	if item.IntervalKind == IntervalPresentationGap {
+		return fmt.Sprintf("第 %d 个呈帧回调间隔", item.StallIndex)
+	}
+	return fmt.Sprintf("第 %d 次卡顿（缓冲）", item.StallIndex)
 }
 
 const playerNetworkHTMLRowLimit = 200

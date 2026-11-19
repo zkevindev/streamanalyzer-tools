@@ -91,7 +91,14 @@ button:disabled { opacity: .55; cursor: wait; }
 .player-buffer-chart .point { fill: var(--accent); }
 .player-buffer-chart .stall { fill: #ecc781; opacity: .55; }
 #player-stalls h4 { margin: .65rem 0 .4rem; font-size: .92rem; }
-.stall-select { width: 1rem; min-height: 1rem; margin: 0; accent-color: var(--accent); cursor: pointer; }
+.stall-select, .presentation-gap-select { width: 1rem; min-height: 1rem; margin: 0; accent-color: var(--accent); cursor: pointer; }
+.player-presentation-report { margin-block: .9rem; }
+.player-presentation-report .scroll { max-height: 24rem; border: 1px solid var(--border); border-radius: .375rem; }
+.player-presentation-report th, .player-presentation-report td { white-space: nowrap; font-size: .8rem; }
+.player-presentation-report thead th { position: sticky; top: 0; background: var(--surface-inset); }
+.player-presentation-report .scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.player-presentation-report p { overflow-wrap: anywhere; }
+#player-presentation-report tr[aria-selected="true"] { background: var(--accent-light); }
 #player-stalls tr[aria-selected="true"] { background: var(--accent-light); }
 .stall-investigation-heading { display: flex; align-items: center; justify-content: space-between; gap: .75rem; flex-wrap: wrap; margin: .8rem 0 .4rem; }
 .stall-investigation-heading h4 { margin: 0; font-size: 1rem; }

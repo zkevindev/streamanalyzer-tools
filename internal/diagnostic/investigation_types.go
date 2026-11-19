@@ -12,8 +12,10 @@ const (
 )
 
 type StallInvestigationRequest struct {
-	StallIndex int  `json:"stall_index"` // One-based index in the finalized player report.
-	Retry      bool `json:"retry,omitempty"`
+	StallIndex    int    `json:"stall_index"` // One-based index in the finalized player report.
+	Retry         bool   `json:"retry,omitempty"`
+	IntervalKind  string `json:"interval_kind,omitempty"`
+	IntervalIndex int    `json:"interval_index,omitempty"`
 }
 
 type ReceptionGap struct {
@@ -26,18 +28,19 @@ type ReceptionGap struct {
 }
 
 type StallCorrelation struct {
-	Source                string                  `json:"source"`
-	WindowStartMS         int64                   `json:"window_start_ms"`
-	WindowEndMS           int64                   `json:"window_end_ms"`
-	BufferSamples         []PlayerBufferSample    `json:"buffer_samples"`
-	Gaps                  []ReceptionGap          `json:"gaps"`
-	Keyframes             []Event                 `json:"keyframes"`
-	Requests              []HTTPRequestTiming     `json:"requests,omitempty"`
-	PlayerRequests        []PlayerNetworkRequest  `json:"player_requests,omitempty"`
-	PlayerNetworkRecorded bool                    `json:"player_network_recorded,omitempty"`
-	Scheduling            *PlayerSchedulingReport `json:"scheduling,omitempty"`
-	Findings              []Finding               `json:"findings"`
-	Notes                 []string                `json:"notes"`
+	Source                string                    `json:"source"`
+	WindowStartMS         int64                     `json:"window_start_ms"`
+	WindowEndMS           int64                     `json:"window_end_ms"`
+	BufferSamples         []PlayerBufferSample      `json:"buffer_samples"`
+	Gaps                  []ReceptionGap            `json:"gaps"`
+	Keyframes             []Event                   `json:"keyframes"`
+	Requests              []HTTPRequestTiming       `json:"requests,omitempty"`
+	PlayerRequests        []PlayerNetworkRequest    `json:"player_requests,omitempty"`
+	PlayerNetworkRecorded bool                      `json:"player_network_recorded,omitempty"`
+	Scheduling            *PlayerSchedulingReport   `json:"scheduling,omitempty"`
+	Presentation          *PlayerPresentationReport `json:"presentation,omitempty"`
+	Findings              []Finding                 `json:"findings"`
+	Notes                 []string                  `json:"notes"`
 }
 
 type DerivedArtifact struct {
@@ -60,6 +63,7 @@ type InvestigationMedia struct {
 type StallInvestigation struct {
 	ID             string             `json:"id"`
 	StallIndex     int                `json:"stall_index"`
+	IntervalKind   string             `json:"interval_kind,omitempty"`
 	PlayerRevision int                `json:"player_revision"`
 	Status         string             `json:"status"` // queued, running, complete, partial, failed, canceled
 	CreatedAt      time.Time          `json:"created_at"`

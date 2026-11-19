@@ -126,14 +126,17 @@ func importedStallEvidence(dir string, report *Report, entries map[string]*zip.F
 	if decoder.Decode(&ledger) != nil || decoder.Decode(new(any)) != io.EOF || ledger.Version != 1 || len(ledger.Items) == 0 || len(ledger.Items) > maxStallInvestigations {
 		return fmt.Errorf("%w: 卡顿补查记录无效", ErrInvalid)
 	}
-	seenIDs, seenStalls, seenAssets := map[string]bool{}, map[int]bool{}, map[string]bool{}
+	seenIDs, seenStalls, seenAssets := map[string]bool{}, map[string]bool{}, map[string]bool{}
 	for _, item := range ledger.Items {
-		if item.ID < "S001" || item.ID > "S008" || len(item.ID) != 4 || seenIDs[item.ID] || seenStalls[item.StallIndex] ||
-			item.StallIndex < 1 || item.StallIndex > len(report.Player.Stalls) || item.PlayerRevision != report.Player.Revision || item.Stall != report.Player.Stalls[item.StallIndex-1] ||
+		kind, kindErr := normalizePlayerIntervalKind(item.IntervalKind)
+		interval, intervalErr := resolvePlayerInterval(*report, kind, item.StallIndex)
+		key := fmt.Sprintf("%s/%d", kind, item.StallIndex)
+		if kindErr != nil || intervalErr != nil || item.ID < "S001" || item.ID > "S008" || len(item.ID) != 4 || seenIDs[item.ID] || seenStalls[key] ||
+			item.PlayerRevision != report.Player.Revision || item.Stall != interval ||
 			item.CreatedAt.IsZero() || item.UpdatedAt.Before(item.CreatedAt) || len(item.ModelError) > 1024 || len(item.Media.Reason) > 1024 || len(item.Media.Assets) > 4 {
 			return fmt.Errorf("%w: 卡顿补查范围或版本无效", ErrInvalid)
 		}
-		seenIDs[item.ID], seenStalls[item.StallIndex] = true, true
+		seenIDs[item.ID], seenStalls[key] = true, true
 		switch item.Status {
 		case "queued", "running", "complete", "partial", "failed", "canceled":
 		default:
@@ -155,7 +158,7 @@ func importedStallEvidence(dir string, report *Report, entries map[string]*zip.F
 			return ErrInvalid
 		}
 		if len(item.Correlation.Findings) > 0 {
-			expected, err := correlateStall(dir, *report, item.ID, item.StallIndex)
+			expected, err := correlatePlayerInterval(dir, *report, item.ID, item.IntervalKind, item.StallIndex)
 			if err != nil {
 				return err
 			}
@@ -224,7 +227,7 @@ func importedStallEvidence(dir string, report *Report, entries map[string]*zip.F
 
 func emptyStallCorrelation(value StallCorrelation) bool {
 	return value.Source == "" && value.WindowStartMS == 0 && value.WindowEndMS == 0 && len(value.BufferSamples) == 0 && len(value.Gaps) == 0 &&
-		len(value.Keyframes) == 0 && len(value.Requests) == 0 && len(value.PlayerRequests) == 0 && !value.PlayerNetworkRecorded && value.Scheduling == nil && len(value.Findings) == 0 && len(value.Notes) == 0
+		len(value.Keyframes) == 0 && len(value.Requests) == 0 && len(value.PlayerRequests) == 0 && !value.PlayerNetworkRecorded && value.Scheduling == nil && value.Presentation == nil && len(value.Findings) == 0 && len(value.Notes) == 0
 }
 
 func loadStallImages(dir string, report Report) map[string][]byte {

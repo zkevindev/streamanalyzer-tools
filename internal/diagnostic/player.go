@@ -40,16 +40,17 @@ type PlayerSample struct {
 }
 
 type PlayerRecording struct {
-	Version    int                        `json:"version"`
-	Revision   int                        `json:"revision"`
-	StartedAt  time.Time                  `json:"started_at"`
-	ElapsedMS  int64                      `json:"elapsed_ms"`
-	Complete   bool                       `json:"complete"`
-	Engine     string                     `json:"engine"`
-	Source     string                     `json:"source"`
-	Events     []PlayerEvent              `json:"events"`
-	Samples    []PlayerSample             `json:"samples"`
-	Scheduling *PlayerSchedulingRecording `json:"scheduling,omitempty"`
+	Version      int                          `json:"version"`
+	Revision     int                          `json:"revision"`
+	StartedAt    time.Time                    `json:"started_at"`
+	ElapsedMS    int64                        `json:"elapsed_ms"`
+	Complete     bool                         `json:"complete"`
+	Engine       string                       `json:"engine"`
+	Source       string                       `json:"source"`
+	Events       []PlayerEvent                `json:"events"`
+	Samples      []PlayerSample               `json:"samples"`
+	Scheduling   *PlayerSchedulingRecording   `json:"scheduling,omitempty"`
+	Presentation *PlayerPresentationRecording `json:"presentation,omitempty"`
 }
 
 type PlayerBufferSample struct {
@@ -70,40 +71,44 @@ type PlayerStall struct {
 }
 
 type PlayerReport struct {
-	State             string                  `json:"state"`
-	Revision          int                     `json:"revision"`
-	Engine            string                  `json:"engine"`
-	Source            string                  `json:"source"`
-	StartOffsetMS     int64                   `json:"start_offset_ms"`
-	ElapsedMS         int64                   `json:"elapsed_ms"`
-	FirstScreenMS     *int64                  `json:"first_screen_ms,omitempty"`
-	FirstPlayingMS    *int64                  `json:"first_playing_ms,omitempty"`
-	FirstScreenMethod string                  `json:"first_screen_method,omitempty"`
-	StallCount        int                     `json:"stall_count"`
-	TotalStallMS      int64                   `json:"total_stall_ms"`
-	MaxStallMS        int64                   `json:"max_stall_ms"`
-	ActiveMS          int64                   `json:"active_ms"`
-	StallRatio        float64                 `json:"stall_ratio"`
-	MinBufferMS       *int64                  `json:"min_buffer_ms,omitempty"`
-	MaxBufferMS       int64                   `json:"max_buffer_ms"`
-	StallThresholdMS  int64                   `json:"stall_threshold_ms"`
-	BufferSamples     []PlayerBufferSample    `json:"buffer_samples"`
-	Stalls            []PlayerStall           `json:"stalls"`
-	Events            []PlayerEvent           `json:"events"`
-	Video             *PlayerVideoReport      `json:"video,omitempty"`
-	Scheduling        *PlayerSchedulingReport `json:"scheduling,omitempty"`
+	State             string                    `json:"state"`
+	Revision          int                       `json:"revision"`
+	Engine            string                    `json:"engine"`
+	Source            string                    `json:"source"`
+	StartOffsetMS     int64                     `json:"start_offset_ms"`
+	ElapsedMS         int64                     `json:"elapsed_ms"`
+	FirstScreenMS     *int64                    `json:"first_screen_ms,omitempty"`
+	FirstPlayingMS    *int64                    `json:"first_playing_ms,omitempty"`
+	FirstScreenMethod string                    `json:"first_screen_method,omitempty"`
+	StallCount        int                       `json:"stall_count"`
+	TotalStallMS      int64                     `json:"total_stall_ms"`
+	MaxStallMS        int64                     `json:"max_stall_ms"`
+	ActiveMS          int64                     `json:"active_ms"`
+	StallRatio        float64                   `json:"stall_ratio"`
+	MinBufferMS       *int64                    `json:"min_buffer_ms,omitempty"`
+	MaxBufferMS       int64                     `json:"max_buffer_ms"`
+	StallThresholdMS  int64                     `json:"stall_threshold_ms"`
+	BufferSamples     []PlayerBufferSample      `json:"buffer_samples"`
+	Stalls            []PlayerStall             `json:"stalls"`
+	Events            []PlayerEvent             `json:"events"`
+	Video             *PlayerVideoReport        `json:"video,omitempty"`
+	Scheduling        *PlayerSchedulingReport   `json:"scheduling,omitempty"`
+	Presentation      *PlayerPresentationReport `json:"presentation,omitempty"`
 }
 
 func validatePlayerRecording(record PlayerRecording, reference time.Time) error {
 	invalid := func() error {
 		return fmt.Errorf("%w: 播放器记录的事件、时钟或缓冲区数据无效", ErrInvalid)
 	}
-	if (record.Version != 1 && record.Version != 2 && record.Version != 3) || record.Revision < 0 || record.StartedAt.IsZero() ||
+	if (record.Version != 1 && record.Version != 2 && record.Version != 3 && record.Version != 4) || record.Revision < 0 || record.StartedAt.IsZero() ||
 		record.ElapsedMS < 0 || record.ElapsedMS > maxPlayerElapsedMS ||
 		len(record.Events) > maxPlayerEvents || len(record.Samples) > maxPlayerSamples {
 		return invalid()
 	}
-	if (record.Scheduling != nil && record.Version != 3) || !validPlayerScheduling(record.Scheduling, record.ElapsedMS) {
+	if (record.Scheduling != nil && record.Version < 3) || !validPlayerScheduling(record.Scheduling, record.ElapsedMS) {
+		return invalid()
+	}
+	if (record.Presentation != nil && record.Version != 4) || !validPlayerPresentation(record.Presentation, record.ElapsedMS) {
 		return invalid()
 	}
 	if !reference.IsZero() && math.Abs(float64(record.StartedAt.Sub(reference).Milliseconds())) > 60_000 {
@@ -275,5 +280,6 @@ func analyzePlayer(record PlayerRecording, observation Observation) *PlayerRepor
 	}
 	result.Video = analyzePlayerVideo(record.Samples, activeSpans)
 	result.Scheduling = analyzePlayerScheduling(record, activeSpans, observation)
+	result.Presentation = analyzePlayerPresentation(record, activeSpans, observation, result.Stalls)
 	return result
 }

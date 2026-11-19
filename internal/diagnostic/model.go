@@ -64,6 +64,7 @@ const explanationPrompt = "你是流媒体排障助手。请用中文，仅返�
 	"player_network 和 player_requests 是实际 HLS 播放代理的请求证据，区别于采样连接 requests；首正文和字节数为代理上游观测，不能当作浏览器已接收、追加或解码。" +
 	"scheduling 区分浏览器长任务和定时器延后，区间已按前台播放覆盖裁剪；unsupported 或缺少指标不表示零次。时间重合不能证明 CPU 占用、解码故障或画面冻结，不得插值推断阻塞期间缓冲。" +
 	"播放请求 hops 是逐跳数字证据，ttfb_ms 为跳内相对耗时，其余时刻为采样偏移；未观测阶段不按零处理。dropped_hops 表示未采集，model_omitted_hops/stages 表示本次模型摘要省略。" +
+	"interval_kind 为 presentation_gap 时选中的是呈帧回调间隔，不是缓冲卡顿。presentation 基于先前回调的媒体时间间隔估算，只记录已闭合的回调间隔，不能确认画面冻结；与已有缓冲卡顿重合不重复增加卡顿次数。" +
 	"没有足够证据时，给出简洁摘要并返回空 hypotheses。"
 
 type modelClient struct {
@@ -170,24 +171,25 @@ type modelFinding struct {
 }
 
 type modelPlayer struct {
-	State             string                 `json:"state"`
-	Source            string                 `json:"source"`
-	Engine            string                 `json:"engine"`
-	StartOffsetMS     int64                  `json:"start_offset_ms"`
-	FirstScreenMS     *int64                 `json:"first_screen_ms,omitempty"`
-	FirstScreenMethod string                 `json:"first_screen_method,omitempty"`
-	FirstPlayingMS    *int64                 `json:"first_playing_ms,omitempty"`
-	StallCount        int                    `json:"stall_count"`
-	TotalStallMS      int64                  `json:"total_stall_ms"`
-	MaxStallMS        int64                  `json:"max_stall_ms"`
-	ActiveMS          int64                  `json:"active_ms"`
-	StallRatio        float64                `json:"stall_ratio"`
-	MinBufferMS       *int64                 `json:"min_buffer_ms,omitempty"`
-	MaxBufferMS       int64                  `json:"max_buffer_ms"`
-	StallThresholdMS  int64                  `json:"stall_threshold_ms"`
-	Stalls            []PlayerStall          `json:"stalls"`
-	Video             *PlayerVideoReport     `json:"video,omitempty"`
-	Scheduling        *modelPlayerScheduling `json:"scheduling,omitempty"`
+	State             string                   `json:"state"`
+	Source            string                   `json:"source"`
+	Engine            string                   `json:"engine"`
+	StartOffsetMS     int64                    `json:"start_offset_ms"`
+	FirstScreenMS     *int64                   `json:"first_screen_ms,omitempty"`
+	FirstScreenMethod string                   `json:"first_screen_method,omitempty"`
+	FirstPlayingMS    *int64                   `json:"first_playing_ms,omitempty"`
+	StallCount        int                      `json:"stall_count"`
+	TotalStallMS      int64                    `json:"total_stall_ms"`
+	MaxStallMS        int64                    `json:"max_stall_ms"`
+	ActiveMS          int64                    `json:"active_ms"`
+	StallRatio        float64                  `json:"stall_ratio"`
+	MinBufferMS       *int64                   `json:"min_buffer_ms,omitempty"`
+	MaxBufferMS       int64                    `json:"max_buffer_ms"`
+	StallThresholdMS  int64                    `json:"stall_threshold_ms"`
+	Stalls            []PlayerStall            `json:"stalls"`
+	Video             *PlayerVideoReport       `json:"video,omitempty"`
+	Scheduling        *modelPlayerScheduling   `json:"scheduling,omitempty"`
+	Presentation      *modelPlayerPresentation `json:"presentation,omitempty"`
 }
 
 // Keep connection metadata and header text local even as the report grows.
@@ -206,25 +208,27 @@ type modelHTTPRequest struct {
 }
 
 type modelStallInvestigation struct {
-	ID                    string                 `json:"id"`
-	Stall                 PlayerStall            `json:"stall"`
-	Source                string                 `json:"source"`
-	WindowStartMS         int64                  `json:"window_start_ms"`
-	WindowEndMS           int64                  `json:"window_end_ms"`
-	Gaps                  []ReceptionGap         `json:"gaps"`
-	BufferSamples         []PlayerBufferSample   `json:"buffer_samples"`
-	Keyframes             []Event                `json:"keyframes"`
-	Requests              []modelHTTPRequest     `json:"requests,omitempty"`
-	PlayerRequests        []modelPlayerRequest   `json:"player_requests,omitempty"`
-	PlayerNetworkRecorded bool                   `json:"player_network_recorded,omitempty"`
-	Scheduling            *modelPlayerScheduling `json:"scheduling,omitempty"`
-	Notes                 []string               `json:"notes"`
-	MediaStatus           string                 `json:"media_status"`
-	MediaAlignment        string                 `json:"media_alignment,omitempty"`
-	ClipCount             int                    `json:"clip_count"`
-	ScreenshotCount       int                    `json:"screenshot_count"`
-	ImagePixelsProvided   bool                   `json:"image_pixels_provided"`
-	Assessment            *StallAssessment       `json:"assessment,omitempty"`
+	ID                    string                   `json:"id"`
+	IntervalKind          string                   `json:"interval_kind,omitempty"`
+	Stall                 PlayerStall              `json:"stall"`
+	Source                string                   `json:"source"`
+	WindowStartMS         int64                    `json:"window_start_ms"`
+	WindowEndMS           int64                    `json:"window_end_ms"`
+	Gaps                  []ReceptionGap           `json:"gaps"`
+	BufferSamples         []PlayerBufferSample     `json:"buffer_samples"`
+	Keyframes             []Event                  `json:"keyframes"`
+	Requests              []modelHTTPRequest       `json:"requests,omitempty"`
+	PlayerRequests        []modelPlayerRequest     `json:"player_requests,omitempty"`
+	PlayerNetworkRecorded bool                     `json:"player_network_recorded,omitempty"`
+	Scheduling            *modelPlayerScheduling   `json:"scheduling,omitempty"`
+	Presentation          *modelPlayerPresentation `json:"presentation,omitempty"`
+	Notes                 []string                 `json:"notes"`
+	MediaStatus           string                   `json:"media_status"`
+	MediaAlignment        string                   `json:"media_alignment,omitempty"`
+	ClipCount             int                      `json:"clip_count"`
+	ScreenshotCount       int                      `json:"screenshot_count"`
+	ImagePixelsProvided   bool                     `json:"image_pixels_provided"`
+	Assessment            *StallAssessment         `json:"assessment,omitempty"`
 }
 
 type modelPlayerNetwork struct {
@@ -303,20 +307,20 @@ func modelInput(report Report) ([]byte, error) {
 			StallCount: player.StallCount, TotalStallMS: player.TotalStallMS, MaxStallMS: player.MaxStallMS, ActiveMS: player.ActiveMS,
 			StallRatio: player.StallRatio, MinBufferMS: player.MinBufferMS, MaxBufferMS: player.MaxBufferMS, StallThresholdMS: player.StallThresholdMS,
 			Stalls: player.Stalls[:min(20, len(player.Stalls))],
-			Video:  player.Video, Scheduling: modelScheduling(player.Scheduling),
+			Video:  player.Video, Scheduling: modelScheduling(player.Scheduling), Presentation: modelPresentation(player.Presentation),
 		}
 	}
 	if len(input.Requests) == 0 {
 		input.Requests = modelRequestTimings(obs.Requests)
 	}
 	for _, item := range report.StallInvestigations {
-		entry := modelStallInvestigation{ID: item.ID, Stall: item.Stall, Source: item.Correlation.Source,
+		entry := modelStallInvestigation{ID: item.ID, IntervalKind: item.IntervalKind, Stall: item.Stall, Source: item.Correlation.Source,
 			WindowStartMS: item.Correlation.WindowStartMS, WindowEndMS: item.Correlation.WindowEndMS,
 			Gaps: item.Correlation.Gaps, BufferSamples: item.Correlation.BufferSamples, Keyframes: item.Correlation.Keyframes,
 			Requests: modelRequestTimings(item.Correlation.Requests), Notes: item.Correlation.Notes,
 			MediaStatus: item.Media.Status, MediaAlignment: item.Media.Alignment, Assessment: item.Assessment,
 			PlayerRequests: modelPlaybackRequests(item.Correlation.PlayerRequests, phaseBudget), PlayerNetworkRecorded: item.Correlation.PlayerNetworkRecorded,
-			Scheduling: modelScheduling(item.Correlation.Scheduling)}
+			Scheduling: modelScheduling(item.Correlation.Scheduling), Presentation: modelPresentation(item.Correlation.Presentation)}
 		for _, asset := range item.Media.Assets {
 			if asset.Kind == "clip" {
 				entry.ClipCount++

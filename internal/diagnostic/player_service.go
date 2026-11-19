@@ -119,7 +119,7 @@ func (s *Service) SavePlayerRecording(id, token string, record PlayerRecording) 
 	} else {
 		if previous.Revision > 0 && (!record.StartedAt.Equal(previous.StartedAt) ||
 			record.ElapsedMS < previous.ElapsedMS || len(record.Events) < len(previous.Events) || len(record.Samples) < len(previous.Samples) ||
-			!slices.Equal(record.Events[:len(previous.Events)], previous.Events) || !equalPlayerSamples(record.Samples[:len(previous.Samples)], previous.Samples) || !playerSchedulingExtends(previous.Scheduling, record.Scheduling)) {
+			!slices.Equal(record.Events[:len(previous.Events)], previous.Events) || !equalPlayerSamples(record.Samples[:len(previous.Samples)], previous.Samples) || !playerSchedulingExtends(previous.Scheduling, record.Scheduling) || !playerPresentationExtends(previous.Presentation, record.Presentation)) {
 			return nil, ErrReportChanged
 		}
 		if err := writePlayerRecording(dir, record); err != nil {

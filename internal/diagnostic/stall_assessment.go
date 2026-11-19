@@ -5,7 +5,7 @@ import (
 	"slices"
 )
 
-const stallAssessmentVersion = "stall-assessment/4"
+const stallAssessmentVersion = "stall-assessment/5"
 
 type StallDirection struct {
 	Code        string   `json:"code"`

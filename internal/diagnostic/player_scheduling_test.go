@@ -137,7 +137,7 @@ func TestPlayerSchedulingValidationAndLegacyVersions(t *testing.T) {
 	}{
 		{"v1 cannot contain scheduling", func(r *PlayerRecording) { r.Version = 1 }},
 		{"v2 cannot contain scheduling", func(r *PlayerRecording) { r.Version = 2 }},
-		{"unknown version", func(r *PlayerRecording) { r.Version = 4 }},
+		{"unknown version", func(r *PlayerRecording) { r.Version = 5 }},
 		{"unknown support", func(r *PlayerRecording) { r.Scheduling.LongTaskSupport = "estimated" }},
 		{"unsupported native events", func(r *PlayerRecording) { r.Scheduling.LongTaskSupport = "unsupported" }},
 		{"negative coverage", func(r *PlayerRecording) { r.Scheduling.ObservationStartMS = -1 }},

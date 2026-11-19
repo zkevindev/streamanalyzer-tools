@@ -97,9 +97,9 @@ func playerPhaseFindings(requests []PlayerNetworkRequest, stall PlayerStall) []F
 	return result
 }
 
-func assessStall(item StallInvestigation) *StallAssessment {
+func assessStallV4(item StallInvestigation) *StallAssessment {
 	result := assessStallV3(item)
-	result.Version = stallAssessmentVersion
+	result.Version = "stall-assessment/4"
 	if !hasPlayerPhaseEvidence(item) {
 		return result
 	}

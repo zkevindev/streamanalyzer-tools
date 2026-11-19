@@ -69,6 +69,8 @@ let detailRequest = 0;
 let activePlayer;
 const finalizingPlayers = new Set();
 const selectedStalls = new Map();
+const selectedPresentationGaps = new Map();
+const selectedIntervalKinds = new Map();
 const pendingStallRequests = new Set();
 const pendingStallExplanations = new Set();
 const pendingStallStops = new Set();
@@ -520,9 +522,9 @@ function renderTransport(protocol, ts) {
     node('pid-table').replaceChildren(table);
 }
 
-function renderBufferChart(samples, stalls, elapsed, startMS = 0) {
+function renderBufferChart(samples, stalls, elapsed, startMS = 0, intervalLabel = '卡顿区间') {
     const figure = element('figure', '', 'player-buffer-chart');
-    figure.append(element('figcaption', stalls.length ? '可播放缓冲 · 阴影为卡顿区间' : '可播放缓冲'));
+    figure.append(element('figcaption', stalls.length ? `可播放缓冲 · 阴影为${intervalLabel}` : '可播放缓冲'));
     const svgElement = (tag, attributes, text) => {
         const part = document.createElementNS('http://www.w3.org/2000/svg', tag);
         for (const [name, value] of Object.entries(attributes)) part.setAttribute(name, value);
@@ -559,6 +561,88 @@ const playerVideoQualitySources = {
 };
 const videoObservedCount = (value) => value == null ? '未观测' : String(value);
 const videoObservedTime = (value) => value == null ? '未观测' : time(value);
+const investigationIntervalKind = (item) => item.interval_kind || 'buffering';
+const intervalName = (kind) => kind === 'presentation_gap' ? '呈帧回调间隔' : '缓冲卡顿';
+const intervalSelection = (kind) => kind === 'presentation_gap' ? selectedPresentationGaps : selectedStalls;
+const intervalTitle = (kind, index) => kind === 'presentation_gap' ? `第 ${index} 个呈帧回调间隔` : `第 ${index} 次卡顿（缓冲）`;
+const presentationMethodNote = '至少 3 个有效回调媒体时间增量用于估算间隔基线，记录阈值取 1000 ms 与 3 倍间隔基线中的较大值；基线不等同于源流编码帧率。只保留完整落在同一连续前台播放区间内的间隔，并排除采样结束后的部分。';
+const presentationBoundaryNote = '回调间隔受内容帧率、浏览器呈现和页面调度影响，不能单凭该记录确认画面冻结或解码故障。与缓冲卡顿重合的时长用于对照，次数与时长不叠加到缓冲卡顿统计。';
+
+function renderPresentationReport(presentation, selectable = false, selectedInterval) {
+    const block = element('section', '', 'player-presentation-report');
+    const title = element(selectable ? 'h4' : 'h5', selectable ? '呈帧回调间隔' : '补查窗口呈帧回调间隔');
+    if (selectable) {
+        const heading = element('div', '', 'stall-investigation-heading');
+        const button = element('button', '补查呈帧回调间隔', 'secondary');
+        button.id = 'investigate-presentation-gap';
+        button.type = 'button';
+        button.disabled = true;
+        button.addEventListener('click', () => { void investigateInterval('presentation_gap'); });
+        heading.append(title, button);
+        block.append(heading);
+    } else block.append(title);
+    if (!presentation) block.append(element('p', selectable ? '该记录未采集呈帧回调间隔数据，重新采样可补充。' : '该补查未包含呈帧回调间隔数据，可重新采样后补查。', 'timing-note muted'));
+    else {
+        const metrics = element('dl', '', 'metrics presentation-metrics');
+        for (const [label, value] of [
+            ['回调能力', presentation.support === 'supported' ? '支持视频帧回调' : presentation.support === 'unsupported' ? '当前环境不支持视频帧回调' : '未记录'],
+            ['观测区间', `${videoObservedTime(presentation.observation_start_ms)}–${videoObservedTime(presentation.observation_end_ms)}`],
+            ['回调基线就绪偏移', videoObservedTime(presentation.ready_at_ms)],
+            ['前台播放有效覆盖', videoObservedTime(presentation.active_coverage_ms)],
+            [selectable ? '间隔次数' : '窗口关联间隔数', videoObservedCount(presentation.count)],
+            [selectable ? '间隔累计时长' : '窗口内重合累计时长', videoObservedTime(presentation.total_ms)],
+            [selectable ? '最长间隔' : '最长重合时长', videoObservedTime(presentation.max_ms)],
+        ]) {
+            const item = element('div', '');
+            item.append(element('dt', label), element('dd', value));
+            metrics.append(item);
+        }
+        block.append(metrics, element('p', presentationMethodNote, 'timing-note muted'), element('p', presentationBoundaryNote, 'timing-note muted'));
+        if (!selectable) block.append(element('p', '窗口统计计算与补查窗口重合的时长；下表保留完整观测到的回调间隔，起止可能超出窗口。与缓冲卡顿重合的时长也按完整间隔保留。', 'timing-note muted'));
+        if (presentation.support === 'unsupported') block.append(element('p', '当前环境未提供 requestVideoFrameCallback，呈帧回调间隔保持未观测。', 'timing-note muted'));
+        else if (presentation.ready_at_ms == null) block.append(element('p', '尚未完成回调基线预热，无法判断是否存在异常回调间隔。', 'timing-note muted'));
+        else if (presentation.active_coverage_ms === 0) block.append(element('p', '预热后没有可用于统计的连续前台播放覆盖区间，间隔统计保持未观测。', 'timing-note muted'));
+        if (presentation.dropped_gaps > 0) block.append(element('p', `采集达到上限，另有 ${presentation.dropped_gaps} 条呈帧回调间隔记录未保存，统计可能不完整。`, 'timing-note muted presentation-dropped'));
+        const gaps = presentation.gaps || [];
+        if (selectable && (!selectedPresentationGaps.has(currentID) || selectedPresentationGaps.get(currentID) > gaps.length)) selectedPresentationGaps.set(currentID, 1);
+        if (gaps.length) {
+            const shown = gaps.slice(0, 128);
+            const table = renderTable([...(selectable ? ['选择'] : []), selectable ? '间隔' : '窗口间隔', '开始偏移', '结束偏移', selectable ? '间隔时长' : '完整回调间隔时长', '回调媒体时间间隔基线', '与缓冲卡顿重合', ...(selectedInterval ? ['与本次补查区间重合'] : [])], shown.map((gap, index) => [
+                ...(selectable ? [''] : []), `#${index + 1}`, time(gap.start_ms), time(gap.end_ms), time(gap.duration_ms), time(gap.expected_frame_ms), time(gap.buffering_overlap_ms),
+                ...(selectedInterval ? [time(Math.max(0, Math.min(gap.end_ms, selectedInterval.end_ms) - Math.max(gap.start_ms, selectedInterval.start_ms)))] : []),
+            ]));
+            table.tabIndex = 0;
+            table.setAttribute('role', 'region');
+            table.setAttribute('aria-label', '呈帧回调间隔，可横向滚动');
+            if (selectable) Array.from(table.querySelector('tbody').rows).forEach((row, index) => {
+                const choice = element('input', '');
+                choice.type = 'radio';
+                choice.name = 'presentation-gap-selection';
+                choice.className = 'presentation-gap-select';
+                choice.value = String(index + 1);
+                choice.checked = selectedPresentationGaps.get(currentID) === index + 1;
+                choice.setAttribute('aria-label', `选择第 ${index + 1} 个呈帧回调间隔，${time(shown[index].start_ms)} 至 ${time(shown[index].end_ms)}`);
+                row.setAttribute('aria-selected', String(choice.checked));
+                choice.addEventListener('change', () => {
+                    selectedPresentationGaps.set(currentID, index + 1);
+                    selectedIntervalKinds.set(currentID, 'presentation_gap');
+                    for (const other of table.querySelector('tbody').rows) other.setAttribute('aria-selected', String(other === row));
+                    renderStallInvestigations(currentReport);
+                });
+                row.cells[0].append(choice);
+            });
+            block.append(table);
+            if (gaps.length > shown.length) block.append(element('p', `页面仅展示前 ${shown.length} 个间隔，另有 ${gaps.length - shown.length} 个已保存间隔可在报告 JSON 或证据包中查看。`, 'timing-note muted'));
+        } else block.append(element('p', presentation.count === 0 ? '有效覆盖内未记录到符合阈值的呈帧回调间隔。' : '当前记录未包含可展示的呈帧回调间隔。', 'timing-note muted'));
+    }
+    if (selectable) {
+        const status = element('p', '', 'timing-note muted');
+        status.id = 'presentation-investigation-status';
+        status.setAttribute('role', 'status');
+        block.append(status);
+    }
+    return block;
+}
 
 function renderPlayerVideo(video) {
     if (!video) {
@@ -597,7 +681,7 @@ function renderVideoWindowSamples(samples) {
 
 const schedulingRowLimit = 200;
 const schedulingMethodNote = '调度区间按前台播放和观测窗口裁切，区间数与时长表示裁切后的有效片段。定时器每 250 ms 检查，仅采集原始延后 ≥100 ms 的记录；裁切后的区间可能更短。';
-const schedulingBoundaryNote = '长任务和定时器延后分别观测。页面负载、系统调度等都可能影响结果，不能单独证明 CPU 瓶颈或解码故障；与卡顿重合用于安排进一步验证。';
+const schedulingBoundaryNote = '长任务和定时器延后分别观测。页面负载、系统调度等都可能影响结果，不能单独证明 CPU 瓶颈或解码故障；与异常区间重合用于安排进一步验证。';
 const schedulingSupportLabels = { supported: '支持 Long Tasks API', unsupported: '当前环境不支持 Long Tasks API' };
 
 function schedulingMetricsList(metrics) {
@@ -610,7 +694,7 @@ function schedulingMetricsList(metrics) {
     return list;
 }
 
-function renderPlayerScheduling(scheduling, stall) {
+function renderPlayerScheduling(scheduling, stall, intervalKind = 'buffering') {
     const block = element('section', '', 'player-scheduling-report');
     block.append(element(stall ? 'h5' : 'h4', stall ? '补查窗口页面调度' : '页面调度观测'));
     if (!scheduling) {
@@ -649,7 +733,7 @@ function renderPlayerScheduling(scheduling, stall) {
             if (stall) row.push(Math.max(0, Math.min(interval.end_ms, stall.end_ms) - Math.max(interval.start_ms, stall.start_ms)));
             return row;
         });
-        const table = renderTable(['类型', '开始偏移 (ms)', '结束偏移 (ms)', '有效区间时长 (ms)', ...(stall ? ['与本次卡顿重合 (ms)'] : [])], rows);
+        const table = renderTable(['类型', '开始偏移 (ms)', '结束偏移 (ms)', '有效区间时长 (ms)', ...(stall ? [intervalKind === 'presentation_gap' ? '与呈帧回调间隔重合 (ms)' : '与本次卡顿重合 (ms)'] : [])], rows);
         table.tabIndex = 0;
         table.setAttribute('role', 'region');
         table.setAttribute('aria-label', '页面调度有效区间，可横向滚动');
@@ -682,6 +766,7 @@ function renderPlayerReport(player, elapsed) {
     const threshold = player.stall_threshold_ms > 0 ? `至少 ${player.stall_threshold_ms} ms 的` : '';
     node('player-method').textContent = `卡顿统计从开始播放到采样结束，计入${threshold}等待。暂停、跳转和后台期间停止计时。正常结束后可短暂补记首屏。`;
     renderPlayerVideo(player.video);
+    node('player-presentation-report').replaceChildren(renderPresentationReport(player.presentation, true));
     node('player-scheduling-report').replaceChildren(renderPlayerScheduling(player.scheduling));
     const stalls = player.stalls || [];
     const samples = player.buffer_samples || [];
@@ -824,12 +909,13 @@ function renderStallSelection(stalls) {
         row.setAttribute('aria-selected', String(choice.checked));
         choice.addEventListener('change', () => {
             selectedStalls.set(currentID, index + 1);
+            selectedIntervalKinds.set(currentID, 'buffering');
             for (const other of table.querySelector('tbody').rows) other.setAttribute('aria-selected', String(other === row));
             renderStallInvestigations(currentReport);
         });
         row.cells[0].append(choice);
     });
-    node('player-stalls').replaceChildren(element('h4', '卡顿区间'), table);
+    node('player-stalls').replaceChildren(element('h4', '缓冲卡顿区间'), table);
 }
 
 function investigationAssetURL(item, asset) {
@@ -845,6 +931,7 @@ function renderInvestigationMedia(item) {
     if (media.reason) block.append(element('p', media.reason, 'timing-note muted'));
     if (media.alignment) block.append(element('p', `媒体定位方式 ${investigationAlignments[media.alignment] || media.alignment}${media.start_ms != null ? ` · 源流媒体时间 ${time(media.start_ms)}–${time(media.end_ms)}` : ''}`, 'timing-note muted'));
     block.append(element('p', '片段与截图来自采样源流，用于复核媒体内容；原拉流等待和播放器停顿保留在时序证据中。', 'timing-note muted'));
+    if (investigationIntervalKind(item) === 'presentation_gap') block.append(element('p', '同期源流片段和截图供内容对照，不能重现或证明本机画面冻结。', 'timing-note muted'));
     const images = element('div', '', 'stall-screenshots');
     for (const asset of media.assets || []) {
         const url = investigationAssetURL(item, asset);
@@ -973,7 +1060,8 @@ function renderInvestigation(item) {
     card.id = 'investigation-' + item.id;
     card.dataset.investigation = item.id;
     card.dataset.signature = JSON.stringify(item);
-    const summary = element('summary', `${item.id} · 第 ${item.stall_index} 次卡顿`);
+    const kind = investigationIntervalKind(item);
+    const summary = element('summary', `${item.id} · ${intervalTitle(kind, item.stall_index)}`);
     summary.append(element('span', investigationStates[item.status] || item.status, 'status'));
     card.append(summary);
     if (['queued', 'running'].includes(item.status)) {
@@ -995,14 +1083,15 @@ function renderInvestigation(item) {
         card.append(stop);
     }
     const c = item.correlation || {};
-    card.append(element('p', `卡顿 ${time(item.stall.start_ms)}–${time(item.stall.end_ms)} · ${time(item.stall.duration_ms)}；补查窗口 ${time(c.window_start_ms)}–${time(c.window_end_ms)}`, 'timing-note muted'));
+    card.append(element('p', `${intervalName(kind)} ${time(item.stall.start_ms)}–${time(item.stall.end_ms)} · ${time(item.stall.duration_ms)}；补查窗口 ${time(c.window_start_ms)}–${time(c.window_end_ms)}`, 'timing-note muted'));
+    if (kind === 'presentation_gap') card.append(element('p', '本案例分析呈帧回调间隔，不代表已确认画面冻结；与缓冲卡顿重合的部分仍保留在独立统计中。', 'timing-note muted'));
     card.append(element('p', `来源 ${playerSources[c.source] || c.source || '未记录'}${c.source === 'independent_pull' ? '，采样连接与播放器连接独立，关联结果供对照。' : ''}`, 'timing-note muted'));
     for (const note of c.notes || []) card.append(element('p', note, 'timing-note muted'));
     card.append(renderStallAssessment(item));
-    if (c.buffer_samples?.length) card.append(renderBufferChart(c.buffer_samples, [item.stall], c.window_end_ms, c.window_start_ms));
+    if (c.buffer_samples?.length) card.append(renderBufferChart(c.buffer_samples, [item.stall], c.window_end_ms, c.window_start_ms, kind === 'presentation_gap' ? '呈帧回调间隔' : '卡顿区间'));
     const videoSamples = renderVideoWindowSamples(c.buffer_samples);
     if (videoSamples) card.append(videoSamples);
-    card.append(renderPlayerScheduling(c.scheduling, item.stall));
+    card.append(renderPlayerScheduling(c.scheduling, item.stall, kind), renderPresentationReport(c.presentation, false, item.stall));
     card.append(element('h5', '关联收流间隔'));
     if (c.gaps?.length) card.append(renderTable(['媒体', '开始偏移', '结束偏移', '间隔'], c.gaps.map((gap) => [tagLabels[gap.kind] || gap.kind, time(gap.start_ms), time(gap.end_ms), time(gap.duration_ms)])));
     else card.append(element('p', '窗口内没有可关联的音视频接收间隔记录。', 'timing-note muted'));
@@ -1044,27 +1133,44 @@ function renderInvestigation(item) {
     return card;
 }
 
-function renderStallInvestigations(report) {
-    const stalls = report?.player?.stalls || [];
+function renderInvestigationAction(report, kind, intervals, buttonID, statusID) {
+    const button = node(buttonID);
+    const status = node(statusID);
+    if (!button || !status) return;
     const items = report?.stall_investigations || [];
-    node('stall-investigations').hidden = !stalls.length && !items.length;
-    if (!stalls.length && !items.length) { node('stall-investigation-results').replaceChildren(); return; }
-    const selected = selectedStalls.get(currentID) || 1;
-    const existing = items.find((item) => item.stall_index === selected);
+    const selected = intervalSelection(kind).get(currentID) || 1;
+    const existing = items.find((item) => investigationIntervalKind(item) === kind && item.stall_index === selected);
     const playerPending = activePlayer?.id === currentID || Array.from(finalizingPlayers).some((player) => player.id === currentID) || ['recording', 'awaiting'].includes(report?.player?.state);
     const busy = pendingStallRequests.has(currentID);
     const retry = existing && !['queued', 'running'].includes(existing.status) && !existing.media?.assets?.length;
-    const button = node('investigate-stall');
-    button.disabled = !stalls.length || currentStatus === 'running' || playerPending || busy || Boolean(existing && !retry);
-    button.textContent = busy ? '正在提交…' : retry ? `重新补查第 ${selected} 次卡顿` : existing ? (investigationStates[existing.status] || '已补查') : `补查第 ${selected} 次卡顿`;
-    node('stall-investigation-status').textContent = playerPending || currentStatus === 'running' ? '采样和播放器记录保存完成后，可以选择一次卡顿补查证据。' : existing ? `第 ${selected} 次卡顿 ${investigationStates[existing.status] || existing.status}。` : `已选择第 ${selected} 次卡顿。补查会关联时序并提取异常附近的源流媒体。`;
+    const full = !existing && items.length >= 8;
+    button.disabled = !intervals.length || currentStatus === 'running' || playerPending || busy || full || Boolean(existing && !retry);
+    const label = kind === 'presentation_gap' ? `第 ${selected} 个呈帧回调间隔` : `第 ${selected} 次卡顿`;
+    button.textContent = !intervals.length ? (kind === 'presentation_gap' ? '暂无可补查回调间隔' : '暂无缓冲卡顿区间') : busy ? '正在提交…' : retry ? `重新补查${label}` : existing ? (investigationStates[existing.status] || '已补查') : `补查${label}`;
+    status.textContent = !intervals.length ? (kind === 'presentation_gap' ? '当前没有可补查的呈帧回调间隔。' : '当前没有可补查的缓冲卡顿区间。') : full ? '本报告已达到 8 个补查案例上限，可查看或重新补查已有案例。' : playerPending || currentStatus === 'running' ? `采样和播放器记录保存完成后，可以选择${intervalName(kind)}补查证据。` : existing ? `${label} ${investigationStates[existing.status] || existing.status}。` : `已选择${label}。补查会关联时序并提取异常附近的源流媒体。`;
+}
+
+function renderStallInvestigations(report) {
+    const stalls = report?.player?.stalls || [];
+    const gaps = report?.player?.presentation?.gaps || [];
+    const items = report?.stall_investigations || [];
+    renderInvestigationAction(report, 'buffering', stalls, 'investigate-stall', 'stall-investigation-status');
+    renderInvestigationAction(report, 'presentation_gap', gaps, 'investigate-presentation-gap', 'presentation-investigation-status');
+    node('stall-investigations').hidden = !stalls.length && !gaps.length && !items.length;
+    if (!stalls.length && !gaps.length && !items.length) { node('stall-investigation-results').replaceChildren(); return; }
+    let kind = selectedIntervalKinds.get(currentID) || (stalls.length ? 'buffering' : 'presentation_gap');
+    if (kind === 'buffering' && !stalls.length && gaps.length) kind = 'presentation_gap';
+    if (kind === 'presentation_gap' && !gaps.length && stalls.length) kind = 'buffering';
+    selectedIntervalKinds.set(currentID, kind);
+    const selected = intervalSelection(kind).get(currentID) || 1;
     const container = node('stall-investigation-results');
     const old = new Map(Array.from(container.children).map((card) => [card.dataset.investigation, card]));
     container.replaceChildren(...items.map((item) => {
         const previous = old.get(item.id);
         const card = previous?.dataset.signature === JSON.stringify(item) ? previous : renderInvestigation(item);
-        if (!previous || previous.dataset.signature !== card.dataset.signature) card.open = previous?.open ?? (item.stall_index === selected);
-        card.classList.toggle('selected', item.stall_index === selected);
+        const isSelected = investigationIntervalKind(item) === kind && item.stall_index === selected;
+        if (!previous || previous.dataset.signature !== card.dataset.signature) card.open = previous?.open ?? isSelected;
+        card.classList.toggle('selected', isSelected);
         const explain = card.querySelector('[data-stall-explain]');
         if (explain) explain.disabled = pendingStallExplanations.has(`${currentID}/${item.id}`);
         const stop = card.querySelector('[data-stall-stop]');
@@ -1323,25 +1429,27 @@ node('stop').addEventListener('click', async () => {
     }
 });
 node('play-player').addEventListener('click', () => { void activePlayer?.collector.play(); });
-node('investigate-stall').addEventListener('click', async () => {
+async function investigateInterval(kind) {
     const id = currentID;
-    const stallIndex = selectedStalls.get(id) || 1;
-    const previous = currentReport?.stall_investigations?.find((item) => item.stall_index === stallIndex);
+    const stallIndex = intervalSelection(kind).get(id) || 1;
+    const previous = currentReport?.stall_investigations?.find((item) => investigationIntervalKind(item) === kind && item.stall_index === stallIndex);
     const retry = Boolean(previous && !['queued', 'running'].includes(previous.status) && !previous.media?.assets?.length);
     if (!id || pendingStallRequests.has(id)) return;
+    selectedIntervalKinds.set(id, kind);
     pendingStallRequests.add(id);
     renderStallInvestigations(currentReport);
     try {
         await api(runPath(id) + '/stalls', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ stall_index: stallIndex, retry }),
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(kind === 'presentation_gap' ? { interval_kind: 'presentation_gap', interval_index: stallIndex, retry } : { stall_index: stallIndex, retry }),
         });
-        if (id === currentID) { message('已开始补查卡顿证据。'); await refreshDetail(id); }
+        if (id === currentID) { message(`已开始补查${intervalName(kind)}证据。`); await refreshDetail(id); }
     } catch (err) { if (id === currentID) message(err.message, true); }
     finally {
         pendingStallRequests.delete(id);
         if (id === currentID) renderStallInvestigations(currentReport);
     }
-});
+}
+node('investigate-stall').addEventListener('click', () => { void investigateInterval('buffering'); });
 window.addEventListener('pagehide', () => {
     stopPlayback(activePlayer, true);
     for (const player of finalizingPlayers) {
