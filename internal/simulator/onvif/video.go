@@ -8,42 +8,48 @@ import (
 	"sync/atomic"
 	"time"
 
-	"streamanalyzer/internal/simulator/testpattern"
-
 	"github.com/bluenviron/gortsplib/v5"
+	"github.com/bluenviron/gortsplib/v5/pkg/auth"
 	"github.com/bluenviron/gortsplib/v5/pkg/base"
 	"github.com/bluenviron/gortsplib/v5/pkg/description"
 	"github.com/bluenviron/gortsplib/v5/pkg/format"
 	"github.com/bluenviron/gortsplib/v5/pkg/format/rtph264"
-	"github.com/bluenviron/mediacommon/v2/pkg/codecs/h264"
+	"github.com/bluenviron/gortsplib/v5/pkg/liberrors"
 )
 
-const streamPath = "/live"
-
-type videoServer struct {
-	server  *gortsplib.Server
+type videoTrack struct {
+	profile *profileVideo
 	stream  *gortsplib.ServerStream
 	media   *description.Media
-	ready   chan struct{}
-	plays   *atomic.Uint64
-	frames  []h264.AnnexB
 	encoder *rtph264.Encoder
 }
 
-func (v *videoServer) describe(path string) (*base.Response, *gortsplib.ServerStream, error) {
+type videoServer struct {
+	server         *gortsplib.Server
+	tracks         map[string]*videoTrack
+	ready          chan struct{}
+	plays          *atomic.Uint64
+	user, password string
+}
+
+func (v *videoServer) describe(conn *gortsplib.ServerConn, request *base.Request, path string) (*base.Response, *gortsplib.ServerStream, error) {
 	<-v.ready
-	if path != streamPath || v.stream == nil {
+	if v.user != "" && !conn.VerifyCredentials(request, v.user, v.password) {
+		return &base.Response{StatusCode: base.StatusUnauthorized}, nil, liberrors.ErrServerAuth{}
+	}
+	track := v.tracks[path]
+	if track == nil || track.stream == nil {
 		return &base.Response{StatusCode: base.StatusNotFound}, nil, nil
 	}
-	return &base.Response{StatusCode: base.StatusOK}, v.stream, nil
+	return &base.Response{StatusCode: base.StatusOK}, track.stream, nil
 }
 
 func (v *videoServer) OnDescribe(ctx *gortsplib.ServerHandlerOnDescribeCtx) (*base.Response, *gortsplib.ServerStream, error) {
-	return v.describe(ctx.Path)
+	return v.describe(ctx.Conn, ctx.Request, ctx.Path)
 }
 
 func (v *videoServer) OnSetup(ctx *gortsplib.ServerHandlerOnSetupCtx) (*base.Response, *gortsplib.ServerStream, error) {
-	return v.describe(ctx.Path)
+	return v.describe(ctx.Conn, ctx.Request, ctx.Path)
 }
 
 func (v *videoServer) OnPlay(_ *gortsplib.ServerHandlerOnPlayCtx) (*base.Response, error) {
@@ -51,40 +57,18 @@ func (v *videoServer) OnPlay(_ *gortsplib.ServerHandlerOnPlayCtx) (*base.Respons
 	return &base.Response{StatusCode: base.StatusOK}, nil
 }
 
-func testVideo() ([]h264.AnnexB, *format.H264, error) {
-	frames := make([]h264.AnnexB, testpattern.Len())
-	format := &format.H264{PayloadTyp: 96, PacketizationMode: 1}
-	for i := range frames {
-		if err := frames[i].Unmarshal(testpattern.AccessUnit(i)); err != nil {
-			return nil, nil, err
+func startVideo(ip net.IP, cfg Config, profiles []*profileVideo, plays *atomic.Uint64) (*videoServer, error) {
+	v := &videoServer{ready: make(chan struct{}), plays: plays, tracks: make(map[string]*videoTrack),
+		user: cfg.RTSPUsername, password: cfg.RTSPPassword}
+	for _, profile := range profiles {
+		encoder, err := profile.avc.CreateEncoder()
+		if err != nil {
+			return nil, err
 		}
+		v.tracks[profile.path] = &videoTrack{profile: profile, encoder: encoder,
+			media: &description.Media{Type: description.MediaTypeVideo, Formats: []format.Format{profile.avc}}}
 	}
-	if len(frames) != 0 {
-		for _, nalu := range frames[0] {
-			switch h264.NALUType(nalu[0] & 31) {
-			case h264.NALUTypeSPS:
-				format.SPS = nalu
-			case h264.NALUTypePPS:
-				format.PPS = nalu
-			}
-		}
-	}
-	if len(format.SPS) == 0 || len(format.PPS) == 0 {
-		return nil, nil, fmt.Errorf("H.264 测试画面缺少 SPS 或 PPS")
-	}
-	return frames, format, nil
-}
-
-func startVideo(ip net.IP, port int, plays *atomic.Uint64) (*videoServer, error) {
-	frames, avc, err := testVideo()
-	if err != nil {
-		return nil, err
-	}
-	encoder, err := avc.CreateEncoder()
-	if err != nil {
-		return nil, err
-	}
-	tcp, err := net.Listen("tcp4", net.JoinHostPort(ip.String(), strconv.Itoa(port)))
+	tcp, err := net.Listen("tcp4", net.JoinHostPort(ip.String(), strconv.Itoa(cfg.RTSPPort)))
 	if err != nil {
 		return nil, err
 	}
@@ -93,10 +77,9 @@ func startVideo(ip net.IP, port int, plays *atomic.Uint64) (*videoServer, error)
 		tcp.Close()
 		return nil, err
 	}
-	v := &videoServer{ready: make(chan struct{}), plays: plays, frames: frames, encoder: encoder}
-	v.media = &description.Media{Type: description.MediaTypeVideo, Formats: []format.Format{avc}}
 	v.server = &gortsplib.Server{
 		Handler:        v,
+		AuthMethods:    []auth.VerifyMethod{auth.VerifyMethodDigestMD5},
 		RTSPAddress:    tcp.Addr().String(),
 		UDPRTPAddress:  rtp.LocalAddr().String(),
 		UDPRTCPAddress: rtcp.LocalAddr().String(),
@@ -114,16 +97,16 @@ func startVideo(ip net.IP, port int, plays *atomic.Uint64) (*videoServer, error)
 		rtcp.Close()
 		return nil, err
 	}
-	stream := &gortsplib.ServerStream{Server: v.server, Desc: &description.Session{Medias: []*description.Media{v.media}}}
-	err = stream.Initialize()
-	if err == nil {
-		v.stream = stream
+	for _, track := range v.tracks {
+		stream := &gortsplib.ServerStream{Server: v.server, Desc: &description.Session{Medias: []*description.Media{track.media}}}
+		if err := stream.Initialize(); err != nil {
+			close(v.ready)
+			v.close()
+			return nil, err
+		}
+		track.stream = stream
 	}
 	close(v.ready)
-	if err != nil {
-		v.server.Close()
-		return nil, err
-	}
 	return v, nil
 }
 
@@ -153,12 +136,12 @@ func listenVideoUDP(ip net.IP) (*net.UDPConn, *net.UDPConn, error) {
 	return nil, nil, fmt.Errorf("无法分配连续的 RTSP RTP 和 RTCP 端口")
 }
 
-func (v *videoServer) play(ctx context.Context) {
-	ticker := time.NewTicker(time.Second / testpattern.FPS)
+func (v *videoTrack) play(ctx context.Context) {
+	ticker := time.NewTicker(time.Second / time.Duration(v.profile.FPS))
 	defer ticker.Stop()
 	var timestamp uint32
-	for index := 0; ; index = (index + 1) % len(v.frames) {
-		packets, err := v.encoder.Encode(v.frames[index])
+	for index := 0; ; index = (index + 1) % len(v.profile.frames) {
+		packets, err := v.encoder.Encode(v.profile.frames[index])
 		if err != nil {
 			return
 		}
@@ -168,7 +151,7 @@ func (v *videoServer) play(ctx context.Context) {
 				return
 			}
 		}
-		timestamp += 90000 / testpattern.FPS
+		timestamp += uint32(90000 / v.profile.FPS)
 		select {
 		case <-ctx.Done():
 			return
@@ -178,6 +161,10 @@ func (v *videoServer) play(ctx context.Context) {
 }
 
 func (v *videoServer) close() {
-	v.stream.Close()
 	v.server.Close()
+	for _, track := range v.tracks {
+		if track.stream != nil {
+			track.stream.Close()
+		}
+	}
 }

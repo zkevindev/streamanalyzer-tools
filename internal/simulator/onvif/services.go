@@ -6,14 +6,9 @@ import (
 	"slices"
 	"strings"
 	"time"
-
-	"streamanalyzer/internal/simulator/testpattern"
 )
 
 const (
-	videoSourceToken   = "source-1"
-	sourceConfigToken  = "source-config-1"
-	encoderConfigToken = "encoder-config-1"
 	deviceCapabilities = `<tds:Capabilities><tds:Network DiscoveryResolve="true" DiscoveryBye="false"/><tds:Security/><tds:System/></tds:Capabilities>`
 	mediaCapabilities  = `<trt:Capabilities SnapshotUri="false"><trt:StreamingCapabilities RTPMulticast="false" RTP_TCP="false" RTP_RTSP_TCP="true"/></trt:Capabilities>`
 )
@@ -77,66 +72,72 @@ func serviceEntry(namespace, address, capabilities string, include bool) string 
 }
 
 func (c *camera) mediaReply(op operation) (string, *soapFault) {
-	switch op.XMLName.Local {
-	case "GetServiceCapabilities":
-		return mediaCapabilities, nil
-	case "GetProfiles":
-		return profile("trt:Profiles"), nil
-	case "GetProfile":
-		if strings.TrimSpace(op.ProfileToken) != profileToken {
-			return "", invalidToken("Unknown profile token")
+	var body strings.Builder
+	token := strings.TrimSpace(op.ProfileToken)
+	config := strings.TrimSpace(op.ConfigurationToken)
+	for _, p := range c.profiles {
+		switch op.XMLName.Local {
+		case "GetServiceCapabilities":
+			return mediaCapabilities, nil
+		case "GetProfiles":
+			body.WriteString(p.profile("trt:Profiles"))
+		case "GetProfile":
+			if token == p.Token {
+				return p.profile("trt:Profile"), nil
+			}
+		case "GetVideoSources":
+			fmt.Fprintf(&body, `<trt:VideoSources token="source-%s"><tt:Framerate>%d</tt:Framerate><tt:Resolution><tt:Width>%d</tt:Width><tt:Height>%d</tt:Height></tt:Resolution></trt:VideoSources>`,
+				p.number, p.FPS, p.Width, p.Height)
+		case "GetVideoSourceConfigurations":
+			body.WriteString(p.sourceConfig("trt:Configurations"))
+		case "GetVideoEncoderConfigurations":
+			body.WriteString(p.encoderConfig("trt:Configurations"))
+		case "GetVideoSourceConfiguration":
+			if config == "source-config-"+p.number {
+				return p.sourceConfig("trt:Configuration"), nil
+			}
+		case "GetVideoEncoderConfiguration":
+			if config == "encoder-config-"+p.number {
+				return p.encoderConfig("trt:Configuration"), nil
+			}
+		case "GetStreamUri":
+			if token != p.Token {
+				continue
+			}
+			stream := strings.TrimSpace(op.StreamSetup.Stream)
+			protocol := strings.TrimSpace(op.StreamSetup.Transport.Protocol)
+			if (stream != "" && stream != "RTP-Unicast") || op.StreamSetup.Transport.Tunnel != nil ||
+				(protocol != "" && protocol != "UDP" && protocol != "RTSP" && protocol != "TCP") {
+				return "", &soapFault{code: "InvalidArgVal", message: "Only RTSP unicast streaming is available"}
+			}
+			return "<trt:MediaUri><tt:Uri>" + p.StreamURL + "</tt:Uri><tt:InvalidAfterConnect>false</tt:InvalidAfterConnect>" +
+				"<tt:InvalidAfterReboot>true</tt:InvalidAfterReboot><tt:Timeout>PT0S</tt:Timeout></trt:MediaUri>", nil
+		default:
+			return "", unsupportedAction()
 		}
-		return profile("trt:Profile"), nil
-	case "GetVideoSources":
-		return fmt.Sprintf(`<trt:VideoSources token="%s"><tt:Framerate>%d</tt:Framerate><tt:Resolution><tt:Width>%d</tt:Width><tt:Height>%d</tt:Height></tt:Resolution></trt:VideoSources>`,
-			videoSourceToken, testpattern.FPS, testpattern.Width, testpattern.Height), nil
-	case "GetVideoSourceConfigurations":
-		return sourceConfig("trt:Configurations"), nil
-	case "GetVideoEncoderConfigurations":
-		return encoderConfig("trt:Configurations"), nil
-	case "GetVideoSourceConfiguration":
-		if strings.TrimSpace(op.ConfigurationToken) != sourceConfigToken {
-			return "", invalidToken("Unknown video source configuration token")
-		}
-		return sourceConfig("trt:Configuration"), nil
-	case "GetVideoEncoderConfiguration":
-		if strings.TrimSpace(op.ConfigurationToken) != encoderConfigToken {
-			return "", invalidToken("Unknown video encoder configuration token")
-		}
-		return encoderConfig("trt:Configuration"), nil
-	case "GetStreamUri":
-		if strings.TrimSpace(op.ProfileToken) != profileToken {
-			return "", invalidToken("Unknown profile token")
-		}
-		stream := strings.TrimSpace(op.StreamSetup.Stream)
-		protocol := strings.TrimSpace(op.StreamSetup.Transport.Protocol)
-		if (stream != "" && stream != "RTP-Unicast") || op.StreamSetup.Transport.Tunnel != nil ||
-			(protocol != "" && protocol != "UDP" && protocol != "RTSP" && protocol != "TCP") {
-			return "", &soapFault{code: "InvalidArgVal", message: "Only RTSP unicast streaming is available"}
-		}
-		return "<trt:MediaUri><tt:Uri>" + c.status.StreamURL + "</tt:Uri><tt:InvalidAfterConnect>false</tt:InvalidAfterConnect>" +
-			"<tt:InvalidAfterReboot>true</tt:InvalidAfterReboot><tt:Timeout>PT0S</tt:Timeout></trt:MediaUri>", nil
-	default:
-		return "", unsupportedAction()
 	}
+	if body.Len() == 0 {
+		return "", invalidToken("Unknown profile or configuration token")
+	}
+	return body.String(), nil
 }
 
-func profile(tag string) string {
-	return fmt.Sprintf(`<%s token="%s" fixed="true"><tt:Name>H.264 Test Pattern</tt:Name>`, tag, profileToken) +
-		sourceConfig("tt:VideoSourceConfiguration") + encoderConfig("tt:VideoEncoderConfiguration") + "</" + tag + ">"
+func (p *profileVideo) profile(tag string) string {
+	return fmt.Sprintf(`<%s token="%s" fixed="true"><tt:Name>%s</tt:Name>`, tag, p.Token, p.Name) +
+		p.sourceConfig("tt:VideoSourceConfiguration") + p.encoderConfig("tt:VideoEncoderConfiguration") + "</" + tag + ">"
 }
 
-func sourceConfig(tag string) string {
-	return fmt.Sprintf(`<%s token="%s"><tt:Name>Test Pattern Source</tt:Name><tt:UseCount>1</tt:UseCount><tt:SourceToken>%s</tt:SourceToken><tt:Bounds x="0" y="0" width="%d" height="%d"/></%s>`,
-		tag, sourceConfigToken, videoSourceToken, testpattern.Width, testpattern.Height, tag)
+func (p *profileVideo) sourceConfig(tag string) string {
+	return fmt.Sprintf(`<%s token="source-config-%s"><tt:Name>%s Source</tt:Name><tt:UseCount>1</tt:UseCount><tt:SourceToken>source-%s</tt:SourceToken><tt:Bounds x="0" y="0" width="%d" height="%d"/></%s>`,
+		tag, p.number, p.Name, p.number, p.Width, p.Height, tag)
 }
 
-func encoderConfig(tag string) string {
-	return fmt.Sprintf(`<%s token="%s"><tt:Name>H.264 Test Encoder</tt:Name><tt:UseCount>1</tt:UseCount><tt:Encoding>H264</tt:Encoding>
+func (p *profileVideo) encoderConfig(tag string) string {
+	return fmt.Sprintf(`<%s token="encoder-config-%s"><tt:Name>%s Encoder</tt:Name><tt:UseCount>1</tt:UseCount><tt:Encoding>H264</tt:Encoding>
 <tt:Resolution><tt:Width>%d</tt:Width><tt:Height>%d</tt:Height></tt:Resolution><tt:Quality>5</tt:Quality>
 <tt:RateControl><tt:FrameRateLimit>%d</tt:FrameRateLimit><tt:EncodingInterval>1</tt:EncodingInterval><tt:BitrateLimit>256</tt:BitrateLimit></tt:RateControl>
 <tt:H264><tt:GovLength>%d</tt:GovLength><tt:H264Profile>High</tt:H264Profile></tt:H264>
 <tt:Multicast><tt:Address><tt:Type>IPv4</tt:Type><tt:IPv4Address>0.0.0.0</tt:IPv4Address></tt:Address><tt:Port>0</tt:Port><tt:TTL>1</tt:TTL><tt:AutoStart>false</tt:AutoStart></tt:Multicast>
 <tt:SessionTimeout>PT60S</tt:SessionTimeout></%s>`,
-		tag, encoderConfigToken, testpattern.Width, testpattern.Height, testpattern.FPS, testpattern.Len(), tag)
+		tag, p.number, p.Name, p.Width, p.Height, p.FPS, p.FPS*2, tag)
 }

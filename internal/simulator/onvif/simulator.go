@@ -17,9 +17,8 @@ import (
 )
 
 const (
-	devicePath   = "/onvif/device_service"
-	mediaPath    = "/onvif/media_service"
-	profileToken = "profile-1"
+	devicePath = "/onvif/device_service"
+	mediaPath  = "/onvif/media_service"
 )
 
 var (
@@ -29,10 +28,12 @@ var (
 )
 
 type Config struct {
-	BindIP   string `json:"bind_ip"`
-	Name     string `json:"name"`
-	HTTPPort int    `json:"http_port"`
-	RTSPPort int    `json:"rtsp_port"`
+	RTSPUsername string `json:"rtsp_username,omitempty"`
+	RTSPPassword string `json:"rtsp_password,omitempty"`
+	BindIP       string `json:"bind_ip"`
+	Name         string `json:"name"`
+	HTTPPort     int    `json:"http_port"`
+	RTSPPort     int    `json:"rtsp_port"`
 }
 
 type Address struct {
@@ -82,6 +83,11 @@ func (c *Config) normalize() (net.IP, *net.Interface, error) {
 	if c.HTTPPort != 0 && c.HTTPPort == c.RTSPPort {
 		return nil, nil, fmt.Errorf("%w：ONVIF HTTP 与 RTSP 需要不同的 TCP 端口", ErrConfig)
 	}
+	c.RTSPUsername = strings.TrimSpace(c.RTSPUsername)
+	if (c.RTSPUsername == "") != (c.RTSPPassword == "") || len(c.RTSPUsername) > 128 || len(c.RTSPPassword) > 256 ||
+		strings.ContainsAny(c.RTSPUsername+c.RTSPPassword, "\r\n\x00") {
+		return nil, nil, fmt.Errorf("%w，请同时填写有效的 RTSP Digest 用户名和密码", ErrConfig)
+	}
 	ip := net.ParseIP(c.BindIP).To4()
 	if ip == nil {
 		return nil, nil, fmt.Errorf("%w：请选择本机 IPv4 地址", ErrConfig)
@@ -104,20 +110,23 @@ func (c *Config) normalize() (net.IP, *net.Interface, error) {
 }
 
 type Status struct {
-	Active           bool   `json:"active"`
-	Name             string `json:"name,omitempty"`
-	Interface        string `json:"interface,omitempty"`
-	DiscoveryAddress string `json:"discovery_address,omitempty"`
-	EndpointID       string `json:"endpoint_id,omitempty"`
-	DeviceURL        string `json:"device_url,omitempty"`
-	MediaURL         string `json:"media_url,omitempty"`
-	StreamURL        string `json:"stream_url,omitempty"`
-	DiscoveryReplies uint64 `json:"discovery_replies"`
-	SOAPRequests     uint64 `json:"soap_requests"`
-	RTSPPlays        uint64 `json:"rtsp_plays"`
+	Profiles         []Profile `json:"profiles,omitempty"`
+	RTSPDigest       bool      `json:"rtsp_digest"`
+	Active           bool      `json:"active"`
+	Name             string    `json:"name,omitempty"`
+	Interface        string    `json:"interface,omitempty"`
+	DiscoveryAddress string    `json:"discovery_address,omitempty"`
+	EndpointID       string    `json:"endpoint_id,omitempty"`
+	DeviceURL        string    `json:"device_url,omitempty"`
+	MediaURL         string    `json:"media_url,omitempty"`
+	StreamURL        string    `json:"stream_url,omitempty"`
+	DiscoveryReplies uint64    `json:"discovery_replies"`
+	SOAPRequests     uint64    `json:"soap_requests"`
+	RTSPPlays        uint64    `json:"rtsp_plays"`
 }
 
 type camera struct {
+	profiles  []*profileVideo
 	status    Status
 	listener  net.Listener
 	http      *http.Server
@@ -132,6 +141,7 @@ type camera struct {
 }
 
 type Manager struct {
+	prepare               sync.Mutex
 	mu                    sync.Mutex
 	camera                *camera
 	last                  Status
@@ -140,17 +150,38 @@ type Manager struct {
 }
 
 func (m *Manager) Start(cfg Config) (Status, error) {
+	return m.StartFiles(context.Background(), cfg, [2]LocalVideo{})
+}
+
+func (m *Manager) StartFiles(ctx context.Context, cfg Config, files [2]LocalVideo) (Status, error) {
+	if !m.prepare.TryLock() {
+		return Status{}, ErrActive
+	}
+	defer m.prepare.Unlock()
+	ip, nic, err := cfg.normalize()
+	if err != nil {
+		return Status{}, err
+	}
+	m.mu.Lock()
+	active, closed := m.camera != nil, m.closed
+	m.mu.Unlock()
+	switch {
+	case closed:
+		return Status{}, ErrClosed
+	case active:
+		return Status{}, ErrActive
+	}
+	profiles, err := prepareProfiles(ctx, files)
+	if err != nil {
+		return Status{}, err
+	}
+	if err := ctx.Err(); err != nil {
+		return Status{}, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {
 		return Status{}, ErrClosed
-	}
-	if m.camera != nil {
-		return Status{}, ErrActive
-	}
-	ip, nic, err := cfg.normalize()
-	if err != nil {
-		return Status{}, err
 	}
 	listener, err := net.Listen("tcp4", net.JoinHostPort(cfg.BindIP, strconv.Itoa(cfg.HTTPPort)))
 	if err != nil {
@@ -161,8 +192,8 @@ func (m *Manager) Start(cfg Config) (Status, error) {
 		listener.Close()
 		return Status{}, fmt.Errorf("无法监听 WS-Discovery：%w", err)
 	}
-	c := &camera{listener: listener, discovery: discovery}
-	video, err := startVideo(ip, cfg.RTSPPort, &c.rtspPlays)
+	c := &camera{listener: listener, discovery: discovery, profiles: profiles}
+	video, err := startVideo(ip, cfg, profiles, &c.rtspPlays)
 	if err != nil {
 		discovery.close()
 		listener.Close()
@@ -175,8 +206,13 @@ func (m *Manager) Start(cfg Config) (Status, error) {
 	c.status = Status{
 		Active: true, Name: cfg.Name, Interface: nic.Name, DiscoveryAddress: discovery.group.String(),
 		EndpointID: "urn:uuid:" + uuid.NewSHA1(uuid.NameSpaceURL, []byte("streamanalyzer:onvif:"+cfg.BindIP+"/"+cfg.Name)).String(),
-		DeviceURL:  origin + devicePath, MediaURL: origin + mediaPath, StreamURL: "rtsp://" + video.server.RTSPAddress + streamPath,
+		DeviceURL:  origin + devicePath, MediaURL: origin + mediaPath, RTSPDigest: cfg.RTSPUsername != "",
 	}
+	for _, profile := range profiles {
+		profile.StreamURL = "rtsp://" + video.server.RTSPAddress + profile.path
+		c.status.Profiles = append(c.status.Profiles, profile.Profile)
+	}
+	c.status.StreamURL = profiles[0].StreamURL
 	mux := http.NewServeMux()
 	mux.HandleFunc(devicePath, c.serveSOAP(deviceNS, c.deviceReply))
 	mux.HandleFunc(mediaPath, c.serveSOAP(mediaNS, c.mediaReply))
@@ -184,11 +220,13 @@ func (m *Manager) Start(cfg Config) (Status, error) {
 		Handler: mux, ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second, IdleTimeout: 15 * time.Second,
 		MaxHeaderBytes: 16 << 10,
 	}
-	ctx, cancel := context.WithCancel(context.Background())
+	runCtx, cancel := context.WithCancel(context.Background())
 	c.cancel = cancel
 	c.workers.Go(func() { _ = c.http.Serve(c.listener) })
 	c.workers.Go(func() { c.discovery.serve(c) })
-	c.workers.Go(func() { c.video.play(ctx) })
+	for _, track := range c.video.tracks {
+		c.workers.Go(func() { track.play(runCtx) })
+	}
 	m.camera = c
 	return c.snapshot(), nil
 }
