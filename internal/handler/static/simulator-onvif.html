@@ -100,6 +100,7 @@
             <div><dt>PTZ 服务</dt><dd id="ptz-url"></dd></div>
             <div><dt>事件服务</dt><dd id="event-url"></dd></div>
             <div><dt>PullPoint</dt><dd id="event-metrics"></dd></div>
+            <div id="event-recovery" hidden><dt>事件服务恢复</dt><dd id="event-recovery-status"></dd></div>
             <div><dt>JPEG 快照</dt><dd><a id="main-snapshot" target="_blank" rel="noopener noreferrer">主码流</a> · <a id="sub-snapshot" target="_blank" rel="noopener noreferrer">子码流</a></dd></div>
             <div><dt>SOAP 鉴权</dt><dd id="soap-auth"></dd></div>
             <div><dt>RTSP 鉴权</dt><dd id="rtsp-auth"></dd></div>
@@ -117,7 +118,7 @@
               <button id="missing-motion" class="secondary" type="button">发送无录像的移动告警</button>
             </div>
           </section>
-          <div id="motion-control" class="actions" hidden><button id="motion" class="secondary" type="button" disabled>触发移动侦测</button></div>
+          <div id="motion-control" class="actions" hidden><button id="motion" class="secondary" type="button" disabled>触发移动侦测</button><button id="restart-events" class="secondary" type="button" disabled>重启事件服务</button></div>
           <p id="snapshot-hint" class="muted field-hint" hidden>发出 PTZ 命令后，重新打开或刷新对应的快照查看画面变化。</p>
         </div>
       </section>

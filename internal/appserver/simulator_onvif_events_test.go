@@ -4,10 +4,17 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"streamanalyzer/internal/simulator/onvif"
+
+	"github.com/bluenviron/gortsplib/v5"
+	"github.com/bluenviron/gortsplib/v5/pkg/base"
+	"github.com/bluenviron/gortsplib/v5/pkg/description"
+	"github.com/bluenviron/gortsplib/v5/pkg/format"
+	"github.com/pion/rtp"
 )
 
 const simulatorEventNamespace = "http://www.onvif.org/ver10/events/wsdl"
@@ -125,4 +132,75 @@ func onvifEventText(body, tag string) string {
 	_, value, _ := strings.Cut(body, "<"+tag+">")
 	text, _, _ := strings.Cut(value, "</"+tag+">")
 	return text
+}
+
+func TestONVIFRestartEventsKeepsRTSPSession(t *testing.T) {
+	server := testDiagnosticServer(t, t.TempDir())
+	start := decodeDiagnostic[onvif.Status](t, diagnosticRequest(t, server, "POST", onvifAPI+"/start", http.StatusCreated, []byte(`{}`)))
+	httpClient := &http.Client{Timeout: 2 * time.Second}
+	u, err := base.ParseURL(start.StreamURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	protocol := gortsplib.ProtocolTCP
+	rtsp := &gortsplib.Client{Scheme: u.Scheme, Host: u.Host, Protocol: &protocol}
+	if err := rtsp.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer rtsp.Close()
+	desc, _, err := rtsp.Describe(u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rtsp.SetupAll(desc.BaseURL, desc.Medias); err != nil {
+		t.Fatal(err)
+	}
+	var packets atomic.Uint64
+	rtsp.OnPacketRTPAny(func(_ *description.Media, _ format.Format, _ *rtp.Packet) { packets.Add(1) })
+	if _, err := rtsp.Play(nil); err != nil {
+		t.Fatal(err)
+	}
+	subscribe := func() string {
+		t.Helper()
+		body := queryONVIF(t, httpClient, start.EventURL, simulatorEventNamespace, "CreatePullPointSubscription", "", 200)
+		return onvifEventText(body, "wsa:Address")
+	}
+	pull := func(addr string, status int) string {
+		t.Helper()
+		return queryONVIF(t, httpClient, addr, simulatorEventNamespace, "PullMessages",
+			"<o:Timeout>PT0S</o:Timeout><o:MessageLimit>8</o:MessageLimit>", status)
+	}
+	old := subscribe()
+	pull(old, 200)
+	before := packets.Load()
+	for deadline := time.Now().Add(time.Second); before == 0 && time.Now().Before(deadline); before = packets.Load() {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if before == 0 {
+		t.Fatal("no RTP before event restart")
+	}
+	reset := decodeDiagnostic[onvif.Status](t, diagnosticRequest(t, server, "POST", onvifAPI+"/restart-events", http.StatusOK, nil))
+	if reset.Events.Recovery == nil || reset.Events.Recovery.Invalidated != 1 || reset.Events.Subscriptions != 0 {
+		t.Fatalf("unexpected reset: %+v", reset.Events)
+	}
+	if body := pull(old, 400); !strings.Contains(body, "ResourceUnknownFault") {
+		t.Fatal(body)
+	}
+	current := subscribe()
+	if current == old || current == "" {
+		t.Fatal("missing fresh subscription")
+	}
+	diagnosticRequest(t, server, "POST", onvifAPI+"/motion", http.StatusOK, []byte(`{"active":true}`))
+	if body := pull(current, 200); !strings.Contains(body, `PropertyOperation="Changed"`) {
+		t.Fatal(body)
+	}
+	for deadline := time.Now().Add(time.Second); packets.Load() <= before && time.Now().Before(deadline); {
+		time.Sleep(10 * time.Millisecond)
+	}
+	result := decodeDiagnostic[onvif.Status](t, diagnosticRequest(t, server, "GET", onvifAPI, http.StatusOK, nil))
+	recovery := result.Events.Recovery
+	if packets.Load() <= before || result.RTSPPlays != 1 || recovery.OldFaults != 1 ||
+		recovery.SubscribedAt.Before(recovery.RestartedAt) || recovery.FirstMotionAt.Before(recovery.SubscribedAt) {
+		t.Fatalf("missing recovery evidence: packets=%d RTSP plays=%d recovery=%+v", packets.Load(), result.RTSPPlays, recovery)
+	}
 }
