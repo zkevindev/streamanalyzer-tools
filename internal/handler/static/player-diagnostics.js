@@ -540,7 +540,7 @@
             const Hls = globalThis.Hls;
             const recovery = this.options.hlsRecovery && Hls?.isSupported();
             const abr = this.options.hlsABR && Hls?.isSupported();
-            if (!recovery && !abr && (video.canPlayType('application/vnd.apple.mpegurl') || video.canPlayType('application/x-mpegURL'))) {
+            if (!recovery && !abr && !this.options.hlsLowLatency && (video.canPlayType('application/vnd.apple.mpegurl') || video.canPlayType('application/x-mpegURL'))) {
                 this.engine = 'native-hls';
                 this.releaseMedia = () => {
                     video.pause();
@@ -570,8 +570,13 @@
                     },
                 }};
             }
+            if (this.options.hlsLowLatency) config.lowLatencyMode = true;
             const player = new Hls(config);
-            this.releaseMedia = () => player.destroy();
+            this.hlsPlayer = player;
+            this.releaseMedia = () => {
+                this.hlsPlayer = null;
+                player.destroy();
+            };
             if (abr) {
                 player.on(Hls.Events.MANIFEST_PARSED, () => {
                     this.options.onQualities?.(player.levels, level => { player.currentLevel = level; });
@@ -592,6 +597,11 @@
                 this.play();
             });
             player.attachMedia(video);
+        }
+
+        hlsLatencyMS() {
+            const latency = this.hlsPlayer?.latency;
+            return Number.isFinite(latency) && latency > 0 ? Math.round(latency * 1000) : null;
         }
 
         attachMPEGTS(url, transport) {

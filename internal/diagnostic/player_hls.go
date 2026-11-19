@@ -81,7 +81,9 @@ func (h *playerHLS) serve(w http.ResponseWriter, r *http.Request, resource strin
 		http.NotFound(w, r)
 		return
 	}
-	evidence := h.network.beginRendition(resource, entry.kind, r.Method, entry.rendition)
+	query := r.URL.Query()
+	_, directiveErr := strconv.ParseUint(query.Get("_HLS_msn"), 10, 63)
+	evidence := h.network.beginRendition(resource, entry.kind, r.Method, entry.rendition, entry.playlist && directiveErr == nil)
 	outcome := "incomplete"
 	defer func() { h.network.finish(evidence, outcome) }()
 	select {
@@ -101,7 +103,7 @@ func (h *playerHLS) serve(w http.ResponseWriter, r *http.Request, resource strin
 	upstream.Header.Set("User-Agent", hlsorigin.PlayerUserAgent)
 	if entry.playlist {
 		upstream.Header.Set("Accept", "application/vnd.apple.mpegurl, application/x-mpegURL, */*")
-		appendPlayerReloadQuery(upstream.URL, r.URL.Query())
+		appendPlayerReloadQuery(upstream.URL, query)
 	} else if value := r.Header.Get("Range"); strings.HasPrefix(value, "bytes=") && len(value) <= 64 && !strings.Contains(value, ",") {
 		upstream.Header.Set("Range", value)
 	}
@@ -314,6 +316,8 @@ func (h *playerHLS) rewriteRendition(data []byte, base *url.URL, token, renditio
 					kind = "init"
 				} else if tag == "#EXT-X-KEY" || tag == "#EXT-X-SESSION-KEY" {
 					kind = "key"
+				} else if tag == "#EXT-X-PART" || tag == "#EXT-X-PRELOAD-HINT" && playerAttribute(attrs, "TYPE") == "PART" {
+					kind = "part"
 				} else if tag == "#EXT-X-SESSION-DATA" {
 					kind = "auxiliary"
 				}

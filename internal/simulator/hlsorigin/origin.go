@@ -33,6 +33,7 @@ type Config struct {
 }
 
 type Status struct {
+	LowLatency *LowLatencyStatus `json:"low_latency,omitempty"`
 	Config
 	LiveFault       *LiveFaultObservation `json:"live_fault,omitempty"`
 	Frozen          bool                  `json:"frozen"`
@@ -57,7 +58,7 @@ type Manager struct {
 
 func (m *Manager) Start(cfg Config) (Status, error) {
 	switch cfg.Mode {
-	case "normal", "live", "abr", "audio":
+	case "normal", "live", "abr", "audio", "ll":
 		cfg.Segment, cfg.DelayMS = 0, 0
 	case "delay", "not_found":
 		if cfg.Segment < 1 || cfg.Segment > SegmentCount {
@@ -83,6 +84,9 @@ func (m *Manager) Start(cfg Config) (Status, error) {
 	id := uuid.NewString()
 	m.ctx, m.cancel = context.WithCancel(context.Background())
 	m.status = Status{Config: cfg, Active: true, ID: id, Playlist: "/api/simulators/hls/stream/" + id + "/playlist.m3u8"}
+	if cfg.Mode == "ll" {
+		m.status.LowLatency = &LowLatencyStatus{}
+	}
 	m.live = liveClock{started: time.Now(), last: liveWindow}
 	return m.snapshot(), nil
 }
@@ -96,6 +100,18 @@ func (m *Manager) Status() Status {
 func (m *Manager) snapshot() Status {
 	result := m.status
 	result.PlaylistSamples = slices.Clone(result.PlaylistSamples)
+	if result.LowLatency != nil {
+		low := *result.LowLatency
+		if low.Fault != nil {
+			fault := *low.Fault
+			low.Fault = &fault
+		}
+		if result.Active {
+			low.setEdge(llPublished(m.live.started, time.Now()))
+		}
+		result.MediaSequence = low.NextSequence - liveWindow
+		result.LowLatency = &low
+	}
 	if result.Mode == "live" || result.Mode == "abr" || result.Mode == "audio" {
 		result.Frozen = m.live.frozen
 		last := m.live.sequence(time.Now())
@@ -111,6 +127,9 @@ func (m *Manager) snapshot() Status {
 
 func (m *Manager) stopLocked() Status {
 	if m.status.Active {
+		if m.status.LowLatency != nil {
+			m.status.LowLatency.setEdge(llPublished(m.live.started, time.Now()))
+		}
 		if (m.status.Mode == "live" || m.status.Mode == "abr" || m.status.Mode == "audio") && !m.live.frozen {
 			m.live.last = m.live.sequence(time.Now())
 			m.live.frozen = true
@@ -139,6 +158,10 @@ func (m *Manager) Serve(w http.ResponseWriter, r *http.Request, id, name string)
 	if !m.status.Active || id != m.status.ID {
 		m.mu.Unlock()
 		http.NotFound(w, r)
+		return
+	}
+	if m.status.Mode == "ll" {
+		m.serveLowLatency(w, r, name)
 		return
 	}
 	if m.status.Mode == "abr" || m.status.Mode == "audio" {

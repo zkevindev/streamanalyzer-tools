@@ -47,7 +47,7 @@ func playerRequestPriority(request PlayerNetworkRequest) int64 {
 }
 
 func playerRequestFindingCode(request PlayerNetworkRequest) string {
-	if request.Method != "GET" || (request.Kind != "media" && request.Kind != "init" && request.Kind != "key") {
+	if request.Method != "GET" || (request.Kind != "media" && request.Kind != "part" && request.Kind != "init" && request.Kind != "key") {
 		return ""
 	}
 	if request.Outcome == "http_error" || request.Outcome == "transport_error" || request.Outcome == "timeout" {
