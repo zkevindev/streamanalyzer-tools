@@ -11,7 +11,8 @@ import (
 )
 
 //go:generate sh generate-abr.sh
-//go:embed abrmedia/*/*
+//go:generate sh generate-av.sh
+//go:embed abrmedia/*/* avmedia/*/*
 var abrMedia embed.FS
 
 const abrSegments = 6
@@ -24,6 +25,21 @@ low.m3u8
 #EXT-X-STREAM-INF:BANDWIDTH=250000,AVERAGE-BANDWIDTH=190000,RESOLUTION=320x180,FRAME-RATE=15.000,CODECS="avc1.42c01e,mp4a.40.2"
 high.m3u8
 `)
+
+var audioMaster = []byte(`#EXTM3U
+#EXT-X-VERSION:7
+#EXT-X-INDEPENDENT-SEGMENTS
+#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio",NAME="Test tone",DEFAULT=YES,AUTOSELECT=YES,URI="audio.m3u8"
+#EXT-X-STREAM-INF:BANDWIDTH=270000,RESOLUTION=320x180,FRAME-RATE=15.000,CODECS="avc1.42c01e,mp4a.40.2",AUDIO="audio"
+video.m3u8
+`)
+
+func fragmentedVariant(variant string, separateAudio bool) bool {
+	if separateAudio {
+		return variant == "audio" || variant == "video"
+	}
+	return variant == "low" || variant == "high"
+}
 
 func abrEpoch(seq uint64) uint64 { return (seq - 1) / abrSegments }
 
@@ -44,52 +60,69 @@ func abrPlaylist(variant string, last uint64) []byte {
 	return out.Bytes()
 }
 
-func abrResource(name string, last uint64) (file, contentType string) {
+func fragmentedResource(name string, last uint64, separateAudio bool) (file, contentType string, segment uint64) {
 	stem, extension, ok := strings.Cut(name, ".")
 	if !ok {
-		return "", ""
+		return "", "", 0
 	}
 	init := strings.HasPrefix(stem, "init-")
 	variant, number, ok := strings.Cut(strings.TrimPrefix(stem, "init-"), "-")
-	if !ok || variant != "low" && variant != "high" {
-		return "", ""
+	if !ok || !fragmentedVariant(variant, separateAudio) {
+		return "", "", 0
 	}
 	seq, err := strconv.ParseUint(number, 10, 64)
 	if err != nil || strconv.FormatUint(seq, 10) != number {
-		return "", ""
+		return "", "", 0
 	}
 	first := last - min(last-1, 2*liveWindow-1)
+	root, mediaType := "abrmedia", "video"
+	if separateAudio {
+		root = "avmedia"
+		if variant == "audio" {
+			mediaType = "audio"
+		}
+	}
 	if init && extension == "mp4" && seq >= abrEpoch(first) && seq <= abrEpoch(last) {
-		return "abrmedia/" + variant + "/init.mp4", "video/mp4"
+		return root + "/" + variant + "/init.mp4", mediaType + "/mp4", 0
 	}
 	if !init && extension == "m4s" && seq >= first && seq <= last {
-		return fmt.Sprintf("abrmedia/%s/seg-%02d.m4s", variant, (seq-1)%abrSegments+1), "video/iso.segment"
+		return fmt.Sprintf("%s/%s/seg-%02d.m4s", root, variant, (seq-1)%abrSegments+1), mediaType + "/iso.segment", seq
 	}
-	return "", ""
+	return "", "", 0
 }
 
 // The origin mutex is held while we determine the live window and evidence.
-func (m *Manager) serveABR(w http.ResponseWriter, r *http.Request, name string) {
+func (m *Manager) serveFragmented(w http.ResponseWriter, r *http.Request, name string) {
 	now := time.Now()
 	last := m.live.sequence(now)
-	var file, kind string
+	separateAudio := m.status.Mode == "audio"
+	var file, kind, fault string
 	var data []byte
-	switch name {
-	case "playlist.m3u8":
+	variant, playlist := strings.CutSuffix(name, ".m3u8")
+	switch {
+	case name == "playlist.m3u8":
 		kind, data = "application/vnd.apple.mpegurl", abrMaster
-	case "low.m3u8", "high.m3u8":
+		if separateAudio {
+			data = audioMaster
+		}
+	case playlist && fragmentedVariant(variant, separateAudio):
 		if r.Method == http.MethodGet {
 			m.recordPlaylist(now, last-liveWindow+1)
 		}
-		kind, data = "application/vnd.apple.mpegurl", abrPlaylist(strings.TrimSuffix(name, ".m3u8"), last)
+		kind, data = "application/vnd.apple.mpegurl", abrPlaylist(variant, last)
 	default:
-		file, kind = abrResource(name, last)
-		if r.Method == http.MethodGet && kind == "video/iso.segment" {
+		var segment uint64
+		file, kind, segment = fragmentedResource(name, last, separateAudio)
+		if r.Method == http.MethodGet && segment != 0 {
 			m.status.SegmentRequests++
+			if separateAudio && strings.HasPrefix(name, "audio-") {
+				fault = m.checkLiveFault(r, segment, now)
+			}
 		}
 	}
 	m.mu.Unlock()
-	if kind == "" {
+	w.Header().Set("Cache-Control", "no-store")
+	if kind == "" || fault == "not_found" {
 		http.NotFound(w, r)
 		return
 	}
@@ -102,6 +135,9 @@ func (m *Manager) serveABR(w http.ResponseWriter, r *http.Request, name string) 
 		}
 	}
 	w.Header().Set("Content-Type", kind)
-	w.Header().Set("Cache-Control", "no-store")
+	if fault == "truncate" {
+		serveTruncatedSegment(w, data)
+		return
+	}
 	http.ServeContent(w, r, name, time.Time{}, bytes.NewReader(data))
 }

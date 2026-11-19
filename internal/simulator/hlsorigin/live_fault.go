@@ -17,11 +17,12 @@ type LiveFaultConfig struct {
 
 type LiveFaultObservation struct {
 	LiveFaultConfig
-	ArmedAt  time.Time  `json:"armed_at"`
-	HitAt    *time.Time `json:"hit_at,omitempty"`
-	RetryAt  *time.Time `json:"retry_at,omitempty"`
-	Attempts int        `json:"attempts"`
-	Expired  bool       `json:"expired"`
+	Rendition string     `json:"rendition,omitempty"`
+	ArmedAt   time.Time  `json:"armed_at"`
+	HitAt     *time.Time `json:"hit_at,omitempty"`
+	RetryAt   *time.Time `json:"retry_at,omitempty"`
+	Attempts  int        `json:"attempts"`
+	Expired   bool       `json:"expired"`
 }
 
 func (m *Manager) ArmLiveFault(cfg LiveFaultConfig) (Status, error) {
@@ -37,7 +38,7 @@ func (m *Manager) ArmLiveFault(cfg LiveFaultConfig) (Status, error) {
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if !m.status.Active || m.status.Mode != "live" {
+	if !m.status.Active || (m.status.Mode != "live" && m.status.Mode != "audio") {
 		return Status{}, ErrLiveUnavailable
 	}
 	now := time.Now()
@@ -52,6 +53,9 @@ func (m *Manager) ArmLiveFault(cfg LiveFaultConfig) (Status, error) {
 		return Status{}, ErrFaultPending
 	}
 	m.status.LiveFault = &LiveFaultObservation{LiveFaultConfig: cfg, ArmedAt: now}
+	if m.status.Mode == "audio" {
+		m.status.LiveFault.Rendition = "audio"
+	}
 	return m.snapshot(), nil
 }
 

@@ -27,6 +27,7 @@ type PlayerNetworkRequest struct {
 	Number           int                `json:"number"`
 	ResourceID       string             `json:"resource_id"`
 	Kind             string             `json:"kind"`
+	Rendition        string             `json:"rendition,omitempty"`
 	Method           string             `json:"method"`
 	StartMS          int64              `json:"start_ms"`
 	HeaderMS         *int64             `json:"header_ms,omitempty"`
@@ -88,6 +89,10 @@ func (n *playerNetwork) offset() int64 {
 }
 
 func (n *playerNetwork) begin(resource, kind, method string) *playerNetworkEntry {
+	return n.beginRendition(resource, kind, method, "")
+}
+
+func (n *playerNetwork) beginRendition(resource, kind, method, rendition string) *playerNetworkEntry {
 	n.mu.Lock()
 	defer n.mu.Unlock()
 	if n.frozen || n.stopped {
@@ -97,7 +102,7 @@ func (n *playerNetwork) begin(resource, kind, method string) *playerNetworkEntry
 		n.dropped = min(1_000_000_000, n.dropped+1)
 		return nil
 	}
-	e := &playerNetworkEntry{request: PlayerNetworkRequest{Number: len(n.entries) + 1, ResourceID: resource, Kind: kind, Method: method, StartMS: n.offset(), Outcome: "incomplete"}}
+	e := &playerNetworkEntry{request: PlayerNetworkRequest{Number: len(n.entries) + 1, ResourceID: resource, Kind: kind, Rendition: rendition, Method: method, StartMS: n.offset(), Outcome: "incomplete"}}
 	n.entries = append(n.entries, e)
 	return e
 }
@@ -272,7 +277,7 @@ func validatePlayerNetwork(report *PlayerNetworkReport, player *PlayerReport, pr
 	}
 	previous := int64(-60000)
 	for index, request := range report.Requests {
-		if request.Number != index+1 || !playerNetworkResourcePattern.MatchString(request.ResourceID) || (request.Method != "GET" && request.Method != "HEAD") || request.StartMS < previous || request.StartMS < -60000 || request.EndMS < request.StartMS || request.EndMS > maxPlayerNetworkOffsetMS || request.Bytes < 0 || request.Bytes > hlsSegmentLimit || (request.HTTPStatus != 0 && (request.HTTPStatus < 100 || request.HTTPStatus > 599)) {
+		if (request.Rendition != "" && request.Rendition != "audio") || request.Number != index+1 || !playerNetworkResourcePattern.MatchString(request.ResourceID) || (request.Method != "GET" && request.Method != "HEAD") || request.StartMS < previous || request.StartMS < -60000 || request.EndMS < request.StartMS || request.EndMS > maxPlayerNetworkOffsetMS || request.Bytes < 0 || request.Bytes > hlsSegmentLimit || (request.HTTPStatus != 0 && (request.HTTPStatus < 100 || request.HTTPStatus > 599)) {
 			return ErrInvalid
 		}
 		previous = request.StartMS

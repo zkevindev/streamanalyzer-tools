@@ -2,7 +2,7 @@
 
 const api = '/api/simulators/hls';
 const el = id => document.getElementById(id);
-const modes = {normal: '正常点播', live: '滚动直播', abr: '双码率 fMP4 直播', delay: '分片延迟', not_found: '分片返回 404'};
+const modes = {normal: '正常点播', live: '滚动直播', abr: '双码率 fMP4 直播', audio: '独立音轨分片故障', delay: '分片延迟', not_found: '分片返回 404'};
 let current;
 let busy = false;
 let generation = 0;
@@ -35,20 +35,23 @@ function render(status) {
   if (status.active) el('open-workbench').href = '/diagnostics?hls_simulator=' + encodeURIComponent(status.id);
   const live = status.mode === 'live';
   const abr = status.mode === 'abr';
+  const audio = status.mode === 'audio';
+  const canInject = live || audio;
+  if (status.active && audio) el('open-workbench').href += '&hls_recovery=1';
   if (status.active && abr) el('open-workbench').href += '&hls_abr=1';
   el('open-recovery').hidden = !live;
   if (status.active && live) el('open-recovery').href = el('open-workbench').href + '&hls_recovery=1';
   el('freeze').hidden = !live;
-  el('live-fault-form').hidden = !live || !status.active;
+  el('live-fault-form').hidden = !canInject || !status.active;
   const fault = status.live_fault;
   const faultState = !fault ? '' : fault.retry_at ? '已收到重试' : fault.expired ? '观测已结束' : fault.hit_at ? '已注入，等待重试' : '等待目标分片请求';
   el('live-fault-status').hidden = !fault;
-  el('live-fault-status').textContent = fault ? '媒体序号 ' + fault.sequence + ' · ' + faultState + ' · 匹配请求 ' + fault.attempts + ' 次' : '';
+  el('live-fault-status').textContent = fault ? (fault.rendition === 'audio' ? '独立音轨 · ' : '') + '媒体序号 ' + fault.sequence + ' · ' + faultState + ' · 匹配请求 ' + fault.attempts + ' 次' : '';
   el('freeze').textContent = status.frozen ? '恢复列表更新' : '冻结播放列表';
-  el('live-summary').hidden = !live && !abr;
-  el('live-summary').textContent = '列表起始序号 ' + status.media_sequence + (status.frozen ? ' · 已冻结' : abr ? ' · 双码率初始化段独立 · 每 6 个分片标记不连续' : ' · 更新中');
+  el('live-summary').hidden = !canInject && !abr;
+  el('live-summary').textContent = '列表起始序号 ' + status.media_sequence + (status.frozen ? ' · 已冻结' : abr ? ' · 双码率初始化段独立 · 每 6 个分片标记不连续' : audio ? ' · 故障仅作用于独立音轨' : ' · 更新中');
   const samples = status.playlist_samples || [];
-  el('playlist-samples').hidden = (!live && !abr) || samples.length === 0;
+  el('playlist-samples').hidden = (!canInject && !abr) || samples.length === 0;
   el('playlist-samples').replaceChildren(...samples.slice(-8).reverse().map(sample => {
     const row = document.createElement('li');
     row.className = 'event-row';
