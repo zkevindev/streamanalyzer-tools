@@ -30,6 +30,10 @@ var (
 )
 
 type Config struct {
+	SOAPUsername string `json:"soap_username,omitempty"`
+	SOAPPassword string `json:"soap_password,omitempty"`
+	ClockOffset  int    `json:"clock_offset_seconds,omitempty"`
+	SilentUDP    bool   `json:"silent_udp,omitempty"`
 	RTSPUsername string `json:"rtsp_username,omitempty"`
 	RTSPPassword string `json:"rtsp_password,omitempty"`
 	BindIP       string `json:"bind_ip"`
@@ -85,6 +89,14 @@ func (c *Config) normalize() (net.IP, *net.Interface, error) {
 	if c.HTTPPort != 0 && c.HTTPPort == c.RTSPPort {
 		return nil, nil, fmt.Errorf("%w：ONVIF HTTP 与 RTSP 需要不同的 TCP 端口", ErrConfig)
 	}
+	c.SOAPUsername = strings.TrimSpace(c.SOAPUsername)
+	if (c.SOAPUsername == "") != (c.SOAPPassword == "") || len(c.SOAPUsername) > 128 || len(c.SOAPPassword) > 256 ||
+		strings.ContainsAny(c.SOAPUsername+c.SOAPPassword, "\r\n\x00") {
+		return nil, nil, fmt.Errorf("%w，请同时填写有效的 SOAP UsernameToken 用户名和密码", ErrConfig)
+	}
+	if c.ClockOffset < -3600 || c.ClockOffset > 3600 {
+		return nil, nil, fmt.Errorf("%w，设备时钟偏差需在 ±3600 秒以内", ErrConfig)
+	}
 	c.RTSPUsername = strings.TrimSpace(c.RTSPUsername)
 	if (c.RTSPUsername == "") != (c.RTSPPassword == "") || len(c.RTSPUsername) > 128 || len(c.RTSPPassword) > 256 ||
 		strings.ContainsAny(c.RTSPUsername+c.RTSPPassword, "\r\n\x00") {
@@ -112,36 +124,45 @@ func (c *Config) normalize() (net.IP, *net.Interface, error) {
 }
 
 type Status struct {
-	Profiles         []Profile `json:"profiles,omitempty"`
-	RTSPDigest       bool      `json:"rtsp_digest"`
-	Active           bool      `json:"active"`
-	Name             string    `json:"name,omitempty"`
-	Interface        string    `json:"interface,omitempty"`
-	DiscoveryAddress string    `json:"discovery_address,omitempty"`
-	EndpointID       string    `json:"endpoint_id,omitempty"`
-	DeviceURL        string    `json:"device_url,omitempty"`
-	PTZURL           string    `json:"ptz_url,omitempty"`
-	MediaURL         string    `json:"media_url,omitempty"`
-	StreamURL        string    `json:"stream_url,omitempty"`
-	DiscoveryReplies uint64    `json:"discovery_replies"`
-	SOAPRequests     uint64    `json:"soap_requests"`
-	RTSPPlays        uint64    `json:"rtsp_plays"`
+	SOAPDigest        bool      `json:"soap_digest"`
+	SOAPAuthRejected  uint64    `json:"soap_auth_rejected"`
+	SOAPClockRejected uint64    `json:"soap_clock_rejected"`
+	ClockOffset       int       `json:"clock_offset_seconds"`
+	SilentUDP         bool      `json:"silent_udp"`
+	UDPPlays          uint64    `json:"udp_plays"`
+	TCPPlays          uint64    `json:"tcp_plays"`
+	Profiles          []Profile `json:"profiles,omitempty"`
+	RTSPDigest        bool      `json:"rtsp_digest"`
+	Active            bool      `json:"active"`
+	Name              string    `json:"name,omitempty"`
+	Interface         string    `json:"interface,omitempty"`
+	DiscoveryAddress  string    `json:"discovery_address,omitempty"`
+	EndpointID        string    `json:"endpoint_id,omitempty"`
+	DeviceURL         string    `json:"device_url,omitempty"`
+	PTZURL            string    `json:"ptz_url,omitempty"`
+	MediaURL          string    `json:"media_url,omitempty"`
+	StreamURL         string    `json:"stream_url,omitempty"`
+	DiscoveryReplies  uint64    `json:"discovery_replies"`
+	SOAPRequests      uint64    `json:"soap_requests"`
+	RTSPPlays         uint64    `json:"rtsp_plays"`
 }
 
 type camera struct {
-	ptzMu     sync.Mutex
-	profiles  []*profileVideo
-	status    Status
-	listener  net.Listener
-	http      *http.Server
-	discovery *discoveryServer
-	video     *videoServer
-	cancel    context.CancelFunc
-	workers   sync.WaitGroup
+	auth          soapAuth
+	authRejected  atomic.Uint64
+	clockRejected atomic.Uint64
+	ptzMu         sync.Mutex
+	profiles      []*profileVideo
+	status        Status
+	listener      net.Listener
+	http          *http.Server
+	discovery     *discoveryServer
+	video         *videoServer
+	cancel        context.CancelFunc
+	workers       sync.WaitGroup
 
 	discoveryReplies atomic.Uint64
 	soapRequests     atomic.Uint64
-	rtspPlays        atomic.Uint64
 }
 
 type Manager struct {
@@ -197,18 +218,21 @@ func (m *Manager) StartFiles(ctx context.Context, cfg Config, files [2]LocalVide
 		return Status{}, fmt.Errorf("无法监听 WS-Discovery：%w", err)
 	}
 	c := &camera{listener: listener, discovery: discovery, profiles: profiles}
-	video, err := startVideo(ip, cfg, profiles, &c.rtspPlays)
+	video, err := startVideo(ip, cfg, profiles)
 	if err != nil {
 		discovery.close()
 		listener.Close()
 		return Status{}, fmt.Errorf("无法启动 RTSP：%w", err)
 	}
 	c.video = video
+	if cfg.SOAPUsername != "" {
+		c.auth = soapAuth{username: cfg.SOAPUsername, password: cfg.SOAPPassword, nonces: make(map[string]time.Time)}
+	}
 	discovery.instance = max(uint32(time.Now().Unix()), m.lastDiscoveryInstance+1)
 	m.lastDiscoveryInstance = discovery.instance
 	origin := "http://" + listener.Addr().String()
 	c.status = Status{
-		Active: true, Name: cfg.Name, Interface: nic.Name, DiscoveryAddress: discovery.group.String(),
+		Active: true, SOAPDigest: cfg.SOAPUsername != "", ClockOffset: cfg.ClockOffset, SilentUDP: cfg.SilentUDP, Name: cfg.Name, Interface: nic.Name, DiscoveryAddress: discovery.group.String(),
 		EndpointID: "urn:uuid:" + uuid.NewSHA1(uuid.NameSpaceURL, []byte("streamanalyzer:onvif:"+cfg.BindIP+"/"+cfg.Name)).String(),
 		DeviceURL:  origin + devicePath, MediaURL: origin + mediaPath, PTZURL: origin + ptzPath, RTSPDigest: cfg.RTSPUsername != "",
 	}
@@ -242,7 +266,9 @@ func (c *camera) snapshot() Status {
 	status := c.status
 	status.DiscoveryReplies = c.discoveryReplies.Load()
 	status.SOAPRequests = c.soapRequests.Load()
-	status.RTSPPlays = c.rtspPlays.Load()
+	status.SOAPAuthRejected, status.SOAPClockRejected = c.authRejected.Load(), c.clockRejected.Load()
+	status.UDPPlays, status.TCPPlays = c.video.udpPlays.Load(), c.video.tcpPlays.Load()
+	status.RTSPPlays = status.UDPPlays + status.TCPPlays
 	return status
 }
 

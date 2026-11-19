@@ -27,6 +27,7 @@ type elementText struct {
 }
 
 type soapHeader struct {
+	Security  soapSecurity `xml:"http://docs.oasis-open.org/wss/2004/01/oasis-200401-wss-wssecurity-secext-1.0.xsd Security"`
 	MessageID elementText
 	Action    elementText
 }
@@ -173,13 +174,28 @@ func (c *camera) serveSOAP(namespace string, reply func(operation) (string, *soa
 		c.soapRequests.Add(1)
 		op := request.Body.Operations[0]
 		content, fault := "", unsupportedAction()
-		if op.XMLName.Space == namespace {
+		status := http.StatusOK
+		if c.status.SOAPDigest && !(namespace == deviceNS && op.XMLName.Space == deviceNS && op.XMLName.Local == "GetSystemDateAndTime") {
+			if ok, clock := c.auth.verify(request.Header.Security.Token, c.clock()); !ok {
+				detail := "UsernameToken PasswordDigest required"
+				c.authRejected.Add(1)
+				if clock {
+					detail = "UsernameToken Created is outside the device clock window"
+					c.clockRejected.Add(1)
+				}
+				fault = &soapFault{code: "NotAuthorized", message: detail}
+				status = http.StatusUnauthorized
+			}
+		}
+		if status == http.StatusOK && op.XMLName.Space == namespace {
 			content, fault = reply(op)
 		}
 		action := namespace + "/" + op.XMLName.Local + "Response"
-		status := http.StatusOK
 		if fault != nil {
-			content, status = faultBody(fault), http.StatusBadRequest
+			content = faultBody(fault)
+			if status == http.StatusOK {
+				status = http.StatusBadRequest
+			}
 			// WS-Addressing uses a dedicated fault action.
 			action = ""
 		} else {

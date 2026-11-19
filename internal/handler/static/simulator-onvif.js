@@ -43,6 +43,12 @@ function render(status) {
   el('ptz-url').textContent = status.ptz_url || '';
   el('snapshot-hint').hidden = !active;
   el('rtsp-auth').textContent = status.rtsp_digest ? 'Digest' : '无鉴权';
+  el('soap-auth').textContent = status.soap_digest ? [
+    'UsernameToken Digest', '拒绝 ' + status.soap_auth_rejected + ' 次',
+    '时钟偏差拒绝 ' + status.soap_clock_rejected + ' 次', '设备偏差 ' + status.clock_offset_seconds + ' 秒',
+  ].join(' · ') : '无鉴权';
+  el('transport-observation').textContent = 'UDP PLAY ' + status.udp_plays + ' 次 · TCP PLAY ' + status.tcp_plays + ' 次' +
+    (status.silent_udp ? ' · UDP 无 RTP' : '');
   for (const [index, endpoint, detail, snapshot] of [[0, 'rtsp-url', 'main-profile-detail', 'main-snapshot'], [1, 'rtsp-sub-url', 'sub-profile-detail', 'sub-snapshot']]) {
     const profile = status.profiles?.[index];
     el(endpoint).textContent = profile?.stream_url || '';
@@ -102,7 +108,10 @@ async function change(path, body) {
     }
     if (path === '/start-file') el('state').textContent = '正在准备视频';
     render(await request(path, options));
-    if (body) el('rtsp-password').value = '';
+    if (body) {
+      el('rtsp-password').value = '';
+      el('soap-password').value = '';
+    }
   } catch (error) {
     if (path === '/start-file') el('state').textContent = '未运行';
     notice(error.message);
@@ -117,6 +126,8 @@ form.addEventListener('submit', event => {
   const config = Object.fromEntries(new FormData(form));
   config.http_port = Number(config.http_port);
   config.rtsp_port = Number(config.rtsp_port);
+  config.clock_offset_seconds = Number(config.clock_offset_seconds);
+  config.silent_udp = el('silent-udp').checked;
   const files = [['main', el('main-video').files[0]], ['sub', el('sub-video').files[0]]].filter(([, file]) => file);
   if (!files.length) {
     void change('/start', config);
