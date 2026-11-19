@@ -29,7 +29,7 @@ function updateButtons() {
   el('start').disabled = busy || active || !loaded || !network.value;
   el('motion').disabled = el('restart-events').disabled = busy || !active;
   el('recorded-motion').disabled = el('missing-motion').disabled = busy || !active;
-  el('stop').disabled = busy || !active;
+  el('reboot').disabled = el('stop').disabled = busy || !active;
 }
 
 function render(status) {
@@ -43,6 +43,11 @@ function render(status) {
   el('rtsp-plays').textContent = status.rtsp_plays;
   el('endpoints').hidden = !active;
   el('device-url').textContent = status.device_url || '';
+  const reboot = status.reboot;
+  el('reboot-status').hidden = !reboot;
+  el('reboot-detail').textContent = reboot ? [status.endpoint_id, '旧 XAddr ' + reboot.previous_device_url,
+    '旧 RTSP ' + reboot.previous_stream_url, '发现实例 ' + reboot.previous_instance + ' → ' + reboot.instance,
+    reboot.bye_sent_at ? 'Bye 已发送' : 'Bye 发送失败', reboot.hello_sent_at ? 'Hello 已发送' : 'Hello 发送失败'].join(' · ') : '';
   el('media-url').textContent = status.media_url || '';
   el('ptz-url').textContent = status.ptz_url || '';
   el('event-url').textContent = status.event_url || '';
@@ -206,6 +211,7 @@ for (const selected of rtspFaults) {
     }
   });
 }
+el('reboot').addEventListener('click', () => { void change('/reboot', {device_url:el('device-url').textContent}); });
 el('stop').addEventListener('click', () => { void change('/stop'); });
 el('silent-udp').addEventListener('change', () => { if (el('silent-udp').checked) el('udp-source-fault').checked = false; });
 el('recorded-motion').addEventListener('click', () => { void change('/recording-motion', {recorded: true}); });

@@ -82,6 +82,47 @@ func (d *discoveryServer) serve(c *camera) {
 	}
 }
 
+func (d *discoveryServer) announce(c *camera, op string) time.Time {
+	listener := ipv4.NewPacketConn(d.listener)
+	if err := listener.SetMulticastInterface(c.nic); err != nil {
+		return time.Time{}
+	}
+	if err := listener.SetMulticastLoopback(true); err != nil {
+		return time.Time{}
+	}
+	if err := listener.SetMulticastTTL(1); err != nil {
+		return time.Time{}
+	}
+
+	// ONVIF clients use the WS-Discovery 2005 dialect for multicast.
+	header := "<a:Action>" + discoveryNS05 + "/" + op + "</a:Action><a:MessageID>urn:uuid:" +
+		uuid.NewString() + "</a:MessageID><a:To>urn:schemas-xmlsoap-org:ws:2005:04:discovery</a:To>" + d.appSequence()
+	body := "<d:" + op + ">" + c.discoveryEndpoint(op == "Hello") + "</d:" + op + ">"
+	message := soapMessage(discoveryNamespaces(addressNS04, discoveryNS05), header, body)
+	_ = d.listener.SetWriteDeadline(time.Now().Add(time.Second))
+	if _, err := listener.WriteTo([]byte(message), &ipv4.ControlMessage{Src: d.ip, IfIndex: d.interfaceIndex}, d.group); err != nil {
+		return time.Time{}
+	}
+	return time.Now()
+}
+
+func (d *discoveryServer) appSequence() string {
+	return fmt.Sprintf(`<d:AppSequence InstanceId="%d" MessageNumber="%d"/>`, d.instance, d.sequence.Add(1))
+}
+
+func (c *camera) discoveryEndpoint(metadata bool) string {
+	address := "<a:EndpointReference><a:Address>" + c.status.EndpointID + "</a:Address></a:EndpointReference>"
+	if metadata {
+		address += "<d:Types>dn:NetworkVideoTransmitter tds:Device</d:Types><d:Scopes>" + xmlText(strings.Join(c.scopes(), " ")) +
+			"</d:Scopes><d:XAddrs>" + c.status.DeviceURL + "</d:XAddrs><d:MetadataVersion>1</d:MetadataVersion>"
+	}
+	return address
+}
+
+func discoveryNamespaces(addressing, namespace string) string {
+	return ` xmlns:a="` + addressing + `" xmlns:d="` + namespace + `" xmlns:dn="` + discoveryDeviceNS + `" xmlns:tds="` + deviceNS + `"`
+}
+
 func (d *discoveryServer) match(c *camera, body []byte) string {
 	envelope, err := readEnvelope(body)
 	if err != nil {
@@ -127,14 +168,10 @@ func (d *discoveryServer) match(c *camera, body []byte) string {
 	action := version.ns + "/" + elementName + "es"
 	header := "<a:Action>" + action + "</a:Action><a:MessageID>urn:uuid:" + uuid.NewString() +
 		"</a:MessageID><a:RelatesTo>" + xmlText(id) + "</a:RelatesTo><a:To>" + version.anonymous + "</a:To>" +
-		fmt.Sprintf(`<d:AppSequence InstanceId="%d" MessageNumber="%d"/>`, d.instance, d.sequence.Add(1))
-	content := "<d:" + elementName + "es><d:" + elementName + ">" +
-		"<a:EndpointReference><a:Address>" + c.status.EndpointID + "</a:Address></a:EndpointReference>" +
-		"<d:Types>dn:NetworkVideoTransmitter tds:Device</d:Types><d:Scopes>" + xmlText(strings.Join(scopes, " ")) +
-		"</d:Scopes><d:XAddrs>" + c.status.DeviceURL + "</d:XAddrs><d:MetadataVersion>1</d:MetadataVersion>" +
+		d.appSequence()
+	content := "<d:" + elementName + "es><d:" + elementName + ">" + c.discoveryEndpoint(true) +
 		"</d:" + elementName + "></d:" + elementName + "es>"
-	namespaces := ` xmlns:a="` + version.addressing + `" xmlns:d="` + version.ns + `" xmlns:dn="` + discoveryDeviceNS + `" xmlns:tds="` + deviceNS + `"`
-	return soapMessage(namespaces, header, content)
+	return soapMessage(discoveryNamespaces(version.addressing, version.ns), header, content)
 }
 
 func supportedTypes(types elementText, operationAttrs, bodyAttrs, envelopeAttrs []xml.Attr) bool {

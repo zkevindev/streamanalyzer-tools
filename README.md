@@ -139,6 +139,8 @@ JSON 报告及 SQLite 任务索引位于数据目录下的 `diagnostics/`。基�
 
 打开「模拟器」并切换到「ONVIF」。本机联调可用默认的 127.0.0.1。供局域网客户端发现时，选择客户端可达的本机 IPv4 网卡。ONVIF HTTP 和 RTSP 端口填 0 时自动分配，启动后可在「设备状态」复制实际地址。
 
+「重启并更换端口」会从原发现实例发送 WS-Discovery Bye，关闭旧 HTTP 和 RTSP 端口，并以同一个 Endpoint UUID 和更高的发现实例编号发送 Hello。客户端可以用新的 XAddr 重新查询媒体服务及 RTSP。状态区保留旧地址和通告发送结果。
+
 - 设备响应 WS-Discovery Probe 和 Resolve，组播地址为 `239.255.255.250:3702/UDP`。
 - ONVIF Device 服务提供设备信息、Scope、服务和能力查询。Media 服务提供 Profile、视频源、编码配置、`GetStreamUri` 和 `GetSnapshotUri`。
 - PTZ 服务按 Profile 提供绝对、相对和连续移动、停止、位置查询与预置位管理。JPEG 用对应视频的首帧模拟转向与缩放，工作台可打开快照查看效果。RTSP 继续播放原视频。

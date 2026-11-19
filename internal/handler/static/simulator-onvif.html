@@ -82,6 +82,7 @@
           </fieldset>
           <div class="sim-controls">
             <button id="start" type="submit" disabled>启动 ONVIF</button>
+            <button id="reboot" class="secondary" type="button" disabled>重启并更换端口</button>
             <button id="stop" class="secondary" type="button" disabled>停止设备</button>
           </div>
           <p class="muted field-hint">主码流为 320 × 180、15 fps，子码流为 160 × 90、10 fps。本地视频由 FFmpeg 转为 H.264。</p>
@@ -100,6 +101,7 @@
           </dl>
           <dl id="endpoints" class="onvif-addresses" hidden>
             <div><dt>设备服务</dt><dd id="device-url"></dd></div>
+            <div id="reboot-status" hidden><dt>设备重启</dt><dd id="reboot-detail"></dd></div>
             <div><dt>媒体服务</dt><dd id="media-url"></dd></div>
             <div><dt>PTZ 服务</dt><dd id="ptz-url"></dd></div>
             <div><dt>事件服务</dt><dd id="event-url"></dd></div>

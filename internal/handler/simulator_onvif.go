@@ -91,6 +91,22 @@ func registerONVIFRoutes(r *gin.Engine, simulator *onvif.Manager) {
 		}
 		c.JSON(http.StatusOK, status)
 	})
+	api.POST("/reboot", func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 512)
+		var input struct {
+			DeviceURL string `json:"device_url"`
+		}
+		if err := c.ShouldBindJSON(&input); err != nil || input.DeviceURL == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "指定当前设备地址"})
+			return
+		}
+		status, err := simulator.Reboot(input.DeviceURL)
+		if err != nil {
+			respondONVIFStart(c, status, err)
+			return
+		}
+		c.JSON(http.StatusOK, status)
+	})
 	api.POST("/restart-events", func(c *gin.Context) {
 		status, err := simulator.RestartEvents()
 		if err != nil {
@@ -124,7 +140,7 @@ func respondONVIFStart(c *gin.Context, status onvif.Status, err error) {
 	if err != nil {
 		code := http.StatusServiceUnavailable
 		switch {
-		case errors.Is(err, onvif.ErrActive):
+		case errors.Is(err, onvif.ErrActive), errors.Is(err, onvif.ErrReboot):
 			code = http.StatusConflict
 		case errors.Is(err, onvif.ErrConfig):
 			code = http.StatusBadRequest
