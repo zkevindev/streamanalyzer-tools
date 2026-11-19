@@ -109,7 +109,7 @@ JSON 报告及 SQLite 任务索引位于数据目录下的 `diagnostics/`。基�
 
 - 设备响应 WS-Discovery Probe 和 Resolve，组播地址为 `239.255.255.250:3702/UDP`。
 - ONVIF Device 服务提供设备信息、Scope、服务和能力查询。Media 服务提供 Profile、视频源、编码配置和 `GetStreamUri`。
-- RTSP 提供一路无鉴权的内置 H.264 测试画面，分辨率 320 × 180，帧率 15 fps。支持 RTP/UDP 和 RTSP/TCP 交织，可把界面里的 RTSP 地址直接粘贴到 VLC 或 ffplay。
+- RTSP 主码流为 320 × 180、15 fps，子码流为 160 × 90、10 fps。两路各有 Profile 和 RTSP URI，可分别选择内置测试画面或 64 MiB 以内的本地视频。需要 FFmpeg 时，程序将本地视频转为相应的 H.264 画面并循环发送。填入用户名和密码即可对两路 RTSP 启用 Digest。支持 RTP/UDP 和 RTSP/TCP 交织。
 
 #### 通用 SIP
 

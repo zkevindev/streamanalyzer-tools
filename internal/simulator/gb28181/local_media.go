@@ -11,10 +11,11 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"time"
+
+	"streamanalyzer/internal/simulator/mediafile"
 )
 
 const MaxLocalVideoBytes = 512 << 20
@@ -50,11 +51,11 @@ func prepareLocalMedia(ctx context.Context, name, audio string, input io.Reader)
 		return nil, errors.New("请选择 G.711 A-law、G.711 μ-law 或仅视频")
 	}
 
-	ffmpeg, err := findMediaTool("ffmpeg", "")
+	ffmpeg, err := mediafile.FindTool("ffmpeg", "")
 	if err != nil {
 		return nil, err
 	}
-	ffprobe, err := findMediaTool("ffprobe", filepath.Dir(ffmpeg))
+	ffprobe, err := mediafile.FindTool("ffprobe", filepath.Dir(ffmpeg))
 	if err != nil {
 		return nil, err
 	}
@@ -86,27 +87,6 @@ func prepareLocalMedia(ctx context.Context, name, audio string, input io.Reader)
 	}
 	keep = true
 	return profile, nil
-}
-
-func findMediaTool(name, alongside string) (string, error) {
-	dirs := []string{}
-	if alongside != "" {
-		dirs = append(dirs, alongside)
-	}
-	if exe, err := os.Executable(); err == nil {
-		dirs = append(dirs, filepath.Dir(exe))
-	}
-	dirs = append(dirs, "") // Resolve through PATH.
-	if runtime.GOOS == "darwin" {
-		// LaunchServices apps typically don't inherit the terminal PATH.
-		dirs = append(dirs, "/opt/homebrew/bin", "/usr/local/bin", "/opt/local/bin")
-	}
-	for _, dir := range dirs {
-		if resolved, err := exec.LookPath(filepath.Join(dir, name)); err == nil {
-			return resolved, nil
-		}
-	}
-	return "", fmt.Errorf("未找到 %s，本地视频需要安装 FFmpeg 和 ffprobe", name)
 }
 
 func (m *localMedia) remove() {

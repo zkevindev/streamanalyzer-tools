@@ -1,17 +1,22 @@
 package appserver
 
 import (
+	"bufio"
+	"bytes"
 	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"streamanalyzer/internal/simulator/mediafile"
 	"streamanalyzer/internal/simulator/onvif"
 
 	"github.com/bluenviron/gortsplib/v5"
@@ -146,7 +151,7 @@ func TestONVIFSimulatorDiscoveryMediaAndRTSP(t *testing.T) {
 	var profile struct {
 		Body struct {
 			Response struct {
-				Profiles struct {
+				Profiles []struct {
 					Token                     string `xml:"token,attr"`
 					VideoEncoderConfiguration struct {
 						Encoding   string
@@ -159,7 +164,10 @@ func TestONVIFSimulatorDiscoveryMediaAndRTSP(t *testing.T) {
 	if err := xml.Unmarshal([]byte(profiles), &profile); err != nil {
 		t.Fatal(err)
 	}
-	advertised := profile.Body.Response.Profiles
+	if len(profile.Body.Response.Profiles) != 2 {
+		t.Fatalf("expected two profiles: %s", profiles)
+	}
+	advertised := profile.Body.Response.Profiles[0]
 	encoder := advertised.VideoEncoderConfiguration
 	if advertised.Token == "" || encoder.Encoding != "H264" || encoder.Resolution.Width != 320 || encoder.Resolution.Height != 180 {
 		t.Fatalf("wrong media profile: %s", profiles)
@@ -181,7 +189,7 @@ func TestONVIFSimulatorDiscoveryMediaAndRTSP(t *testing.T) {
 		t.Fatalf("unexpected GetStreamUri value: %s", uriBody)
 	}
 	for _, protocol := range []gortsplib.Protocol{gortsplib.ProtocolTCP, gortsplib.ProtocolUDP} {
-		t.Run(protocol.String(), func(t *testing.T) { receiveONVIFVideo(t, uri, protocol) })
+		t.Run(protocol.String(), func(t *testing.T) { receiveONVIFVideo(t, uri, protocol, 320, 180, 6000) })
 	}
 	stopped := decodeDiagnostic[onvif.Status](t, diagnosticRequest(t, server, http.MethodPost, onvifAPI+"/stop", http.StatusOK, nil))
 	if stopped.Active || stopped.DiscoveryReplies != 2 || stopped.SOAPRequests < 7 || stopped.RTSPPlays != 2 {
@@ -199,6 +207,87 @@ func TestONVIFSimulatorDiscoveryMediaAndRTSP(t *testing.T) {
 		response.Body.Close()
 		t.Fatal("ONVIF device socket remained open after stop")
 	}
+}
+
+func TestONVIFLocalSubProfileAndRTSPDigest(t *testing.T) {
+	if _, err := mediafile.FindTool("ffmpeg", ""); err != nil {
+		t.Skip(err)
+	}
+	source, err := os.ReadFile("../simulator/hlsorigin/media/segment-01.ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := testDiagnosticServer(t, t.TempDir())
+	var body bytes.Buffer
+	form := multipart.NewWriter(&body)
+	if err := form.WriteField("config", `{"rtsp_username":"cam","rtsp_password":"only-digest-42"}`); err != nil {
+		t.Fatal(err)
+	}
+	file, err := form.CreateFormFile("sub", "local-test.ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.Write(source); err != nil {
+		t.Fatal(err)
+	}
+	if err := form.Close(); err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Timeout: 15 * time.Second}
+	response, err := client.Post(server.URL()+onvifAPI+"/start-file", form.FormDataContentType(), &body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer response.Body.Close()
+	result, err := io.ReadAll(response.Body)
+	if err != nil || response.StatusCode != http.StatusCreated {
+		t.Fatalf("upload did not start ONVIF: %s (%v)", result, err)
+	}
+	started := decodeDiagnostic[onvif.Status](t, result)
+	if !started.RTSPDigest || len(started.Profiles) != 2 || started.Profiles[0].Filename != "" ||
+		started.Profiles[1].Filename != "local-test.ts" || bytes.Contains(result, []byte("only-digest-42")) {
+		t.Fatalf("wrong profile/source state: %s", result)
+	}
+	for _, profile := range started.Profiles {
+		soap := queryONVIF(t, client, started.MediaURL, simulatorMediaNamespace, "GetStreamUri",
+			"<o:ProfileToken>"+profile.Token+"</o:ProfileToken>", http.StatusOK)
+		if !strings.Contains(soap, "<tt:Uri>"+profile.StreamURL+"</tt:Uri>") || strings.Contains(soap, "only-digest-42") {
+			t.Fatalf("wrong stream URI for %s: %s", profile.Token, soap)
+		}
+	}
+	url, err := base.ParseURL(started.Profiles[1].StreamURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := net.DialTimeout("tcp4", url.Host, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn.SetDeadline(time.Now().Add(time.Second))
+	fmt.Fprintf(conn, "DESCRIBE %s RTSP/1.0\r\nCSeq: 1\r\nAccept: application/sdp\r\n\r\n", url)
+	reader := bufio.NewReader(conn)
+	var challenge strings.Builder
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			conn.Close()
+			t.Fatal(err)
+		}
+		if line == "\r\n" {
+			break
+		}
+		challenge.WriteString(line)
+	}
+	conn.Close()
+	if !strings.Contains(challenge.String(), "401 Unauthorized") ||
+		!strings.Contains(challenge.String(), "WWW-Authenticate: Digest ") || strings.Contains(challenge.String(), "Basic ") {
+		t.Fatalf("expected an RTSP Digest challenge: %s", challenge.String())
+	}
+	for _, profile := range started.Profiles {
+		authenticated := strings.Replace(profile.StreamURL, "rtsp://", "rtsp://cam:only-digest-42@", 1)
+		receiveONVIFVideo(t, authenticated, gortsplib.ProtocolTCP, profile.Width, profile.Height, uint32(90000/profile.FPS))
+	}
+	diagnosticRequest(t, server, http.MethodPost, onvifAPI+"/stop", http.StatusOK, nil)
 }
 
 func queryONVIF(t *testing.T, client *http.Client, address, namespace, op, payload string, status int) string {
@@ -230,7 +319,7 @@ func queryONVIF(t *testing.T, client *http.Client, address, namespace, op, paylo
 	return string(body)
 }
 
-func receiveONVIFVideo(t *testing.T, uri string, protocol gortsplib.Protocol) {
+func receiveONVIFVideo(t *testing.T, uri string, protocol gortsplib.Protocol, width, height int, step uint32) {
 	t.Helper()
 	u, err := base.ParseURL(uri)
 	if err != nil {
@@ -251,7 +340,7 @@ func receiveONVIFVideo(t *testing.T, uri string, protocol gortsplib.Protocol) {
 		t.Fatal("RTSP SDP missing H.264 SPS/PPS")
 	}
 	var sps h264.SPS
-	if err := sps.Unmarshal(video.SPS); err != nil || sps.Width() != 320 || sps.Height() != 180 {
+	if err := sps.Unmarshal(video.SPS); err != nil || sps.Width() != width || sps.Height() != height {
 		t.Fatalf("RTSP SPS does not match ONVIF resolution: %d x %d (%v)", sps.Width(), sps.Height(), err)
 	}
 	decoder, err := video.CreateDecoder()
@@ -286,8 +375,8 @@ func receiveONVIFVideo(t *testing.T, uri string, protocol gortsplib.Protocol) {
 	for i := range 3 {
 		select {
 		case timestamp := <-received:
-			if i > 0 && timestamp-previous != 6000 {
-				t.Fatalf("expected 15 fps RTP timestamps, delta %d", timestamp-previous)
+			if i > 0 && timestamp-previous != step {
+				t.Fatalf("unexpected RTP timestamp delta %d", timestamp-previous)
 			}
 			previous = timestamp
 		case <-timeout:

@@ -40,7 +40,13 @@ function render(status) {
   el('endpoints').hidden = !active;
   el('device-url').textContent = status.device_url || '';
   el('media-url').textContent = status.media_url || '';
-  el('rtsp-url').textContent = status.stream_url || '';
+  el('rtsp-auth').textContent = status.rtsp_digest ? 'Digest' : '无鉴权';
+  for (const [index, endpoint, detail] of [[0, 'rtsp-url', 'main-profile-detail'], [1, 'rtsp-sub-url', 'sub-profile-detail']]) {
+    const profile = status.profiles?.[index];
+    el(endpoint).textContent = profile?.stream_url || '';
+    el(detail).textContent = profile ? '· ' + (profile.filename || '测试画面') + ' · ' +
+      profile.width + ' × ' + profile.height + ' / ' + profile.fps + ' fps' : '';
+  }
   updateButtons();
 }
 
@@ -84,11 +90,17 @@ async function change(path, body) {
   notice();
   updateButtons();
   try {
-    render(await request(path, {
-      method: 'POST',
-      ...(body && { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
-    }));
+    const options = {method: 'POST'};
+    if (body instanceof FormData) options.body = body;
+    else if (body) {
+      options.headers = {'Content-Type': 'application/json'};
+      options.body = JSON.stringify(body);
+    }
+    if (path === '/start-file') el('state').textContent = '正在准备视频';
+    render(await request(path, options));
+    if (body) el('rtsp-password').value = '';
   } catch (error) {
+    if (path === '/start-file') el('state').textContent = '未运行';
     notice(error.message);
   } finally {
     busy = false;
@@ -101,7 +113,19 @@ form.addEventListener('submit', event => {
   const config = Object.fromEntries(new FormData(form));
   config.http_port = Number(config.http_port);
   config.rtsp_port = Number(config.rtsp_port);
-  void change('/start', config);
+  const files = [['main', el('main-video').files[0]], ['sub', el('sub-video').files[0]]].filter(([, file]) => file);
+  if (!files.length) {
+    void change('/start', config);
+    return;
+  }
+  if (files.some(([, file]) => file.size > 64 * 1024 * 1024)) {
+    notice('每路本地视频最多 64 MiB。');
+    return;
+  }
+  const body = new FormData();
+  body.append('config', JSON.stringify(config));
+  for (const [name, file] of files) body.append(name, file);
+  void change('/start-file', body);
 });
 el('stop').addEventListener('click', () => { void change('/stop'); });
 void configure();
