@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -24,11 +25,17 @@ var (
 )
 
 type Config struct {
-	Protocol string `json:"protocol"`
-	Fault    string `json:"fault"`
+	TargetIP   string `json:"target_ip,omitempty"`
+	TargetPort int    `json:"target_port,omitempty"`
+	Interface  string `json:"interface,omitempty"`
+	Protocol   string `json:"protocol"`
+	Fault      string `json:"fault"`
 }
 
 type Status struct {
+	Sending       bool   `json:"sending"`
+	SentDatagrams uint64 `json:"sent_datagrams"`
+	SendError     string `json:"send_error,omitempty"`
 	Config
 	Active     bool       `json:"active"`
 	ID         string     `json:"id,omitempty"`
@@ -64,7 +71,14 @@ func (m *Manager) Start(cfg Config) (Status, error) {
 	if cfg.Fault == "" {
 		cfg.Fault = "normal"
 	}
-	var filename, mime string
+	var filename, mime, captureURL string
+	if cfg.datagram() {
+		dest, _, err := cfg.destination()
+		if err != nil {
+			return Status{}, err
+		}
+		captureURL = cfg.captureURL(dest)
+	}
 	switch cfg.Protocol {
 	case "http-flv":
 		mime = "video/x-flv"
@@ -76,9 +90,10 @@ func (m *Manager) Start(cfg Config) (Status, error) {
 		default:
 			return Status{}, ErrInvalid
 		}
-	case "http-ts":
+	case "http-ts", "udp-ts", "rtp-ts":
 		mime, filename = "video/mp2t", "regular.ts"
-		if cfg.Fault != "normal" && cfg.Fault != "continuity" && cfg.Fault != "pcr_jump" {
+		rtpFault := cfg.Protocol == "rtp-ts" && (cfg.Fault == "rtp_drop" || cfg.Fault == "rtp_reorder" || cfg.Fault == "rtp_duplicate")
+		if cfg.Fault != "normal" && cfg.Fault != "continuity" && cfg.Fault != "pcr_jump" && !rtpFault {
 			return Status{}, ErrInvalid
 		}
 	default:
@@ -104,7 +119,10 @@ func (m *Manager) Start(cfg Config) (Status, error) {
 	id := uuid.NewString()
 	m.ctx, m.cancel = context.WithCancel(context.Background())
 	m.stream = plan
-	m.status = Status{Config: cfg, Active: true, ID: id, URL: "/api/simulators/media/stream/" + id,
+	if captureURL == "" {
+		captureURL = "/api/simulators/media/stream/" + id
+	}
+	m.status = Status{Config: cfg, Active: true, ID: id, URL: captureURL,
 		DurationMS: plan.chunks[len(plan.chunks)-1].at.Milliseconds()}
 	return m.status, nil
 }
@@ -139,7 +157,7 @@ func (m *Manager) stopLocked() {
 
 func (m *Manager) Serve(w http.ResponseWriter, r *http.Request, id string) {
 	m.mu.Lock()
-	if !m.status.Active || id != m.status.ID {
+	if !m.status.Active || id != m.status.ID || m.status.Config.datagram() {
 		m.mu.Unlock()
 		http.NotFound(w, r)
 		return
@@ -206,7 +224,11 @@ func prepareStream(cfg Config, data []byte, mime string) (stream, error) {
 	if cfg.Protocol == "http-flv" {
 		plan.chunks, err = planFLV(data, cfg.Fault)
 	} else {
-		plan.chunks, err = planTS(data, cfg.Fault)
+		fault := cfg.Fault
+		if strings.HasPrefix(fault, "rtp_") {
+			fault = "normal"
+		}
+		plan.chunks, err = planTS(data, fault)
 	}
 	if err != nil {
 		return stream{}, fmt.Errorf("媒体模拟源准备失败：%w", err)

@@ -1512,6 +1512,16 @@ if (simulatedMedia && /^[a-f0-9-]{36}$/.test(simulatedMedia) && ['http-flv', 'ht
     node('seconds').value = '16';
 }
 
+if (simulatedMedia && /^[a-f0-9-]{36}$/.test(simulatedMedia) && ['udp-ts', 'rtp-ts'].includes(simulatedProtocol)) {
+    void fetch('/api/simulators/media', {cache: 'no-store'}).then(response => response.json()).then(source => {
+        if (!source.active || source.id !== simulatedMedia || source.protocol !== simulatedProtocol) return;
+        node('protocol').value = simulatedProtocol;
+        node('protocol').dispatchEvent(new Event('change'));
+        node('url').value = source.url;
+        node('seconds').value = '15';
+    }).catch(() => {});
+}
+
 bindForm('sample', async () => {
     const startedAt = Date.now();
     const startedAtPerformanceMS = performance.now();

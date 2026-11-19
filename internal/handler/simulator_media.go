@@ -36,6 +36,18 @@ func registerMediaSimulatorRoutes(r *gin.Engine, sim *mediasource.Manager) {
 		}
 		c.JSON(http.StatusCreated, status)
 	})
+	api.POST("/send", func(c *gin.Context) {
+		status, err := sim.Send()
+		if err != nil {
+			code := http.StatusServiceUnavailable
+			if errors.Is(err, mediasource.ErrActive) || errors.Is(err, mediasource.ErrSenderInactive) {
+				code = http.StatusConflict
+			}
+			c.JSON(code, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusAccepted, status)
+	})
 	api.POST("/stop", func(c *gin.Context) { c.JSON(http.StatusOK, sim.Stop()) })
 	serve := func(c *gin.Context) { sim.Serve(c.Writer, c.Request, c.Param("id")) }
 	api.GET("/stream/:id", serve)

@@ -5,15 +5,22 @@ const el = id => document.getElementById(id);
 const names = {
   normal: '正常', long_gop: '12 秒关键帧间隔', dts_backwards: '视频 DTS 回退',
   continuity: '视频 PID 连续计数缺口', pcr_jump: 'PCR 时钟跳变',
+  rtp_drop: 'RTP 丢包', rtp_reorder: 'RTP 乱序', rtp_duplicate: 'RTP 重复',
 };
-const protocols = {'http-flv': 'HTTP-FLV', 'http-ts': 'HTTP MPEG-TS'};
+const protocols = {'http-flv': 'HTTP-FLV', 'http-ts': 'HTTP MPEG-TS', 'udp-ts': 'UDP MPEG-TS', 'rtp-ts': 'RTP MPEG-TS'};
 let status;
 let busy = false;
 let generation = 0;
 
+const isDatagram = protocol => ['udp-ts', 'rtp-ts'].includes(protocol);
+
 function fillFaults() {
+  const protocol = el('protocol').value;
   const options = el('protocol').value === 'http-flv'
     ? ['normal', 'long_gop', 'dts_backwards'] : ['normal', 'continuity', 'pcr_jump'];
+  if (protocol === 'rtp-ts') options.push('rtp_drop', 'rtp_reorder', 'rtp_duplicate');
+  el('datagram-config').hidden = !isDatagram(protocol);
+  el('transport-hint').textContent = isDatagram(protocol) ? '先在排障工作台开始采样，再回此页发送一轮。组播可以填写网卡。' : '每次 GET 从头按原节奏发送，可用同一地址重复采样。';
   el('fault').replaceChildren(...options.map(key => new Option(names[key], key)));
 }
 
@@ -37,8 +44,16 @@ function render() {
   el('duration').textContent = status.id ? (status.duration_ms / 1000).toFixed(1) + ' 秒' : '';
   el('last-fault').textContent = status.last_fault ? new Date(status.last_fault).toLocaleTimeString('zh-CN') : '—';
   el('url').textContent = active ? new URL(status.url, location.origin).href : '—';
+  const datagram = active && isDatagram(status.protocol);
+  el('send-datagrams').hidden = !datagram;
+  el('send-datagrams').disabled = busy || status.sending;
+  el('sender-info').hidden = !datagram;
+  el('sender-info').textContent = datagram ? (status.sending ? '发送中' : '已发送 ' + status.sent_datagrams + ' 包') +
+    ' · 目的地址 ' + status.target_ip + ':' + status.target_port + (status.send_error ? ' · ' + status.send_error : '') : '';
   const open = el('open');
   open.hidden = !active;
+  open.target = datagram ? '_blank' : '_self';
+  open.rel = 'noopener';
   if (active) open.href = '/diagnostics?' + new URLSearchParams({media_simulator: status.id, media_protocol: status.protocol});
 }
 
@@ -86,8 +101,12 @@ async function poll() {
 el('protocol').addEventListener('change', fillFaults);
 el('form').addEventListener('submit', event => {
   event.preventDefault();
-  void change('/start', {protocol: el('protocol').value, fault: el('fault').value});
+  const protocol = el('protocol').value;
+  const config = {protocol, fault: el('fault').value};
+  if (isDatagram(protocol)) Object.assign(config, {target_ip: el('target').value, target_port: Number(el('target-port').value), interface: el('network-interface').value});
+  void change('/start', config);
 });
+el('send-datagrams').addEventListener('click', () => void change('/send'));
 el('stop').addEventListener('click', () => void change('/stop'));
 fillFaults();
 void poll();
