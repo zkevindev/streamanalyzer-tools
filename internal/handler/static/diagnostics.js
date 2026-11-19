@@ -1503,6 +1503,15 @@ if (simulatedHLS && /^[a-f0-9-]{36}$/.test(simulatedHLS)) {
     node('analyze-playback').checked = true;
 }
 
+const simulatedMedia = launchOptions.get('media_simulator');
+const simulatedProtocol = launchOptions.get('media_protocol');
+if (simulatedMedia && /^[a-f0-9-]{36}$/.test(simulatedMedia) && ['http-flv', 'http-ts'].includes(simulatedProtocol)) {
+    node('protocol').value = simulatedProtocol;
+    node('protocol').dispatchEvent(new Event('change'));
+    node('url').value = new URL('/api/simulators/media/stream/' + simulatedMedia, location.origin).href;
+    node('seconds').value = '16';
+}
+
 bindForm('sample', async () => {
     const startedAt = Date.now();
     const startedAtPerformanceMS = performance.now();
