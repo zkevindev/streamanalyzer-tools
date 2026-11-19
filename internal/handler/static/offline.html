@@ -860,9 +860,15 @@
     }
     async function show(id){
       currentId = id;
-      document.getElementById('detail').style.display = 'block';
-      const res = await fetch('/api/offline/tasks/'+id);
+      const res = await fetch('/api/offline/tasks/' + encodeURIComponent(id));
+      if (currentId !== id) return;
+      if (!res.ok) {
+        setRunHint('无法读取离线任务（HTTP ' + res.status + '）。');
+        return;
+      }
       const data = await res.json();
+      if (currentId !== id) return;
+      document.getElementById('detail').style.display = 'block';
       const task = data.task || {};
       const summary = data.summary || {};
       const flows = (summary.flows || []);
@@ -968,6 +974,10 @@
     }
     setInterval(loadTasks, 3000);
     loadTasks();
+    const requestedTask = new URLSearchParams(location.search).get('task');
+    if (requestedTask && /^[A-Za-z0-9_-]{1,128}$/.test(requestedTask)) {
+      show(requestedTask).catch(() => setRunHint('无法连接离线解析服务。'));
+    }
     const modeEl = document.getElementById('mode');
     if(modeEl) modeEl.addEventListener('change', updateModeHint);
     updateModeHint();

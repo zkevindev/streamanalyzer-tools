@@ -369,7 +369,7 @@ go build -o bin/server ./cmd/server
 - `GET /simulators/sip`：通用 SIP 模拟器
 - `GET /realtime`：实时拉流分析（标题 **实时拉流分析 · Stream Analyzer**）
 - `GET /offline`：离线文件解析（标题 **离线文件解析 · Stream Analyzer**；支持 raw/pcap/flv/ts/mp4 等）
-- `GET /history`：历史记录（标题 **历史记录 · Stream Analyzer**）
+- `GET /history`：查看排障采样、实时分析与离线解析记录，可按来源、状态和关键词筛选。
 - `GET /hls-stats`：HLS 分析（标题 **HLS 分析 · Stream Analyzer**）
 
 ## 桌面 GUI（Wails v3）
