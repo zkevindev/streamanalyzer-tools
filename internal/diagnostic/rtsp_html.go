@@ -149,7 +149,7 @@ var rtspReportPage = template.Must(template.New("rtsp").Funcs(template.FuncMap{
 <dt>DNS 阶段</dt><dd>{{$.DNS}}</dd><dt>TCP 阶段</dt><dd>{{$.TCP}}</dd><dt>TLS 阶段</dt><dd>{{if .Secure}}{{$.TLS}}{{else}}不适用（RTSP）{{end}}</dd>
 <dt>RTP 包</dt><dd>{{.RTPPackets}}</dd><dt>RTCP 包</dt><dd>{{.RTCPPackets}}</dd><dt>RTP 字节</dt><dd>{{.RTPBytes}}</dd>
 {{if eq .Transport "udp"}}<dt>收到 UDP 数据报</dt><dd>{{.UDPDatagrams}}</dd><dt>UDP 字节</dt><dd>{{.UDPBytes}}</dd><dt>符合协商来源</dt><dd>{{.AcceptedDatagrams}}</dd><dt>来源过滤</dt><dd>{{.FilteredDatagrams}}</dd><dt>超过媒体库缓冲的数据报</dt><dd>{{.UDPOversizeDatagrams}}</dd><dt>首个 RTCP 到达</dt><dd>{{ms .FirstRTCPMS}}</dd>{{end}}
-<dt>首个 RTP 到达</dt><dd>{{ms .FirstRTPMS}}</dd><dt>首个视频 RTP 到达</dt><dd>{{ms .FirstVideoRTPMS}}</dd><dt>首个音频 RTP 到达</dt><dd>{{ms .FirstAudioRTPMS}}</dd>
+{{if .UDPSourceEvidence}}<dt>RTP 来源过滤</dt><dd>{{range .UDPSourceEvidence}}<div>媒体 #{{.MediaID}} · 协商 {{.NegotiatedPort}} / 实际 {{.ObservedPort}} · {{if .SameIP}}同 IP{{else}}不同 IP{{end}} · {{.FilteredPackets}} 包 · 恢复 {{ms .RestoredMS}}</div>{{end}}</dd>{{end}}<dt>首个 RTP 到达</dt><dd>{{ms .FirstRTPMS}}</dd><dt>首个视频 RTP 到达</dt><dd>{{ms .FirstVideoRTPMS}}</dd><dt>首个音频 RTP 到达</dt><dd>{{ms .FirstAudioRTPMS}}</dd>
 <dt>格式异常包</dt><dd>{{.MalformedPackets}}</dd><dt>未知通道包</dt><dd>{{.UnknownChannelPackets}}</dd><dt>未知载荷类型包</dt><dd>{{.UnknownPayloadPackets}}</dd><dt>尾部不完整字节</dt><dd>{{.TrailingBytes}}</dd></dl>
 {{if .AnalysisLimited}}<p class="timing-note">已达到分析上限，统计只覆盖已分析的部分；原始字节仍按采样限制保留。</p>{{end}}
 {{if .RequestsTruncated}}<p class="timing-note">另有 {{.RequestsTruncated}} 条控制请求未写入指标，控制历史可能不完整。</p>{{end}}

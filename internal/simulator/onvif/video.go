@@ -14,6 +14,7 @@ import (
 	"github.com/bluenviron/gortsplib/v5/pkg/description"
 	"github.com/bluenviron/gortsplib/v5/pkg/format"
 	"github.com/bluenviron/gortsplib/v5/pkg/format/rtph264"
+	"github.com/bluenviron/gortsplib/v5/pkg/headers"
 	"github.com/bluenviron/gortsplib/v5/pkg/liberrors"
 )
 
@@ -34,6 +35,7 @@ type videoTrack struct {
 }
 
 type videoServer struct {
+	sourceFault    *udpSourceFault
 	recorded       *recordingRTSP
 	server         *gortsplib.Server
 	tracks         map[string]*videoTrack
@@ -70,6 +72,13 @@ func (v *videoServer) OnSetup(ctx *gortsplib.ServerHandlerOnSetupCtx) (*base.Res
 	if stream != nil && v.recorded != nil && ctx.Path == recordedRTSPPath {
 		return v.recorded.setup(v.server, ctx.Session)
 	}
+	if stream != nil && ctx.Transport.Protocol == gortsplib.ProtocolUDP && v.sourceFault != nil {
+		var transport headers.Transport
+		if transport.Unmarshal(ctx.Request.Header["Transport"]) == nil && transport.ClientPorts != nil {
+			remote := ctx.Conn.NetConn().RemoteAddr().(*net.TCPAddr)
+			v.sourceFault.setup(ctx.Session, remote.IP, transport.ClientPorts[0])
+		}
+	}
 	if stream != nil && ctx.Transport.Protocol == gortsplib.ProtocolUDP && v.tracks[ctx.Path].silent != nil {
 		stream = v.tracks[ctx.Path].silent
 	}
@@ -80,6 +89,9 @@ func (v *videoServer) OnSessionClose(ctx *gortsplib.ServerHandlerOnSessionCloseC
 	<-v.ready
 	if v.recorded != nil {
 		v.recorded.remove(ctx.Session)
+	}
+	if v.sourceFault != nil {
+		v.sourceFault.forget(ctx.Session)
 	}
 	for _, track := range v.tracks {
 		track.outage.forget(ctx.Session)
@@ -108,6 +120,9 @@ func (v *videoServer) OnPlay(ctx *gortsplib.ServerHandlerOnPlayCtx) (*base.Respo
 		}
 	} else {
 		v.udpPlays.Add(1)
+		if v.sourceFault != nil {
+			v.sourceFault.arm(ctx.Session)
+		}
 	}
 	return &base.Response{StatusCode: base.StatusOK}, nil
 }
@@ -143,6 +158,15 @@ func startVideo(ip net.IP, cfg Config, profiles []*profileVideo, fixture *record
 		tcp.Close()
 		return nil, err
 	}
+	if cfg.UDPSourceFaultMS != 0 {
+		v.sourceFault, err = openUDPSourceFault(rtp, ip, time.Duration(cfg.UDPSourceFaultMS)*time.Millisecond)
+		if err != nil {
+			tcp.Close()
+			rtp.Close()
+			rtcp.Close()
+			return nil, err
+		}
+	}
 	v.server = &gortsplib.Server{
 		Handler:                  v,
 		DisableRTCPSenderReports: cfg.RTCPClockStepMS != 0,
@@ -153,12 +177,18 @@ func startVideo(ip net.IP, cfg Config, profiles []*profileVideo, fixture *record
 		Listen:                   func(_, _ string) (net.Listener, error) { return tcp, nil },
 		ListenPacket: func(_, address string) (net.PacketConn, error) {
 			if address == rtp.LocalAddr().String() {
+				if v.sourceFault != nil {
+					return v.sourceFault, nil
+				}
 				return rtp, nil
 			}
 			return rtcp, nil
 		},
 	}
 	if err := v.server.Start(); err != nil {
+		if v.sourceFault != nil {
+			v.sourceFault.alternate.Close()
+		}
 		tcp.Close()
 		rtp.Close()
 		rtcp.Close()
@@ -280,6 +310,9 @@ func (v *videoTrack) play(ctx context.Context) {
 
 func (v *videoServer) close() {
 	v.server.Close()
+	if v.sourceFault != nil {
+		v.sourceFault.alternate.Close()
+	}
 	if v.recorded != nil {
 		v.recorded.description.Close()
 	}

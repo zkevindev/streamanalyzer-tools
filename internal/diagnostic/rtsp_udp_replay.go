@@ -12,6 +12,7 @@ import (
 	"github.com/bluenviron/gortsplib/v5/pkg/description"
 	"github.com/bluenviron/gortsplib/v5/pkg/headers"
 	"github.com/pion/rtcp"
+	"github.com/pion/rtp"
 )
 
 func validRTSPUDPMetadata(metadata rtspArchiveMetadata, session *description.Session, responses map[int]*base.Response) (map[int]rtspUDPTransport, error) {
@@ -159,6 +160,9 @@ func replayRTSPUDP(report *Report, metadata rtspArchiveMetadata, session *descri
 			port = transport.RTCPServerPort
 		}
 		if span.SourceIP != transport.SourceIP || span.SourcePort != port {
+			if !isRTCP && knownUDPSourceRTP(metrics, transport.MediaID, payload) {
+				noteRTSPUDPSource(metrics, transport, span, port)
+			}
 			metrics.FilteredDatagrams++
 			continue
 		}
@@ -198,6 +202,13 @@ func replayRTSPUDP(report *Report, metadata rtspArchiveMetadata, session *descri
 				}
 			}
 		} else {
+			for i := range metrics.UDPSourceEvidence {
+				item := &metrics.UDPSourceEvidence[i]
+				if item.MediaID == transport.MediaID && item.RestoredMS == nil && knownUDPSourceRTP(metrics, transport.MediaID, payload) {
+					at := span.ArrivalMS
+					item.RestoredMS = &at
+				}
+			}
 			walk := visit
 			var exportErr error
 			if export != nil && export.packet != nil {
@@ -258,4 +269,33 @@ func rtspArchiveHasField(data []byte, key string) bool {
 	}
 	_, exists := fields[key]
 	return exists
+}
+
+func knownUDPSourceRTP(metrics *RTSPMetrics, mediaID int, data []byte) bool {
+	var packet rtp.Packet
+	if packet.Unmarshal(data) != nil || packet.Version != 2 {
+		return false
+	}
+	for _, track := range metrics.Tracks {
+		if track.MediaID == mediaID && track.PayloadType == int(packet.PayloadType) {
+			return true
+		}
+	}
+	return false
+}
+
+func noteRTSPUDPSource(metrics *RTSPMetrics, transport rtspUDPTransport, span rtspUDPSpan, port int) {
+	same := transport.SourceIP == span.SourceIP
+	for i := range metrics.UDPSourceEvidence {
+		item := &metrics.UDPSourceEvidence[i]
+		if item.MediaID == transport.MediaID && item.ObservedPort == span.SourcePort && item.SameIP == same {
+			item.LastMS, item.RestoredMS = span.ArrivalMS, nil
+			item.FilteredPackets++
+			return
+		}
+	}
+	if len(metrics.UDPSourceEvidence) < 16 {
+		metrics.UDPSourceEvidence = append(metrics.UDPSourceEvidence, RTSPUDPSourceEvidence{MediaID: transport.MediaID,
+			NegotiatedPort: port, ObservedPort: span.SourcePort, SameIP: same, FilteredPackets: 1, FirstMS: span.ArrivalMS, LastMS: span.ArrivalMS})
+	}
 }

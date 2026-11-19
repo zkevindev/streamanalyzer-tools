@@ -56,35 +56,47 @@ type RTSPTrackMetrics struct {
 	AnalysisLimited        bool   `json:"analysis_limited,omitempty"`
 }
 
+type RTSPUDPSourceEvidence struct {
+	MediaID         int    `json:"media_id"`
+	NegotiatedPort  int    `json:"negotiated_port"`
+	ObservedPort    int    `json:"observed_port"`
+	SameIP          bool   `json:"same_ip"`
+	FilteredPackets int    `json:"filtered_packets"`
+	FirstMS         int64  `json:"first_ms"`
+	LastMS          int64  `json:"last_ms"`
+	RestoredMS      *int64 `json:"restored_ms,omitempty"`
+}
+
 type RTSPMetrics struct {
-	SenderClocks          []RTSPSenderClock   `json:"sender_clocks,omitempty"`
-	Preview               *RTSPPreviewReport  `json:"preview,omitempty"`
-	Boundary              string              `json:"boundary"`
-	Transport             string              `json:"transport"`
-	Secure                bool                `json:"secure"`
-	SDPAvailable          bool                `json:"sdp_available"`
-	Connections           int                 `json:"connections"`
-	RTPPackets            int                 `json:"rtp_packets"`
-	RTCPPackets           int                 `json:"rtcp_packets"`
-	RTPBytes              int64               `json:"rtp_bytes"`
-	MalformedPackets      int                 `json:"malformed_packets"`
-	UnknownChannelPackets int                 `json:"unknown_channel_packets"`
-	UnknownPayloadPackets int                 `json:"unknown_payload_packets"`
-	TrailingBytes         int64               `json:"trailing_bytes"`
-	FirstRTPMS            *int64              `json:"first_rtp_ms,omitempty"`
-	FirstVideoRTPMS       *int64              `json:"first_video_rtp_ms,omitempty"`
-	FirstAudioRTPMS       *int64              `json:"first_audio_rtp_ms,omitempty"`
-	Requests              []RTSPRequestTiming `json:"requests"`
-	RequestsTruncated     int                 `json:"requests_truncated"`
-	Tracks                []RTSPTrackMetrics  `json:"tracks"`
-	AnalysisLimited       bool                `json:"analysis_limited,omitempty"`
-	RequestedTransport    string              `json:"requested_transport,omitempty"`
-	UDPDatagrams          int                 `json:"udp_datagrams,omitempty"`
-	UDPBytes              int64               `json:"udp_bytes,omitempty"`
-	AcceptedDatagrams     int                 `json:"accepted_datagrams,omitempty"`
-	FilteredDatagrams     int                 `json:"filtered_datagrams,omitempty"`
-	UDPOversizeDatagrams  int                 `json:"udp_oversize_datagrams,omitempty"`
-	FirstRTCPMS           *int64              `json:"first_rtcp_ms,omitempty"`
+	UDPSourceEvidence     []RTSPUDPSourceEvidence `json:"udp_source_evidence,omitempty"`
+	SenderClocks          []RTSPSenderClock       `json:"sender_clocks,omitempty"`
+	Preview               *RTSPPreviewReport      `json:"preview,omitempty"`
+	Boundary              string                  `json:"boundary"`
+	Transport             string                  `json:"transport"`
+	Secure                bool                    `json:"secure"`
+	SDPAvailable          bool                    `json:"sdp_available"`
+	Connections           int                     `json:"connections"`
+	RTPPackets            int                     `json:"rtp_packets"`
+	RTCPPackets           int                     `json:"rtcp_packets"`
+	RTPBytes              int64                   `json:"rtp_bytes"`
+	MalformedPackets      int                     `json:"malformed_packets"`
+	UnknownChannelPackets int                     `json:"unknown_channel_packets"`
+	UnknownPayloadPackets int                     `json:"unknown_payload_packets"`
+	TrailingBytes         int64                   `json:"trailing_bytes"`
+	FirstRTPMS            *int64                  `json:"first_rtp_ms,omitempty"`
+	FirstVideoRTPMS       *int64                  `json:"first_video_rtp_ms,omitempty"`
+	FirstAudioRTPMS       *int64                  `json:"first_audio_rtp_ms,omitempty"`
+	Requests              []RTSPRequestTiming     `json:"requests"`
+	RequestsTruncated     int                     `json:"requests_truncated"`
+	Tracks                []RTSPTrackMetrics      `json:"tracks"`
+	AnalysisLimited       bool                    `json:"analysis_limited,omitempty"`
+	RequestedTransport    string                  `json:"requested_transport,omitempty"`
+	UDPDatagrams          int                     `json:"udp_datagrams,omitempty"`
+	UDPBytes              int64                   `json:"udp_bytes,omitempty"`
+	AcceptedDatagrams     int                     `json:"accepted_datagrams,omitempty"`
+	FilteredDatagrams     int                     `json:"filtered_datagrams,omitempty"`
+	UDPOversizeDatagrams  int                     `json:"udp_oversize_datagrams,omitempty"`
+	FirstRTCPMS           *int64                  `json:"first_rtcp_ms,omitempty"`
 }
 
 type rtspWireSpan struct {

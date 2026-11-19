@@ -66,6 +66,8 @@ function render(status) {
     '时钟偏差拒绝 ' + status.soap_clock_rejected + ' 次', '设备偏差 ' + status.clock_offset_seconds + ' 秒',
   ].join(' · ') : '无鉴权';
   el('transport-observation').textContent = 'UDP PLAY ' + status.udp_plays + ' 次 · TCP PLAY ' + status.tcp_plays + ' 次' +
+    (status.udp_source_fault ? ' · RTP ' + status.udp_source_fault.negotiated_port + ' → ' + status.udp_source_fault.alternate_port +
+      ' · 已改源发送 ' + status.udp_source_fault.alternate_packets + ' 包' : '') +
     (status.resolution_switch_at ? ' · 已切换分辨率' : '') + (status.silent_udp ? ' · UDP 无 RTP' : '');
   const recording = status.recording;
   el('recording-controls').hidden = !active || !recording;
@@ -177,6 +179,7 @@ form.addEventListener('submit', event => {
   config.recording_fixture = el('recording-fixture').checked || el('recording-gap').checked;
   config.recording_gap_seconds = el('recording-gap').checked ? 8 : 0;
   config.rtsp_disconnect_ms = el('rtsp-outage').checked ? 3000 : 0;
+  config.udp_source_fault_ms = el('udp-source-fault').checked ? 2200 : 0;
   config.rtsp_resolution_switch_ms = el('resolution-switch').checked ? 3000 : 0;
   config.rtcp_clock_step_ms = el('rtcp-step').checked ? 350 : 0;
   config.video_gap_ms = el('video-gap').checked ? 5000 : 0;
@@ -194,15 +197,17 @@ form.addEventListener('submit', event => {
   for (const [name, file] of files) body.append(name, file);
   void change('/start-file', body);
 });
-const rtspFaults = ['rtsp-outage', 'video-gap', 'rtcp-step', 'resolution-switch'];
+const rtspFaults = ['rtsp-outage', 'video-gap', 'rtcp-step', 'resolution-switch', 'udp-source-fault'];
 for (const selected of rtspFaults) {
   el(selected).addEventListener('change', () => {
     if (el(selected).checked) {
+      if (selected === 'udp-source-fault') el('silent-udp').checked = false;
       for (const other of rtspFaults.filter(value => value !== selected)) el(other).checked = false;
     }
   });
 }
 el('stop').addEventListener('click', () => { void change('/stop'); });
+el('silent-udp').addEventListener('change', () => { if (el('silent-udp').checked) el('udp-source-fault').checked = false; });
 el('recorded-motion').addEventListener('click', () => { void change('/recording-motion', {recorded: true}); });
 el('missing-motion').addEventListener('click', () => { void change('/recording-motion', {recorded: false}); });
 el('restart-events').addEventListener('click', () => { void change('/restart-events'); });

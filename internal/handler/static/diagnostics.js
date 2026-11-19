@@ -163,6 +163,9 @@ function renderRTSPReport(report) {
         ['会话连接数', metrics.connections ?? '未观测'], ['DNS 阶段', rtspPhaseDuration(stages, 'dns')], ['TCP 阶段', rtspPhaseDuration(stages, 'connect')],
         ['TLS 阶段', metrics.secure ? rtspPhaseDuration(stages, 'tls') : '不适用（RTSP）'],
         ['RTP 包', metrics.rtp_packets ?? '未观测'], ['RTCP 包', metrics.rtcp_packets ?? '未观测'], ['RTP 字节', metrics.rtp_bytes == null ? '未观测' : bytes(metrics.rtp_bytes)],
+        ...(metrics.udp_source_evidence?.length ? [['RTP 来源过滤', metrics.udp_source_evidence.map(item =>
+            '#' + item.media_id + ' · ' + item.negotiated_port + ' → ' + item.observed_port + ' · ' +
+            (item.same_ip ? '同 IP' : '不同 IP') + ' · ' + item.filtered_packets + ' 包 · 恢复 ' + time(item.restored_ms)).join(' / ')]] : []),
         ...(metrics.transport === 'udp' ? [['收到 UDP 数据报', metrics.udp_datagrams ?? 0], ['UDP 字节', bytes(metrics.udp_bytes ?? 0)], ['符合协商来源', metrics.accepted_datagrams ?? 0], ['来源过滤', metrics.filtered_datagrams ?? 0], ['超过媒体库缓冲的数据报', metrics.udp_oversize_datagrams ?? 0], ['首个 RTCP 到达', time(metrics.first_rtcp_ms)]] : []),
         ['首个 RTP 到达', videoObservedTime(metrics.first_rtp_ms)], ['首个视频 RTP 到达', videoObservedTime(metrics.first_video_rtp_ms)], ['首个音频 RTP 到达', videoObservedTime(metrics.first_audio_rtp_ms)],
         ['格式异常包', metrics.malformed_packets ?? '未观测'], ['未知通道包', metrics.unknown_channel_packets ?? '未观测'], ['未知载荷类型包', metrics.unknown_payload_packets ?? '未观测'], ['尾部不完整字节', metrics.trailing_bytes ?? '未观测'],

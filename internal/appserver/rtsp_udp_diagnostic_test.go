@@ -62,3 +62,28 @@ func TestRTSPUDPDiagnosticHTTPWorkflow(t *testing.T) {
 		t.Fatal("UDP imported evidence could not be explained")
 	}
 }
+
+func TestRTSPUDPTracksWrongSourceAndRestoration(t *testing.T) {
+	app := testDiagnosticServer(t, t.TempDir())
+	camera := decodeDiagnostic[onvif.Status](t, diagnosticRequest(t, app, "POST", onvifAPI+"/start", 201, []byte(`{"udp_source_fault_ms":1200}`)))
+	input, _ := json.Marshal(diagnostic.SampleRequest{Protocol: diagnostic.ProtocolRTSP, Transport: "udp", URL: camera.StreamURL, Seconds: 5})
+	run := decodeDiagnostic[diagnostic.Run](t, diagnosticRequest(t, app, "POST", "/api/diagnostics/runs", 202, input))
+	path := "/api/diagnostics/runs/" + run.ID
+	detail := waitDiagnostic(t, app, path)
+	state := decodeDiagnostic[onvif.Status](t, diagnosticRequest(t, app, "GET", onvifAPI, 200, nil))
+	if detail.Report == nil || detail.Report.RTSP == nil || len(detail.Report.RTSP.UDPSourceEvidence) != 1 || state.UDPSourceFault == nil {
+		t.Fatalf("missing UDP source evidence: %+v, state=%+v", detail.Report, state)
+	}
+	fault := state.UDPSourceFault
+	evidence := detail.Report.RTSP.UDPSourceEvidence[0]
+	if !evidence.SameIP || evidence.NegotiatedPort != fault.NegotiatedPort || evidence.ObservedPort != fault.AlternatePort ||
+		evidence.FilteredPackets < 1 || uint64(evidence.FilteredPackets) != fault.AlternatePackets || fault.RestoredAt.IsZero() ||
+		evidence.RestoredMS == nil || *evidence.RestoredMS <= evidence.LastMS || detail.Report.RTSP.FirstVideoRTPMS == nil ||
+		*detail.Report.RTSP.FirstVideoRTPMS >= evidence.FirstMS {
+		t.Fatalf("failed port roundtrip: fault=%+v, evidence=%+v", fault, evidence)
+	}
+	body := diagnosticRequest(t, app, "GET", path+"/report.html", 200, nil)
+	if !bytes.Contains(body, []byte("RTP 来源过滤")) {
+		t.Fatal("report omitted source evidence")
+	}
+}
