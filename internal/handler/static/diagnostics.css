@@ -110,6 +110,7 @@ button:disabled { opacity: .55; cursor: wait; }
 .stall-investigation p, .stall-investigation ul { margin: .4rem 0 .65rem; }
 .stall-investigation .timing-note { overflow-wrap: anywhere; }
 .stall-media { display: grid; gap: .65rem; margin: .65rem 0; }
+.rtsp-media-evidence { min-width: 0; }
 .stall-media video { display: block; width: min(100%, 36rem); max-height: 25rem; background: #101d2d; border-radius: .375rem; }
 .stall-screenshots { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr)); gap: .65rem; }
 .stall-screenshots figure { margin: 0; padding: .45rem; border: 1px solid var(--border); border-radius: .375rem; background: var(--surface-inset); min-width: 0; }

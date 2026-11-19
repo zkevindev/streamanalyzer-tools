@@ -168,8 +168,8 @@ func startRTSPOrigin(ctx context.Context, root, dir string, manifest Manifest) (
 		source.frames = append(source.frames, rtspReplayFrame{offset: offset, at: arrival, size: len(data), media: media, rtcp: rtcp})
 		return nil
 	}
-	export := &rtspWireExport{describe: source.setDescription, packet: func(media int, data []byte, at int64) error {
-		return appendFrame(media, data, at, false)
+	export := &rtspWireExport{describe: source.setDescription, packet: func(media int, data []byte, event Event) error {
+		return appendFrame(media, data, event.ArrivalMS, false)
 	}, senderReport: func(media int, data []byte, at int64) error {
 		return appendFrame(media, data, at, true)
 	}}

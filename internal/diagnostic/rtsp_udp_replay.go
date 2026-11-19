@@ -200,13 +200,13 @@ func replayRTSPUDP(report *Report, metadata rtspArchiveMetadata, session *descri
 		} else {
 			walk := visit
 			var exportErr error
-			if export != nil {
+			if export != nil && export.packet != nil {
 				walk = func(event Event) {
 					if visit != nil {
 						visit(event)
 					}
 					if event.Codec != "unknown" {
-						exportErr = export.packet(transport.MediaID, payload, span.ArrivalMS)
+						exportErr = export.packet(transport.MediaID, payload, event)
 					}
 				}
 			}

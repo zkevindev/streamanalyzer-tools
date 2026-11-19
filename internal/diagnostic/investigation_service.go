@@ -142,8 +142,9 @@ func (s *Service) runStallInvestigation(ctx context.Context, runID string, item 
 		return
 	}
 	if !sourceArtifactMatches(s.runDir(runID), dumpName(report.Manifest.Protocol), report.Manifest.Stream, maxStreamBytes) ||
-		!sourceArtifactMatches(s.runDir(runID), timelineName, report.Manifest.Timeline, maxTimeline) {
-		item.Status, item.ModelState, item.ModelError = "failed", "failed", "原始流或时间线未通过 SHA-256 校验，无法补查"
+		!sourceArtifactMatches(s.runDir(runID), timelineName, report.Manifest.Timeline, maxTimeline) ||
+		report.Manifest.Player == nil || !sourceArtifactMatches(s.runDir(runID), playerName, *report.Manifest.Player, maxPlayerBytes) {
+		item.Status, item.ModelState, item.ModelError = "failed", "failed", "原始流、时间线或播放器记录未通过 SHA-256 校验，无法补查"
 		item.Media.Reason = "原始采样校验失败"
 		_ = s.saveStallItem(runID, item)
 		return
@@ -376,6 +377,12 @@ func (s *Service) StopStall(runID, caseID string) error {
 
 func persistStallReport(dir string, report *Report) error {
 	ledger := investigationLedger{Version: 1, Items: report.StallInvestigations}
+	for _, item := range ledger.Items {
+		if item.Media.RTSP != nil {
+			ledger.Version = 2
+			break
+		}
+	}
 	data, err := json.Marshal(ledger)
 	if err != nil {
 		return err

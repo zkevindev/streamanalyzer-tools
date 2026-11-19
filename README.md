@@ -26,7 +26,7 @@ UDP 与 RTP 使用 IPv4 接收地址，例如 `udp://0.0.0.0:5000` 或 `rtp://12
 
 API 中可用 `{"protocol":"rtsp","transport":"udp","url":"rtsp://camera.example/stream","seconds":30}` 选择 UDP；省略 `transport` 仍使用 TCP。旧 TCP 证据包继续离线复盘。UDP 原始包保留符合及不符合协商来源的数据报；报告和模型不包含原始 IP/端口，轨道统计只计算符合来源与端口协商的包。
 
-RTSP/RTSPS 原生采样不依赖浏览器。勾选播放器分析后，同一次采样收到的 RTP 可在本机转封装为 FLV 预览，不另建 RTSP 拉流连接；支持 H.264（packetization-mode 0/1）、H.265（RFC 7798，无 DON 交织）和 RFC 3640 AAC-LC（1024 采样、单/双声道），不转码。H.265 通过 Enhanced FLV 原生转封装，浏览器和系统需提供 HEVC 解码能力；转封装输出不代表已成功解码。Opus（48 kHz RTP 时钟、单/双声道）也可原码预览：本机先转封装为 Enhanced FLV，浏览器根据 MSE 能力选择 MP4 或 WebM 音频容器，不转码、不另建拉流；仅当两种容器均不支持时明确记录浏览器编码能力不足。Opus 包保留 2.5–120 ms 实际时长与 DTX/缺包间隔，不复制音频填充停发区间；真实空洞可能使播放器等待，需与原始 RTP 到达时间对照。G.711 PCMA/PCMU 可将同次采样的原始 RTP 在本机解码，再经 FFmpeg 有损转为 48 kHz AAC-LC 预览，支持 8/16/32/48 kHz、单/双声道；若有可直接预览的 AAC/Opus 轨道则优先原码。FFmpeg 可放在程序旁边、加入 PATH，或安装在常见 Homebrew/MacPorts 目录；未找到时明确提示音频预览不可用，原始采样继续。报告分别保存输入 PCMA/PCMU、输出 AAC、转码状态、输入/输出样本、RTP 缺口补静音、迟到丢弃、实测编码预延迟/填充及工具检查/首个输出/排空耗时；本机处理不计为网络阶段。较大 RTP 时钟跳变、队列上限或运行中编码失败会明确结束预览，原始 RTP 采样不受影响。新采样使用编码能力版本 3，旧版本报告导入后保留原始能力与结论。首屏、缓冲、卡顿、呈帧和页面调度记录沿用 `player.json`，与转封装状态一起保存在报告和证据包中；共同 RTP 时间基准由接收端建立，不等于验证了源端音画同步。原始 dump 仍为 `stream.rtsp.zip`，不替换为派生 FLV；本版 RTSP 补查保留同期 RTP 与播放器证据，源流片段/截图尚不支持。HTML/JSON 与模型只使用受控方法、状态、编码标签及数字证据，不展示 RTSP 地址路径、用户信息、认证头或 SDP 原文；来源只显示协议和主机。原始 ZIP 按上述边界保存服务端字节和 SDP，证据包导入后可离线重算，无需重新连接摄像头。
+RTSP/RTSPS 原生采样不依赖浏览器。勾选播放器分析后，同一次采样收到的 RTP 可在本机转封装为 FLV 预览，不另建 RTSP 拉流连接；支持 H.264（packetization-mode 0/1）、H.265（RFC 7798，无 DON 交织）和 RFC 3640 AAC-LC（1024 采样、单/双声道），不转码。H.265 通过 Enhanced FLV 原生转封装，浏览器和系统需提供 HEVC 解码能力；转封装输出不代表已成功解码。Opus（48 kHz RTP 时钟、单/双声道）也可原码预览：本机先转封装为 Enhanced FLV，浏览器根据 MSE 能力选择 MP4 或 WebM 音频容器，不转码、不另建拉流；仅当两种容器均不支持时明确记录浏览器编码能力不足。Opus 包保留 2.5–120 ms 实际时长与 DTX/缺包间隔，不复制音频填充停发区间；真实空洞可能使播放器等待，需与原始 RTP 到达时间对照。G.711 PCMA/PCMU 可将同次采样的原始 RTP 在本机解码，再经 FFmpeg 有损转为 48 kHz AAC-LC 预览，支持 8/16/32/48 kHz、单/双声道；若有可直接预览的 AAC/Opus 轨道则优先原码。FFmpeg 可放在程序旁边、加入 PATH，或安装在常见 Homebrew/MacPorts 目录；未找到时明确提示音频预览不可用，原始采样继续。报告分别保存输入 PCMA/PCMU、输出 AAC、转码状态、输入/输出样本、RTP 缺口补静音、迟到丢弃、实测编码预延迟/填充及工具检查/首个输出/排空耗时；本机处理不计为网络阶段。较大 RTP 时钟跳变、队列上限或运行中编码失败会明确结束预览，原始 RTP 采样不受影响。新采样使用编码能力版本 3，旧版本报告导入后保留原始能力与结论。首屏、缓冲、卡顿、呈帧和页面调度记录沿用 `player.json`，与转封装状态一起保存在报告和证据包中；共同 RTP 时间基准由接收端建立，不等于验证了源端音画同步。原始 dump 仍为 `stream.rtsp.zip`，不替换为派生 FLV；RTSP 补查可依据原始 RTP 和已保存的播放器时钟离线重建 MP4/JPEG，定位方式及边界见下文。HTML/JSON 与模型只使用受控方法、状态、编码标签及数字证据，不展示 RTSP 地址路径、用户信息、认证头或 SDP 原文；来源只显示协议和主机。原始 ZIP 按上述边界保存服务端字节和 SDP，证据包导入后可离线重算，无需重新连接摄像头。
 
 排障工作台提供「ONVIF 设备发现」：选择本机 IPv4 网卡后搜索摄像头/NVR，选择设备并填写 ONVIF 凭据，读取 Profile，再选择 TCP/UDP 获取 RTSP 地址。地址只回填到采样表单，由用户核对后启动采样。未搜到设备时可手动输入服务地址（如 `http://192.168.1.64/onvif/device_service`）；组播发现通常限于本地网段，跨 VLAN 可使用手动地址。macOS 需允许应用访问本地网络。
 
@@ -62,6 +62,10 @@ HTTP-FLV、HTTP MPEG-TS 和 HLS 的每次请求可以展开查看请求头、响
 
 分层结果会随 HTML/JSON 报告和证据包保存，导入时从已验证的关联证据重新计算并比对，不需模型在线。旧补查记录可点击「生成排查与模型建议」补充分层结果，未配置模型时也能生成本地排查方向。
 
+RTSP / RTSPS 的缓冲卡顿和呈帧回调间隔补查可从 `stream.rtsp.zip` 中离线重建同期源媒体，无需摄像头在线，也不重新拉流。支持 H.264、H.265、AAC、Opus 和 G.711（PCMA/PCMU），G.711 先解码为 PCM；本机 FFmpeg/FFprobe 将可用媒体转为 H.264/AAC MP4，并提取异常前、附近和之后的 JPEG。音频源可以只生成音频片段；工具缺失、编码不支持、无随机接入点、媒体不完整或无法建立播放器时钟关联时保留具体原因及其余时序证据。
+
+RTSP 媒体定位标为「接收端 RTP 时钟与播放器媒体时间估算」。报告展示保存的播放器时钟样本、预览和重建起点、选中轨道、访问单元数量、丢弃记录，以及原始归档、时间线、播放器记录和临时重建媒体的 SHA-256。离线确认的随机接入点附原始 RTP 包引用；该引用指访问单元完成时的包，不能把单个 RTP 包当作完整画面。收包到达时间不会直接作为媒体时间，定位不代表源端 UTC、源端音画同步或精确呈帧对齐。片段与截图用于内容对照，不能重现或证明本机画面冻结。模型接收数字摘要和产物编号，不接收截图像素，也不能据此声称已查看画面。
+
 补查记录保存为 `stall-evidence.json`，派生文件位于证据包的 `stalls/S001/` 等目录，均记录 SHA-256。HTML 报告内嵌截图，片段可单独下载或从证据包打开。导入会校验派生文件并从原始流重新计算关联证据，不需 FFmpeg、源站或模型在线。导入未完成的任务会标为已停止，可以重新补查。旧版证据包仍可导入。
 
 HLS 原生播放和 hls.js 播放均经过本地代理。实际播放请求会单独保存到 `player-network.json`，包含匿名资源编号、资源类型、GET/HEAD、请求开始、响应头、首正文、代理结束或快照截止时刻、HTTP 状态、上游读取字节和完成/失败/取消状态，每份报告最多保留 512 次请求并标明超限数量。不记录源 URL、令牌、HTTP 头内容或错误原文。响应头和首正文未观测时保留未知，实测零值单独显示。代理结束时间可能包含向浏览器写出的影响；这些记录不能证明浏览器已接收、追加缓冲或呈帧。
@@ -88,7 +92,7 @@ JSON 报告及 SQLite 任务索引位于数据目录下的 `diagnostics/`。基�
 
 | 方法与路径 | 用途 |
 | --- | --- |
-| `POST /api/diagnostics/runs` | 用 `{"protocol":"hls","url":"https://live.example.com/index.m3u8","seconds":60,"playback":true}` 发起采样。协议可选 `http-flv`、`rtmp`、`rtsp`、`rtsps`、`hls`、`http-ts`、`udp-ts`、`rtp-ts`，省略时默认 `http-flv`。`playback` 可选；RTSP/RTSPS 不创建浏览器播放器会话 |
+| `POST /api/diagnostics/runs` | 用 `{"protocol":"hls","url":"https://live.example.com/index.m3u8","seconds":60,"playback":true}` 发起采样。协议可选 `http-flv`、`rtmp`、`rtsp`、`rtsps`、`hls`、`http-ts`、`udp-ts`、`rtp-ts`，省略时默认 `http-flv`。`playback` 可选；RTSP/RTSPS 使用同次原生采样重组的本机预览，编码能力和本机转码状态在报告中展示 |
 | `GET /api/diagnostics/runs` | 查看最近的采样和复盘记录 |
 | `GET /api/diagnostics/runs/:id` | 查询状态、规则报告和已生成的模型解读 |
 | `POST /api/diagnostics/runs/:id/stop` | 停止采样并保存已获取的数据 |
@@ -589,3 +593,5 @@ MIT
 H.265 预览的浏览器回归使用仓库内预编码 B 帧素材，无需运行时转码。可分别构建 `./cmd/server` 和 `./internal/diagnostic/testdata/h265-fixture`，将二进制路径传入 `STREAMANALYZER_TEST_SERVER`、`STREAMANALYZER_HEVC_FIXTURE`，执行 `node internal/handler/testdata/rtsp_hevc_e2e.cjs`。用默认 GPU 配置的 Chrome 验证 TCP/UDP 实际解码、首屏与呈帧记录、模型/HTML，以及停止源端后的证据包完整复盘；浏览器需提供 HEVC 解码能力。
 
 Opus 预览回归可构建 `./cmd/server` 和 `./internal/diagnostic/testdata/opus-fixture`，设置 `STREAMANALYZER_TEST_SERVER`、`STREAMANALYZER_OPUS_FIXTURE` 后执行 `node internal/handler/testdata/rtsp_opus_e2e.cjs`。真实 Chrome 验证 TCP/UDP 的音频解码字节、时间推进、一次 PLAY、模型与 HTML，以及停止源端后的报告和原始 dump 一致性。变长包覆盖 2.5/5/10/20/40/60/120 ms；测试先观测保留的 DTX 空洞，再显式跳转越过空洞并记录 seeking 事件，生产流程不会自动跳过。`node internal/handler/testdata/opus_duration.cjs` 单独检查实际 MP4 时长和时间戳。
+
+RTSP 卡顿媒体补查的真实浏览器回归：构建 `./cmd/server` 与 `./internal/diagnostic/testdata/rtsp-stall-fixture`，设置 `STREAMANALYZER_TEST_SERVER` 和 `STREAMANALYZER_RTSP_STALL_FIXTURE` 后执行 `node internal/handler/testdata/rtsp_stall_e2e.cjs`。测试使用同一 RTSP 会话发送 H.264/AAC，先播放三秒、暂停 RTP 四秒、再恢复连续媒体时间，分别验证 TCP/UDP 实际卡顿、停止源站后的 MP4/JPEG 生成、模型数字摘要、证据包导入后重新补查及四份产物逐字节一致。需要 Chrome、FFmpeg 与 FFprobe。

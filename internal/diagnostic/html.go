@@ -80,7 +80,28 @@ var reportPage = template.Must(template.New("report").Funcs(template.FuncMap{
 	"presentationCount":      playerPresentationCountLabel,
 	"intervalName":           playerIntervalLabel,
 	"investigationTitle":     playerInvestigationIntervalTitle,
-}).Parse(`{{define "codecRows"}}
+}).Parse(`{{define "rtspMediaEvidence"}}
+<section class="rtsp-media-evidence"><h4>RTSP 离线媒体重建</h4>
+<p class="timing-note">离线重建仅使用已采集的原始 RTP，不会重新连接源站。按保存的播放器媒体时间与接收端 RTP 时钟估算位置，不是源端 UTC 或精确呈帧对齐，也未按收包到达时间直接定位画面。</p>
+<p class="timing-note">片段与截图用于核对同期源流内容，不能重现或证明本机画面冻结；原收流等待和播放器停顿请对照时序证据。</p>
+<dl><dt>源视频轨道</dt><dd>{{if .VideoTrackID}}#{{.VideoTrackID}} · {{.VideoCodec}}{{else}}未选择{{end}}</dd>
+<dt>源音频轨道</dt><dd>{{if .AudioTrackID}}#{{.AudioTrackID}} · {{.AudioCodec}}{{else}}未选择{{end}}</dd>
+<dt>重建音频处理</dt><dd>{{if eq .AudioTransform "g711_to_pcm"}}G.711 解码为 PCM{{else if eq .AudioTransform "native_remux"}}原生转封装{{else}}未选择{{end}}</dd>
+<dt>播放器记录修订</dt><dd>#{{.PlayerRevision}}</dd>
+<dt>锚点采样偏移</dt><dd>{{.AnchorSampleOffsetMS}} ms</dd><dt>锚点播放器媒体时间</dt><dd>{{.AnchorCurrentMS}} ms</dd>
+<dt>预览解码时钟起点</dt><dd>{{.PreviewOriginMS}} ms</dd><dt>重组媒体起点</dt><dd>{{.MediaOriginMS}} ms</dd>
+<dt>重建媒体范围</dt><dd>{{.DurationMS}} ms</dd><dt>检查 RTP 包</dt><dd>{{.PacketCount}}</dd>
+<dt>重建视频访问单元</dt><dd>{{.VideoAccessUnits}}</dd><dt>重建音频单元 / PCM 块</dt><dd>{{.AudioAccessUnits}}</dd>
+<dt>未用于重建的 RTP 包</dt><dd>{{.DroppedPackets}}</dd><dt>丢弃不完整访问单元</dt><dd>{{.IncompleteAccessUnits}}</dd></dl>
+<p class="timing-note">锚点重建位置 = 播放器媒体时间 + 预览解码时钟起点 − 重组媒体起点。两项分别对应预览归一化前的 DTS 与重建输入的呈现时间起点；派生 MP4 使用 H.264 / AAC，重建计数不是浏览器解码或呈帧计数。</p>
+{{if .Keyframes}}<h4>离线重建随机接入点</h4><div class="scroll"><table><thead><tr><th>归零前 DTS (ms)</th><th>归零前 PTS (ms)</th><th>RTP 到达偏移 (ms)</th><th>轨道</th><th>原始条目</th><th>偏移（字节）</th></tr></thead><tbody>{{range .Keyframes}}<tr><td>{{.DTS}}</td><td>{{.PTS}}</td><td>{{.ArrivalMS}}</td><td>#{{.Track}}</td><td>{{.Artifact}}</td><td>{{.Offset}}</td></tr>{{end}}</tbody></table></div><p class="timing-note">原始引用标识访问单元完成时的 RTP 包，不表示该单包包含完整画面。DTS / PTS 为归零前重建时间，减去重组媒体起点后可与片段定位比较。最多保留 16 个随机接入点。</p>{{else}}<p class="timing-note">未保留可用的离线重建随机接入点记录。</p>{{end}}
+<details><summary>重建依据与文件指纹（SHA-256）</summary><div class="scroll"><table><thead><tr><th>依据</th><th>大小（字节）</th><th>SHA-256</th></tr></thead><tbody>
+<tr><td>原始 RTSP 归档</td><td>{{.SourceArtifact.Bytes}}</td><td>{{.SourceArtifact.SHA256}}</td></tr>
+<tr><td>接收时间线</td><td>{{.TimelineArtifact.Bytes}}</td><td>{{.TimelineArtifact.SHA256}}</td></tr>
+<tr><td>播放器记录</td><td>{{.PlayerArtifact.Bytes}}</td><td>{{.PlayerArtifact.SHA256}}</td></tr>
+<tr><td>临时重建 fMP4</td><td>{{.RemuxArtifact.Bytes}}</td><td>{{.RemuxArtifact.SHA256}}</td></tr>
+</tbody></table></div><p class="timing-note">临时重建 fMP4 指纹用于复核重建结果，不替代原始 dump，也不作为额外原始流归档。</p></details></section>
+{{end}}{{define "codecRows"}}
 {{with .VideoCodecs}}<dt>视频编码</dt><dd>{{join . " / "}}</dd>{{end}}
 {{with .AudioCodecs}}<dt>音频编码</dt><dd>{{join . " / "}}</dd>{{end}}
 {{end}}{{define "playerVideo"}}
@@ -423,14 +444,15 @@ thead{color:#52657e;background:#f7f9fc}
 {{if eq .IntervalKind "presentation_gap"}}<p class="timing-note">同期源流片段和截图供内容对照，不能重现或证明本机画面冻结。</p>{{end}}
 <p>{{investigationMedia .Media.Status}}{{with .Media.Reason}} · {{.}}{{end}}</p>
 {{with .Media.Alignment}}<p class="timing-note">媒体定位方式 {{investigationAlignment .}}</p>{{end}}
-{{if .Media.StartMS}}<p class="timing-note">源流媒体时间 {{.Media.StartMS}}–{{.Media.EndMS}} ms</p>{{end}}
-{{if .Images}}<div class="stall-images">{{range .Images}}<figure><img src="{{.DataURL}}" alt="{{.Label}}"><figcaption>{{.Label}}{{with .MediaTimeMS}} · 源流媒体时间 {{.}} ms{{end}} · {{.Bytes}} 字节</figcaption></figure>{{end}}</div>{{end}}
+{{with .Media.RTSP}}{{template "rtspMediaEvidence" .}}{{end}}
+{{if .Media.StartMS}}<p class="timing-note">{{if .Media.RTSP}}重建媒体时间{{else}}源流媒体时间{{end}} {{.Media.StartMS}}–{{.Media.EndMS}} ms</p>{{end}}
+{{$rtspMedia := .Media.RTSP}}{{if .Images}}<div class="stall-images">{{range .Images}}<figure><img src="{{.DataURL}}" alt="{{.Label}}"><figcaption>{{.Label}}{{with .MediaTimeMS}} · {{if $rtspMedia}}重建媒体时间{{else}}源流媒体时间{{end}} {{.}} ms{{end}} · {{.Bytes}} 字节</figcaption></figure>{{end}}</div>{{end}}
 {{with .ImagesOmitted}}<p class="timing-note">达到报告截图内嵌上限，另有 {{.}} 张截图通过链接或证据包查看。</p>{{end}}
 {{range .OtherImages}}<p><a href="{{.Href}}">下载源流截图 · {{.Bytes}} 字节</a></p>{{end}}
 {{range .Clips}}<p><a href="{{.Href}}">下载源流片段 · {{.Bytes}} 字节</a></p>{{end}}
 {{if .Media.Assets}}<p class="timing-note">媒体文件保存在证据包中；独立 HTML 内嵌可用截图，片段通过下载链接或解压证据包后查看。</p>{{end}}
-<h3>模型建议（时序证据）</h3>
-<p class="timing-note">模型依据关联的接收间隔、缓冲与关键帧记录提出待验证建议，源流片段和截图供复核。</p>
+<h3>模型建议（{{if .Media.RTSP}}时序与重建证据{{else}}时序证据{{end}}）</h3>
+<p class="timing-note">{{if .Media.RTSP}}模型基于时序与媒体重建记录提出待验证建议；未向模型发送截图像素，截图供人工对照。{{else}}模型依据关联的接收间隔、缓冲与关键帧记录提出待验证建议，源流片段和截图供复核。{{end}}</p>
 {{with .Explanation}}<p class="timing-note">解读来源 {{modelProvider .Provider}}{{if .Model}} · {{.Model}}{{end}}</p><p>{{.Summary}}</p>
 {{range .Hypotheses}}<h4>待验证 · {{.Claim}}</h4><p>{{range .EvidenceIDs}}<a href="#case-{{.}}">{{.}}</a> {{end}}</p><p>{{.NextCheck}}</p>{{end}}
 {{else}}<p>{{investigationModel .ModelState}}</p>{{end}}
@@ -1384,6 +1406,8 @@ func investigationMediaLabel(state string) string {
 
 func investigationAlignmentLabel(alignment string) string {
 	switch alignment {
+	case "receiver_rtp_estimate":
+		return "接收端 RTP 时钟与播放器媒体时间估算"
 	case "media_clock", "player_clock":
 		return "播放器媒体时间对齐"
 	case "player_clock_estimate":
