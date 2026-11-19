@@ -133,6 +133,8 @@ JSON 报告及 SQLite 任务索引位于数据目录下的 `diagnostics/`。基�
 - RTSP 主码流为 320 × 180、15 fps，子码流为 160 × 90、10 fps。两路各有 Profile 和 RTSP URI，可分别选择内置测试画面或 64 MiB 以内的本地视频。需要 FFmpeg 时，程序将本地视频转为相应的 H.264 画面并循环发送。填入用户名和密码即可对两路 RTSP 启用 Digest。支持 RTP/UDP 和 RTSP/TCP 交织。
 - 「鉴权、时钟和媒体故障」可要求 SOAP UsernameToken PasswordDigest、调整设备时钟，或令 RTSP UDP 的 SETUP/PLAY 成功但没有 RTP，供客户端验证 TCP 回退。页面分别计数 SOAP 鉴权失败、时钟偏差失败及 UDP/TCP PLAY。可开启 TCP 点播后视频停包，首次 TCP PLAY 两秒后暂停视频 RTP 五秒，G.711 测试音持续，恢复时从关键帧开始。将 RTSP 地址填入排障工作台，报告可核对视频轨的 RTP 到达缺口和恢复。
 
+事件服务支持 PullPoint 订阅、续订、取消和到期。NVR 订阅后，在模拟器点击「触发移动侦测」和「结束移动侦测」，可拉取 `RuleEngine/CellMotionDetector/Motion` 的两次状态变化。页面显示订阅数、拉取次数和通知数。
+
 #### 通用 SIP
 
 在「模拟器」切换到「通用 SIP」，填写 PBX 地址、分机号和鉴权信息后注册。信令使用 IPv4 UDP，支持 REGISTER Digest 鉴权、续期和注销。SIP 域和 Digest 用户名可按 PBX 配置单独填写。

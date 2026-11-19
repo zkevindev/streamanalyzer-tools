@@ -22,9 +22,12 @@ function notice(message = '') {
   el('notice').hidden = !message;
 }
 
+let motionActive = false;
+
 function updateButtons() {
   el('simulator-fields').disabled = busy || active || !loaded;
   el('start').disabled = busy || active || !loaded || !network.value;
+  el('motion').disabled = busy || !active;
   el('stop').disabled = busy || !active;
 }
 
@@ -41,6 +44,13 @@ function render(status) {
   el('device-url').textContent = status.device_url || '';
   el('media-url').textContent = status.media_url || '';
   el('ptz-url').textContent = status.ptz_url || '';
+  el('event-url').textContent = status.event_url || '';
+  motionActive = Boolean(status.events?.motion);
+  el('motion-control').hidden = !active;
+  el('motion').textContent = motionActive ? '结束移动侦测' : '触发移动侦测';
+  const events = status.events || {};
+  el('event-metrics').textContent = [events.subscriptions + ' 个订阅', events.pull_requests + ' 次拉取',
+    events.delivered + ' 条通知', events.dropped ? events.dropped + ' 条队列溢出' : ''].filter(Boolean).join(' · ');
   el('snapshot-hint').hidden = !active;
   el('rtsp-auth').textContent = status.rtsp_digest ? 'Digest' : '无鉴权';
   el('soap-auth').textContent = status.soap_digest ? [
@@ -148,5 +158,6 @@ form.addEventListener('submit', event => {
   void change('/start-file', body);
 });
 el('stop').addEventListener('click', () => { void change('/stop'); });
+el('motion').addEventListener('click', () => { void change('/motion', {active: !motionActive}); });
 void configure();
 void poll();
