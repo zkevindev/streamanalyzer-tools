@@ -13,13 +13,14 @@ const outcomes = {
   no_rtp: '未收到 RTP',
   no_keyframe: '收到 RTP，未解析到关键帧',
   passed: '收到并解析出首个关键帧',
+  interrupted: '已触发 SIP 中断',
   stopped: '观测已停止',
 };
 const stages = {
   invite: 'INVITE', invite_ok: 'INVITE 200 OK', ack: 'ACK',
   ack_withheld: '暂缓 ACK', cleanup_ack: '清理会话时补发 ACK',
   media_connect: '尝试建立媒体连接', media_connected: '媒体就绪', first_rtp: '首个 RTP',
-  first_keyframe: '首个关键帧', bye: 'BYE', ended: '会话结束', failed: '失败',
+  fault_injected: '触发 SIP 故障', first_keyframe: '首个关键帧', bye: 'BYE', ended: '会话结束', failed: '失败',
 };
 let pending = false;
 let generation = 0;
@@ -45,7 +46,19 @@ function notice(message) {
   el('notice').hidden = !message;
 }
 
+function applyRecoveryOptions() {
+  const choice = el('recovery-mode');
+  for (const option of choice.options) {
+    option.disabled = Boolean(option.dataset.transport && option.dataset.transport !== status?.sip_transport);
+  }
+  if (choice.selectedOptions[0]?.disabled) choice.value = '';
+  el('skip-ack').disabled = Boolean(choice.value);
+  el('skip-connect').disabled = Boolean(choice.value);
+  el('recovery-hint').hidden = choice.value !== 'udp_keepalive_timeout';
+}
+
 function render() {
+  applyRecoveryOptions();
   const active = Boolean(status?.active);
   const preview = status?.preview;
   el('platform-config').disabled = pending || active || !status;
@@ -55,9 +68,19 @@ function render() {
   el('address').textContent = status?.address ? status.address + ' · SIP ' + status.sip_transport.toUpperCase() : '—';
   el('peer').textContent = status?.peer || '—';
   const badge = el('result');
-  const label = preview ? outcomes[preview.state] : '等待点播';
+  const recovery = status?.recovery;
+  const recoveryLabels = {waiting_media: '等待首次关键帧', interrupted: '等待设备重新注册', registered: '核对重新注册后的目录',
+    previewing: '正在重新点播', passed: '恢复点播成功', failed: '恢复失败', stopped: '观测已停止'};
+  const label = recovery ? recoveryLabels[recovery.state] : preview ? outcomes[preview.state] : '等待点播';
   if (badge.textContent !== label) badge.textContent = label;
-  badge.dataset.status = preview?.state === 'passed' ? 'done' : (preview?.error ? 'failed' : '');
+  badge.dataset.status = (recovery?.state || preview?.state) === 'passed' ? 'done' : (recovery?.error || preview?.error ? 'failed' : '');
+  const recoveryDetails = recovery ? [recovery.before.call_id && '原会话 ' + recovery.before.call_id,
+    recovery.ignored_keepalives > 0 && '忽略 ' + recovery.ignored_keepalives + ' 次心跳',
+    recovery.previous_session?.timeline?.some(mark => mark.stage === 'ended') && '旧会话已释放',
+    recovery.catalog_at && '已收到恢复后的在线目录',
+    recovery.recovery_ms != null && '恢复到关键帧 ' + recovery.recovery_ms + ' ms', recovery.error].filter(Boolean) : [];
+  el('recovery-result').hidden = !recoveryDetails.length;
+  el('recovery-result').textContent = recoveryDetails.join(' · ');
   el('stats').hidden = !preview;
   el('rtp').textContent = preview?.media.packets || 0;
   el('ps').textContent = preview?.media.ps_units || 0;
@@ -126,12 +149,13 @@ el('preview-form').addEventListener('submit', event => {
   event.preventDefault();
   const config = Object.fromEntries(new FormData(event.currentTarget));
   config.window_ms = Number(config.window_ms);
-  config.skip_ack = el('skip-ack').checked;
-  config.skip_connect = config.media_transport === 'tcp-active' && el('skip-connect').checked;
+  config.skip_ack = !config.recovery && el('skip-ack').checked;
+  config.skip_connect = !config.recovery && config.media_transport === 'tcp-active' && el('skip-connect').checked;
   void change('/preview', config);
 });
 el('media-transport').addEventListener('change', () => {
   el('skip-connect-control').hidden = el('media-transport').value !== 'tcp-active';
 });
+el('recovery-mode').addEventListener('change', applyRecoveryOptions);
 el('stop').addEventListener('click', () => void change('/stop'));
 void poll();

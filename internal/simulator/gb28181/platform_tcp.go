@@ -14,8 +14,9 @@ import (
 )
 
 type platformListener struct {
-	Close func() error
-	serve func(*sipgo.Server) error
+	interrupt func(netip.AddrPort) bool
+	Close     func() error
+	serve     func(*sipgo.Server) error
 }
 
 func (p *platform) listen() (platformListener, netip.AddrPort, error) {
@@ -25,14 +26,14 @@ func (p *platform) listen() (platformListener, netip.AddrPort, error) {
 		if err != nil {
 			return platformListener{}, netip.AddrPort{}, err
 		}
-		wire := &platformTCPListener{TCPListener: conn, forget: p.forget}
-		return platformListener{wire.Close, func(s *sipgo.Server) error { return s.ServeTCP(wire) }}, ipv4Endpoint(conn.Addr().(*net.TCPAddr).AddrPort()), nil
+		wire := &platformTCPListener{TCPListener: conn, forget: p.forget, peers: make(map[netip.AddrPort]*platformTCPConn)}
+		return platformListener{Close: wire.Close, serve: func(s *sipgo.Server) error { return s.ServeTCP(wire) }, interrupt: wire.interruptPeer}, ipv4Endpoint(conn.Addr().(*net.TCPAddr).AddrPort()), nil
 	}
 	conn, err := net.ListenUDP("udp4", &net.UDPAddr{IP: ip, Port: p.cfg.Port})
 	if err != nil {
 		return platformListener{}, netip.AddrPort{}, err
 	}
-	return platformListener{conn.Close, func(s *sipgo.Server) error { return s.ServeUDP(conn) }}, ipv4Endpoint(conn.LocalAddr().(*net.UDPAddr).AddrPort()), nil
+	return platformListener{Close: conn.Close, serve: func(s *sipgo.Server) error { return s.ServeUDP(conn) }}, ipv4Endpoint(conn.LocalAddr().(*net.UDPAddr).AddrPort()), nil
 }
 
 func ipv4Endpoint(a netip.AddrPort) netip.AddrPort {
@@ -42,6 +43,8 @@ func ipv4Endpoint(a netip.AddrPort) netip.AddrPort {
 type platformTCPListener struct {
 	*net.TCPListener
 	forget func(netip.AddrPort)
+	mu     sync.Mutex
+	peers  map[netip.AddrPort]*platformTCPConn
 }
 
 func (l *platformTCPListener) Accept() (net.Conn, error) {
@@ -50,7 +53,26 @@ func (l *platformTCPListener) Accept() (net.Conn, error) {
 		return nil, err
 	}
 	peer := ipv4Endpoint(conn.RemoteAddr().(*net.TCPAddr).AddrPort())
-	return &platformTCPConn{TCPConn: conn, end: sync.OnceFunc(func() { l.forget(peer) })}, nil
+	wire := &platformTCPConn{TCPConn: conn}
+	wire.end = sync.OnceFunc(func() {
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		if l.peers[peer] == wire {
+			delete(l.peers, peer)
+			l.forget(peer)
+		}
+	})
+	l.mu.Lock()
+	l.peers[peer] = wire
+	l.mu.Unlock()
+	return wire, nil
+}
+
+func (l *platformTCPListener) interruptPeer(peer netip.AddrPort) bool {
+	l.mu.Lock()
+	wire := l.peers[peer]
+	l.mu.Unlock()
+	return wire != nil && wire.Close() == nil
 }
 
 type platformTCPConn struct {

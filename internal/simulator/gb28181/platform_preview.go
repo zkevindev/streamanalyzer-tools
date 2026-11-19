@@ -38,6 +38,11 @@ func (m *PlatformManager) Preview(cfg PreviewConfig) error {
 	if p.ctx.Err() != nil || !time.Now().Before(p.expires) {
 		return ErrPlatformPeer
 	}
+	if cfg.Recovery != "" && (cfg.SkipACK || cfg.SkipConnect ||
+		(cfg.Recovery != recoveryTCP || p.cfg.SIPTransport != "tcp") &&
+			(cfg.Recovery != recoveryUDP || p.cfg.SIPTransport != "udp")) {
+		return fmt.Errorf("%w，重连场景需匹配 SIP 传输并正常发送 ACK、建立媒体连接", ErrPlatformConfig)
+	}
 	if p.busy {
 		return ErrActive
 	}
@@ -45,16 +50,30 @@ func (m *PlatformManager) Preview(cfg PreviewConfig) error {
 	if err != nil {
 		return err
 	}
-	report := &PlatformPreview{Start: time.Now(), SSRC: 1 + rand.Uint32N(999999999), State: "inviting",
-		CallID: sip.GenerateTagN(24), WindowMS: cfg.WindowMS, RTPAddress: media.address, MediaTransport: cfg.MediaTransport, ChannelID: cfg.ChannelID}
+	report := newPlatformPreview(cfg, media)
+	var recovery *PlatformRecovery
+	if cfg.Recovery != "" {
+		recovery = &PlatformRecovery{Mode: cfg.Recovery, State: "waiting_media", Before: report}
+		p.ignoredSN = make(map[uint32]struct{})
+	}
+	p.recovery = recovery
 	p.preview, p.busy = report, true
 	peer := p.peer
 	p.workers.Go(func() {
 		defer func() { p.mu.Lock(); p.busy = false; p.mu.Unlock() }()
 		defer media.close()
-		p.runPreview(cfg, report, media, peer)
+		if recovery != nil {
+			p.runRecovery(cfg, report, media, peer, recovery)
+		} else {
+			p.runPreview(cfg, report, media, peer, nil)
+		}
 	})
 	return nil
+}
+
+func newPlatformPreview(cfg PreviewConfig, media previewMedia) *PlatformPreview {
+	return &PlatformPreview{Start: time.Now(), SSRC: 1 + rand.Uint32N(999999999), State: "inviting",
+		CallID: sip.GenerateTagN(24), WindowMS: cfg.WindowMS, RTPAddress: media.address, MediaTransport: cfg.MediaTransport, ChannelID: cfg.ChannelID}
 }
 
 func (p *platform) mark(report *PlatformPreview, stage, detail string) {
@@ -69,7 +88,7 @@ func (p *platform) finish(report *PlatformPreview, state, detail string) {
 	report.State, report.Error = state, detail
 }
 
-func (p *platform) runPreview(cfg PreviewConfig, report *PlatformPreview, media previewMedia, peer netip.AddrPort) {
+func (p *platform) runPreview(cfg PreviewConfig, report *PlatformPreview, media previewMedia, peer netip.AddrPort, onFirstKeyframe func() bool) {
 	ip := p.local.Addr().String()
 	host := p.cfg.PlatformID[:10]
 	recipient := sip.Uri{Scheme: "sip", User: cfg.ChannelID, Host: peer.Addr().String(), Port: int(peer.Port())}
@@ -153,7 +172,12 @@ func (p *platform) runPreview(cfg PreviewConfig, report *PlatformPreview, media 
 		return
 	}
 	p.mark(report, "ack", "")
-	defer p.endPreview(report, dialog)
+	interrupted := false
+	defer func() {
+		if !interrupted {
+			p.endPreview(report, dialog)
+		}
+	}()
 
 	answer, answerErr := parseOffer(dialog.InviteResponse.Body())
 	mediaIP := peer.Addr()
@@ -236,17 +260,23 @@ func (p *platform) runPreview(cfg PreviewConfig, report *PlatformPreview, media 
 		seq, stamp = packet.SequenceNumber, packet.Timestamp
 		result.Packets++
 		assembly = append(assembly, packet.Payload...)
+		firstKeyframe := false
 		if packet.Marker {
 			keys := result.Keyframes
 			result.reviewPS(assembly)
 			assembly = assembly[:0]
 			if keys == 0 && result.Keyframes > 0 {
 				p.mark(report, "first_keyframe", "")
+				firstKeyframe = true
 			}
 		}
 		p.mu.Lock()
 		report.Media = PlatformMedia{Packets: result.Packets, PSUnits: result.PSUnits, PartialUnits: result.PartialUnits, VideoUnits: result.VideoUnits, Keyframes: result.Keyframes}
 		p.mu.Unlock()
+		if firstKeyframe && onFirstKeyframe != nil && onFirstKeyframe() {
+			interrupted = true
+			return
+		}
 	}
 	switch {
 	case p.ctx.Err() != nil:

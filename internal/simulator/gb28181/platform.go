@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net"
 	"net/netip"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -30,6 +29,7 @@ type PlatformConfig struct {
 }
 
 type PreviewConfig struct {
+	Recovery       string         `json:"recovery,omitempty"`
 	MediaTransport mediaTransport `json:"media_transport,omitempty"`
 	SkipConnect    bool           `json:"skip_connect,omitempty"`
 	ChannelID      string         `json:"channel_id"`
@@ -61,15 +61,16 @@ type PlatformPreview struct {
 }
 
 type PlatformStatus struct {
-	SIPTransport  string           `json:"sip_transport,omitempty"`
-	Busy          bool             `json:"busy"`
-	Active        bool             `json:"active"`
-	Address       string           `json:"address,omitempty"`
-	PlatformID    string           `json:"platform_id,omitempty"`
-	DeviceID      string           `json:"device_id,omitempty"`
-	Peer          string           `json:"peer,omitempty"`
-	Preview       *PlatformPreview `json:"preview,omitempty"`
-	DeviceSession *SessionReport   `json:"device_session,omitempty"`
+	Recovery      *PlatformRecovery `json:"recovery,omitempty"`
+	SIPTransport  string            `json:"sip_transport,omitempty"`
+	Busy          bool              `json:"busy"`
+	Active        bool              `json:"active"`
+	Address       string            `json:"address,omitempty"`
+	PlatformID    string            `json:"platform_id,omitempty"`
+	DeviceID      string            `json:"device_id,omitempty"`
+	Peer          string            `json:"peer,omitempty"`
+	Preview       *PlatformPreview  `json:"preview,omitempty"`
+	DeviceSession *SessionReport    `json:"device_session,omitempty"`
 }
 
 type PlatformManager struct {
@@ -79,18 +80,22 @@ type PlatformManager struct {
 }
 
 type platform struct {
-	cfg     PlatformConfig
-	local   netip.AddrPort
-	client  *sipgo.Client
-	ctx     context.Context
-	cancel  context.CancelFunc
-	done    chan struct{}
-	mu      sync.Mutex
-	peer    netip.AddrPort
-	expires time.Time
-	preview *PlatformPreview
-	busy    bool
-	workers sync.WaitGroup
+	interrupt func(netip.AddrPort) bool
+	recovery  *PlatformRecovery
+	catalog   *recoveryCatalog
+	ignoredSN map[uint32]struct{}
+	cfg       PlatformConfig
+	local     netip.AddrPort
+	client    *sipgo.Client
+	ctx       context.Context
+	cancel    context.CancelFunc
+	done      chan struct{}
+	mu        sync.Mutex
+	peer      netip.AddrPort
+	expires   time.Time
+	preview   *PlatformPreview
+	busy      bool
+	workers   sync.WaitGroup
 }
 
 func (m *PlatformManager) Start(cfg PlatformConfig) error {
@@ -131,7 +136,7 @@ func (m *PlatformManager) Start(cfg PlatformConfig) error {
 		cancel()
 		return fmt.Errorf("无法监听平台 SIP %s 端口：%w", strings.ToUpper(cfg.SIPTransport), err)
 	}
-	p.local = addr
+	p.local, p.interrupt = addr, listener.interrupt
 	var opts []sipgo.UserAgentOption
 	if cfg.SIPTransport == "tcp" {
 		opts = append(opts, sipgo.WithUserAgentTransactionLayerOptions(sip.WithTransactionLayerTerminateOnConnClose()),
@@ -225,25 +230,47 @@ func (p *platform) register(req *sip.Request, tx sip.ServerTransaction) {
 		_ = tx.Respond(sip.NewResponseFromRequest(req, 403, "Forbidden", nil))
 		return
 	}
-	p.peer, p.expires = peer, time.Now().Add(time.Duration(expires)*time.Second)
+	registeredAt := time.Now()
+	p.peer, p.expires = peer, registeredAt.Add(time.Duration(expires)*time.Second)
 	p.mu.Unlock()
 	res := sip.NewResponseFromRequest(req, 200, "OK", nil)
 	res.AppendHeader(sip.NewHeader("Expires", strconv.Itoa(expires)))
 	if contact := req.Contact(); contact != nil {
 		res.AppendHeader(sip.HeaderClone(contact))
 	}
-	_ = tx.Respond(res)
+	if tx.Respond(res) == nil && expires > 0 {
+		p.mu.Lock()
+		if r := p.recovery; r != nil && r.State == "interrupted" && r.RegisteredAt.IsZero() &&
+			!registeredAt.Before(r.InterruptedAt) && (r.Mode != recoveryUDP || r.IgnoredKeepalives >= 3) {
+			r.RegisteredAt = time.Now()
+			r.State = "registered"
+		}
+		p.mu.Unlock()
+	}
 }
 
 func (p *platform) peerRequest(req *sip.Request, tx sip.ServerTransaction) {
 	p.mu.Lock()
 	valid := p.peer.String() == req.Source() && time.Now().Before(p.expires)
+	var ignored bool
+	var catalog *recoveryCatalog
+	if valid {
+		ignored, catalog = p.recoveryPeerMessage(req)
+	}
 	p.mu.Unlock()
 	if !valid {
 		_ = tx.Respond(sip.NewResponseFromRequest(req, 403, "Forbidden", nil))
 		return
 	}
-	_ = tx.Respond(sip.NewResponseFromRequest(req, 200, "OK", nil))
+	if ignored {
+		return
+	}
+	if tx.Respond(sip.NewResponseFromRequest(req, 200, "OK", nil)) == nil && catalog != nil {
+		select {
+		case catalog.done <- struct{}{}:
+		default:
+		}
+	}
 }
 
 func (m *PlatformManager) Status() PlatformStatus {
@@ -260,9 +287,10 @@ func (m *PlatformManager) Status() PlatformStatus {
 		result.Peer = p.peer.String()
 	}
 	if p.preview != nil {
-		preview := *p.preview
-		preview.Timeline = slices.Clone(preview.Timeline)
-		result.Preview = &preview
+		result.Preview = clonePlatformPreview(p.preview)
+	}
+	if p.recovery != nil {
+		result.Recovery = p.recovery.snapshot()
 	}
 	return result
 }
