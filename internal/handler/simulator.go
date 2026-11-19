@@ -15,13 +15,14 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func RegisterSimulatorRoutes(r *gin.Engine, simulator *gb28181.Manager, onvifSimulator *onvif.Manager, sipSimulator *sipphone.Manager, hlsSimulator *hlsorigin.Manager) {
+func RegisterSimulatorRoutes(r *gin.Engine, simulator *gb28181.Manager, onvifSimulator *onvif.Manager, sipSimulator *sipphone.Manager, hlsSimulator *hlsorigin.Manager, platform *gb28181.PlatformManager) {
 	r.GET("/simulators", localDiagnostics, func(c *gin.Context) {
 		serveEmbeddedStaticFile(c, "simulators.html")
 	})
 	registerONVIFRoutes(r, onvifSimulator)
 	registerSIPRoutes(r, sipSimulator)
 	registerHLSRoutes(r, hlsSimulator)
+	registerGBPlatformRoutes(r, platform, simulator)
 	api := r.Group("/api/simulators/gb28181", localDiagnostics)
 	api.GET("", func(c *gin.Context) {
 		status, ok := simulator.StatusFor(c.Query("device_id"), c.Query("channel_id"))

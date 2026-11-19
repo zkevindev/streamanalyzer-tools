@@ -22,10 +22,11 @@ import (
 )
 
 type simulators struct {
-	gb28181 gb28181.Manager
-	onvif   onvif.Manager
-	hls     hlsorigin.Manager
-	sip     sipphone.Manager
+	gb28181    gb28181.Manager
+	gbPlatform gb28181.PlatformManager
+	onvif      onvif.Manager
+	hls        hlsorigin.Manager
+	sip        sipphone.Manager
 }
 
 func (s *simulators) Close() {
@@ -33,6 +34,7 @@ func (s *simulators) Close() {
 	s.sip.Close()
 	s.onvif.Close()
 	s.gb28181.Close()
+	s.gbPlatform.Close()
 }
 
 type Server struct {
@@ -73,7 +75,7 @@ func newEngine(cfg *Config, model diagnostic.Explainer, sim *simulators) (*gin.E
 	r := gin.Default()
 	h.RegisterRoutes(r)
 	handler.RegisterDiagnosticRoutes(r, diagnostics)
-	handler.RegisterSimulatorRoutes(r, &sim.gb28181, &sim.onvif, &sim.sip, &sim.hls)
+	handler.RegisterSimulatorRoutes(r, &sim.gb28181, &sim.onvif, &sim.sip, &sim.hls, &sim.gbPlatform)
 	return r, xlsxStorage, diagnostics, nil
 }
 
