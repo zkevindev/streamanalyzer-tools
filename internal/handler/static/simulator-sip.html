@@ -59,6 +59,18 @@
                 <div><label for="sip-local-port">本机 UDP 端口</label><input id="sip-local-port" name="local_port" type="number" min="0" max="65535" value="0"></div>
               </div>
             </details>
+            <details class="sim-advanced">
+              <summary>通话场景预设</summary>
+              <label for="preset">每次接通后执行</label>
+              <select id="preset" name="preset">
+                <option value="">手动操作</option>
+                <option value="one-way-send">发送单向无声并恢复</option>
+              </select>
+              <div class="sim-fields" id="preset-times" hidden>
+                <div><label for="preset-delay">接通后（毫秒）</label><input id="preset-delay" name="preset_delay_ms" type="number" min="200" max="30000" value="3000"></div>
+                <div><label for="preset-duration">故障持续（毫秒）</label><input id="preset-duration" name="preset_duration_ms" type="number" min="300" max="30000" value="5000"></div>
+              </div>
+            </details>
           </fieldset>
           <div class="sim-controls">
             <button id="register" type="submit" disabled>注册分机</button>
@@ -89,6 +101,7 @@
             </form>
             <p class="muted field-hint">通话时发送 440 Hz 测试音。收到的音频可试听最近 20 秒。</p>
             <section id="call-metrics" class="sip-metrics" aria-label="RTP 音频" hidden>
+              <p id="scenario-result" class="field-hint" role="status" hidden></p>
               <p id="audio-summary" class="field-hint"></p>
               <label for="audio-fault">单向无声</label>
               <select id="audio-fault" aria-describedby="audio-fault-hint" disabled>

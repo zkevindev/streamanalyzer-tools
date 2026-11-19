@@ -40,7 +40,9 @@ function updateButtons() {
   el('unregister').disabled = busy || !status?.active || status.state === 'stopping';
   target.disabled = !canDial;
   el('dial').disabled = !canDial;
-  el('audio-fault').disabled = busy || status?.state === 'stopping' || status?.call?.state !== 'incall';
+  const scenarioActive = ['waiting', 'injecting', 'recovering'].includes(status?.call?.scenario?.state);
+  el('audio-fault').disabled = busy || status?.state === 'stopping' || status?.call?.state !== 'incall' || scenarioActive;
+  el('preset-times').hidden = !el('preset').value;
   el('answer').disabled = busy || status?.state === 'stopping' || !incoming;
   el('hangup').disabled = busy || status?.state === 'stopping' || !calling || status.call.state === 'ending';
   el('hangup').textContent = incoming ? '拒接'
@@ -54,6 +56,7 @@ function setError(id, message) {
 
 function render(next) {
   status = next;
+  if (status.active) el('preset').value = status.preset || '';
   const state = el('registration-state');
   state.textContent = registration[status.state] || status.state;
   state.dataset.status = { registered: 'done', failed: 'failed', retrying: 'partial', registering: 'running' }[status.state] || '';
@@ -68,6 +71,14 @@ function render(next) {
   el('call-metrics').hidden = el('media-addresses').hidden = !call;
   const direction = call?.direction === 'inbound' ? '呼入' : '呼出';
   el('audio-summary').textContent = call?.codec ? direction + ' · ' + call.codec + ' · 8 kHz' : direction;
+  const scenario = call?.scenario;
+  const result = el('scenario-result');
+  result.hidden = !scenario;
+  if (scenario) {
+    const states = {waiting: '正在等待预设触发', injecting: '预设正在暂停发送', recovering: '正在验证发送恢复', passed: '场景通过', failed: '场景失败', canceled: '场景结束'};
+    result.textContent = states[scenario.state] + (scenario.reason ? ' · ' + scenario.reason : '') +
+      (scenario.finished_at ? ' · 注入丢弃 ' + scenario.dropped + ' 包 · 同期接收 ' + scenario.received + ' 包 · 最长无包 ' + scenario.longest_silence_ms + ' ms' : '');
+  }
   el('audio-fault').value = call?.audio_fault || 'off';
   renderRTP('send-rtp', call?.send_rtp);
   renderRTP('receive-rtp', call?.receive_rtp);
@@ -174,11 +185,14 @@ async function change(path, data) {
   }
 }
 
+el('preset').addEventListener('change', updateButtons);
 el('registration-form').addEventListener('submit', event => {
   event.preventDefault();
   const config = Object.fromEntries(new FormData(event.currentTarget));
   config.port = Number(config.port);
   config.local_port = Number(config.local_port);
+  config.preset_delay_ms = Number(config.preset_delay_ms);
+  config.preset_duration_ms = Number(config.preset_duration_ms);
   void change('/start', config);
 });
 el('call-form').addEventListener('submit', event => {
