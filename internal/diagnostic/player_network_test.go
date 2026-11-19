@@ -148,6 +148,19 @@ func TestPlayerNetworkCanceledTimeoutHTTPAndTruncatedBody(t *testing.T) {
 			if mode == "canceled" {
 				select {
 				case <-ready:
+					deadline := time.Now().Add(time.Second)
+					for {
+						player.hls.network.mu.Lock()
+						receiving := len(player.hls.network.entries) > 0 && player.hls.network.entries[0].receiveActive
+						player.hls.network.mu.Unlock()
+						if receiving {
+							break
+						}
+						if time.Now().After(deadline) {
+							t.Fatal("proxy did not begin observing the response body")
+						}
+						time.Sleep(time.Millisecond)
+					}
 					cancel()
 				case <-time.After(time.Second):
 					t.Fatal("upstream did not start")
@@ -163,6 +176,13 @@ func TestPlayerNetworkCanceledTimeoutHTTPAndTruncatedBody(t *testing.T) {
 				t.Fatalf("unsafe or incorrect outcome: %+v", value)
 			}
 			request := value.Requests[0]
+			if mode == "http_error" {
+				if request.FailureStage != "response_headers" || request.FailureCode != "http_error" {
+					t.Fatalf("HTTP status failure phase incorrect: %+v", request)
+				}
+			} else if request.FailureCode != mode || (request.HeaderMS != nil && request.FailureStage != "receive") {
+				t.Fatalf("body read failure was confused with setup or downstream write: %+v", request)
+			}
 			if mode == "transport_error" && (request.Bytes != 5 || request.FirstBodyMS == nil) {
 				t.Fatalf("truncated response lost upstream partial bytes: %+v", request)
 			}
@@ -397,6 +417,7 @@ func TestPlayerNetworkDelayedCaptureOriginMatchesPlayerClockAndKeepsRetryStable(
 	// An actual proxy request before capture starts has a bounded negative
 	// offset; zero would imply a different observation time.
 	raw.Requests[0].StartMS, raw.Requests[0].EndMS = 100, 200
+	raw.Requests[0].Hops = nil // This fixture isolates top-level negative offsets.
 	raw.Requests[0].HeaderMS, raw.Requests[0].FirstBodyMS = assessmentNumber(110), assessmentNumber(120)
 	if err := persistPlayerNetwork(service.runDir(id), &report, raw, record.StartedAt); err != nil {
 		t.Fatal(err)

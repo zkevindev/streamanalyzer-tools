@@ -60,6 +60,15 @@ func persistPlayerNetwork(dir string, report *Report, value *PlayerNetworkReport
 		request := &value.Requests[i]
 		request.StartMS += shift
 		request.EndMS += shift
+		for j := range request.Hops {
+			hop := &request.Hops[j]
+			hop.StartMS += shift
+			hop.EndMS += shift
+			for k := range hop.Stages {
+				hop.Stages[k].StartMS += shift
+				hop.Stages[k].EndMS += shift
+			}
+		}
 		if request.HeaderMS != nil {
 			*request.HeaderMS += shift
 		}
@@ -125,6 +134,9 @@ func importedPlayerNetwork(dir string, report *Report, entries map[string]*zip.F
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(&value) != nil || decoder.Decode(new(any)) != io.EOF {
 		return fmt.Errorf("%w: 播放器网络证据格式无效", ErrInvalid)
+	}
+	if !validLegacyPlayerNetworkJSON(data, value.Version) {
+		return fmt.Errorf("%w: 旧版播放器网络证据包含新版字段", ErrInvalid)
 	}
 	record, err := readPlayerRecording(dir)
 	if err != nil {

@@ -85,6 +85,7 @@ func (h *playerHLS) serve(w http.ResponseWriter, r *http.Request, resource strin
 	case h.fetch <- struct{}{}:
 		defer func() { <-h.fetch }()
 	default:
+		h.network.fail(evidence, "proxy_limit", "limit_exceeded")
 		http.Error(w, "本地播放器请求过多", http.StatusServiceUnavailable)
 		return
 	}
@@ -101,8 +102,9 @@ func (h *playerHLS) serve(w http.ResponseWriter, r *http.Request, resource strin
 	} else if value := r.Header.Get("Range"); strings.HasPrefix(value, "bytes=") && len(value) <= 64 && !strings.Contains(value, ",") {
 		upstream.Header.Set("Range", value)
 	}
-	resp, err := h.client.Do(upstream)
+	resp, err := h.network.doRequest(h.client, upstream, evidence)
 	if err != nil {
+		h.network.requestError(evidence, err, r.Context().Err(), resp)
 		if resp != nil {
 			h.network.header(evidence, resp.StatusCode)
 		}
@@ -114,6 +116,7 @@ func (h *playerHLS) serve(w http.ResponseWriter, r *http.Request, resource strin
 	h.network.header(evidence, resp.StatusCode)
 	observed := &playerNetworkReader{ReadCloser: resp.Body, network: h.network, entry: evidence}
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+		h.network.fail(evidence, "response_headers", "http_error")
 		outcome = "http_error"
 		if resp.StatusCode >= 400 && resp.StatusCode <= 599 {
 			http.Error(w, "HLS 源返回错误状态", resp.StatusCode)
@@ -121,6 +124,10 @@ func (h *playerHLS) serve(w http.ResponseWriter, r *http.Request, resource strin
 			hlsPlaybackError(w)
 		}
 		return
+	}
+	if r.Method != http.MethodHead {
+		h.network.receive(evidence, true, false)
+		defer h.network.receive(evidence, false, true)
 	}
 	mediaType, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 	isPlaylist := entry.playlist || strings.Contains(mediaType, "mpegurl")
@@ -144,6 +151,9 @@ func (h *playerHLS) serve(w http.ResponseWriter, r *http.Request, resource strin
 		if err != nil || len(data) > hlsPlaylistLimit {
 			if err != nil {
 				outcome = playerNetworkOutcome(err, r.Context().Err())
+				h.network.fail(evidence, "receive", outcome)
+			} else {
+				h.network.fail(evidence, "proxy_limit", "limit_exceeded")
 			}
 			hlsPlaybackError(w)
 			return
@@ -154,17 +164,20 @@ func (h *playerHLS) serve(w http.ResponseWriter, r *http.Request, resource strin
 		}
 		rewritten, err := h.rewrite(data, base, r.URL.Query().Get("token"))
 		if err != nil {
+			h.network.fail(evidence, "playlist", "invalid_playlist")
 			hlsPlaybackError(w)
 			return
 		}
 		if _, err := io.WriteString(w, rewritten); err != nil {
 			outcome = "canceled"
+			h.network.fail(evidence, "proxy_write", "proxy_write_error")
 		} else {
 			outcome = "complete"
 		}
 		return
 	}
 	if resp.ContentLength > hlsSegmentLimit {
+		h.network.fail(evidence, "proxy_limit", "limit_exceeded")
 		hlsPlaybackError(w)
 		return
 	}
@@ -181,12 +194,15 @@ func (h *playerHLS) serve(w http.ResponseWriter, r *http.Request, resource strin
 		if err != nil {
 			if observed.err != nil {
 				outcome = playerNetworkOutcome(observed.err, r.Context().Err())
+				h.network.fail(evidence, "receive", outcome)
 			} else {
 				outcome = "canceled"
+				h.network.fail(evidence, "proxy_write", "proxy_write_error")
 			}
 			return
 		}
 		if count == hlsSegmentLimit && resp.ContentLength != count && !observed.eof {
+			h.network.fail(evidence, "proxy_limit", "limit_exceeded")
 			return
 		}
 	}

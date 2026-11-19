@@ -59,10 +59,15 @@ type observedHTTPTransport struct {
 	base        http.RoundTripper
 	sampleStart time.Time
 	requests    []HTTPRequestTiming
+	onRequest   func(HTTPRequestTiming, *bool)
+	onDropped   func()
 }
 
 func (t *observedHTTPTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if len(t.requests) == maxHTTPRequests {
+		if t.onDropped != nil {
+			t.onDropped()
+		}
 		return t.base.RoundTrip(req)
 	}
 	attempt := httpAttempt{
@@ -83,18 +88,23 @@ func (t *observedHTTPTransport) RoundTrip(req *http.Request) (*http.Response, er
 	attempt.requestFields.Set("Host", host)
 	ctx := httptrace.WithClientTrace(req.Context(), attempt.trace())
 	resp, err := t.base.RoundTrip(req.WithContext(ctx))
-	t.requests = append(t.requests, attempt.finish(resp, err))
+	timing := attempt.finish(resp, err)
+	t.requests = append(t.requests, timing)
+	if t.onRequest != nil {
+		t.onRequest(timing, attempt.connectionReused)
+	}
 	return resp, err
 }
 
 type httpAttempt struct {
-	mu            sync.Mutex
-	sampleStart   time.Time
-	request       HTTPRequestTiming
-	active        map[string]int
-	lastStage     string
-	finished      bool
-	requestFields http.Header
+	mu               sync.Mutex
+	sampleStart      time.Time
+	request          HTTPRequestTiming
+	active           map[string]int
+	lastStage        string
+	finished         bool
+	requestFields    http.Header
+	connectionReused *bool
 }
 
 func (a *httpAttempt) trace() *httptrace.ClientTrace {
@@ -172,10 +182,12 @@ func (a *httpAttempt) end(key string, at int64) bool {
 	return ok
 }
 
-func (a *httpAttempt) gotConnection(httptrace.GotConnInfo) {
+func (a *httpAttempt) gotConnection(info httptrace.GotConnInfo) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if !a.finished {
+		reused := info.Reused
+		a.connectionReused = &reused
 		now := a.now()
 		a.end("response_first_byte", now)
 		a.begin("request_send", "request_send", now)

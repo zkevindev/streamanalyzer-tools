@@ -77,9 +77,9 @@ func schedulingCaseFindings(scheduling *PlayerSchedulingReport, stall PlayerStal
 	return result
 }
 
-func assessStall(item StallInvestigation) *StallAssessment {
+func assessStallV3(item StallInvestigation) *StallAssessment {
 	result := assessStallV2(item)
-	result.Version = stallAssessmentVersion
+	result.Version = "stall-assessment/3"
 	scheduling := item.Correlation.Scheduling
 	if scheduling == nil {
 		return result
