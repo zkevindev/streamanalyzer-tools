@@ -20,7 +20,7 @@ import (
 
 const rtspLegacyPreviewArchiveVersion = 3
 const rtspPreviewArchiveVersion = 4
-const rtspPreviewCodecCapabilitiesVersion = 1
+const rtspPreviewCodecCapabilitiesVersion = 2
 const rtspPlayerSchemaVersion = 6
 
 // RTSPPreviewReport describes the local remux pipeline, not a decoded source
@@ -63,6 +63,7 @@ type rtspPreview struct {
 	video                      *format.H264
 	hevc                       *rtspHEVCPreview
 	audio                      *format.MPEG4Audio
+	opus                       *rtspOpusPreview
 	videoDecoder               *rtph264.Decoder
 	audioDecoder               *rtpmpeg4audio.Decoder
 	sps, pps                   []byte
@@ -140,10 +141,27 @@ func (p *rtspPreview) start(client *gortsplib.Client, desc *description.Session)
 					}
 				})
 			case description.MediaTypeAudio:
-				if p.audio != nil {
+				if p.hasAudio() {
 					continue
 				}
 				p.report.AudioReason = "codec_unsupported"
+				if opus, ok := codec.(*format.Opus); ok {
+					state, err := newRTSPOpusPreview(opus.ChannelCount)
+					if err != nil {
+						p.report.AudioReason = "opus_configuration_unsupported"
+						continue
+					}
+					p.opus = state
+					p.report.AudioTrackID, p.report.AudioCodec, p.report.AudioReason = trackID, "opus", ""
+					p.report.AudioOutputCodec, p.report.AudioTransform = "opus", "native_remux"
+					client.OnPacketRTP(media, codec, func(packet *rtp.Packet) {
+						pts, ok := p.packetPTS(codec, packet)
+						if ok {
+							p.enqueue(packet, pts, false)
+						}
+					})
+					continue
+				}
 				audio, ok := codec.(*format.MPEG4Audio)
 				if !ok {
 					continue
@@ -268,7 +286,7 @@ func (p *rtspPreview) finish() RTSPPreviewReport {
 			p.report.VideoReason = "no_random_access"
 		}
 	}
-	if p.audio != nil && p.report.AudioAUs == 0 {
+	if p.hasAudio() && p.report.AudioAUs == 0 {
 		p.report.AudioReason = "no_media"
 	}
 	if p.player.StreamDropped() && !p.failed {
@@ -420,6 +438,10 @@ func (p *rtspPreview) writeVideo(item rtspPreviewPacket) {
 	}
 }
 func (p *rtspPreview) writeAudio(item rtspPreviewPacket) {
+	if p.opus != nil {
+		p.opus.write(p, item)
+		return
+	}
 	aus, err := p.audioDecoder.Decode(item.packet)
 	if errors.Is(err, rtpmpeg4audio.ErrMorePacketsNeeded) {
 		return
@@ -501,7 +523,7 @@ func validRTSPPreview(p *RTSPPreviewReport, tracks []RTSPTrackMetrics) bool {
 		return false
 	}
 	for _, code := range []string{p.ReasonCode, p.VideoReason, p.AudioReason} {
-		if !validRTSPPreviewReason(code) || p.Version == 1 && code == "missing_hevc_parameters" {
+		if !validRTSPPreviewReason(code) || p.Version == 1 && code == "missing_hevc_parameters" || code == "opus_configuration_unsupported" && (p.Version != 2 || p.CodecCapabilitiesVersion < 2) {
 			return false
 		}
 	}
@@ -530,11 +552,11 @@ func validRTSPPreview(p *RTSPPreviewReport, tracks []RTSPTrackMetrics) bool {
 		}
 		return false
 	}
-	return (p.VideoCodec == "" || p.VideoCodec == "h264" || p.Version == 2 && p.CodecCapabilitiesVersion >= 1 && p.VideoCodec == "h265") && (p.AudioCodec == "" || p.AudioCodec == "aac") && selected(p.VideoTrackID, p.VideoCodec, "video") && selected(p.AudioTrackID, p.AudioCodec, "audio")
+	return (p.VideoCodec == "" || p.VideoCodec == "h264" || p.Version == 2 && p.CodecCapabilitiesVersion >= 1 && p.VideoCodec == "h265") && (p.AudioCodec == "" || p.AudioCodec == "aac" || p.Version == 2 && p.CodecCapabilitiesVersion >= 2 && p.AudioCodec == "opus") && selected(p.VideoTrackID, p.VideoCodec, "video") && selected(p.AudioTrackID, p.AudioCodec, "audio")
 }
 func validRTSPPreviewReason(code string) bool {
 	switch code {
-	case "", "missing_hevc_parameters", "no_track", "no_media", "codec_unsupported", "packetization_unsupported", "aac_configuration_unsupported", "queue_limit", "missing_video_parameters", "no_random_access", "timestamp_unsupported", "access_unit_limit", "player_unavailable", "capture_setup_failed":
+	case "", "missing_hevc_parameters", "no_track", "no_media", "codec_unsupported", "packetization_unsupported", "aac_configuration_unsupported", "opus_configuration_unsupported", "queue_limit", "missing_video_parameters", "no_random_access", "timestamp_unsupported", "access_unit_limit", "player_unavailable", "capture_setup_failed":
 		return true
 	}
 	return false
@@ -554,4 +576,4 @@ func addRTSPPreviewFinding(report *Report) {
 	}
 }
 
-func (p *rtspPreview) hasAudio() bool { return p.audio != nil }
+func (p *rtspPreview) hasAudio() bool { return p.audio != nil || p.opus != nil }
