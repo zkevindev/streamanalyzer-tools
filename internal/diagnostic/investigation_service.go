@@ -206,6 +206,14 @@ func (s *Service) saveStallItem(runID string, item StallInvestigation) error {
 	if previous == nil || report.Player == nil || item.PlayerRevision != report.Player.Revision {
 		return ErrReportChanged
 	}
+	if item.Explanation != nil && item.Explanation.InputEvidence != nil {
+		if !sameStallModelScope(item, *previous) {
+			return ErrReportChanged
+		}
+		if err := validateStallModelInput(s.runDir(runID), report, *previous, item.Explanation.InputEvidence); err != nil {
+			return ErrReportChanged
+		}
+	}
 	item.UpdatedAt = time.Now().UTC()
 	*previous = item
 	return persistStallReport(s.runDir(runID), &report)
@@ -275,7 +283,7 @@ func (s *Service) explainStall(ctx context.Context, runID, caseID string) (Expla
 		player.StallRatio = float64(player.TotalStallMS) / float64(player.ActiveMS)
 	}
 	scoped.Player = &player
-	explanation, err := model.explainer.Explain(ctx, scoped)
+	explanation, finalFindings, err := s.callStallModel(ctx, s.runDir(runID), model.explainer, scoped, *item)
 	s.modelMu.Lock()
 	defer s.modelMu.Unlock()
 	if s.model != model {
@@ -284,7 +292,7 @@ func (s *Service) explainStall(ctx context.Context, runID, caseID string) (Expla
 	if err != nil {
 		return Explanation{}, model, err
 	}
-	if !validExplanation(explanation, scoped.Findings) {
+	if !validExplanation(explanation, finalFindings) {
 		return Explanation{}, model, ErrProvider
 	}
 	return explanation, model, nil
@@ -310,6 +318,9 @@ func (s *Service) finishStallModel(ctx context.Context, runID string, item Stall
 		item.Status = "canceled"
 	}
 	if err := s.saveStallItem(runID, item); err != nil {
+		if errors.Is(err, ErrReportChanged) {
+			return s.failStaleStallModel(runID, item.ID, item.PlayerRevision)
+		}
 		return StallInvestigation{}, err
 	}
 	return item, nil
@@ -379,8 +390,10 @@ func persistStallReport(dir string, report *Report) error {
 	ledger := investigationLedger{Version: 1, Items: report.StallInvestigations}
 	for _, item := range ledger.Items {
 		if item.Media.RTSP != nil {
-			ledger.Version = 2
-			break
+			ledger.Version = max(ledger.Version, 2)
+		}
+		if item.Explanation != nil && item.Explanation.InputEvidence != nil {
+			ledger.Version = 3
 		}
 	}
 	data, err := json.Marshal(ledger)

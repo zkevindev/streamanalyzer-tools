@@ -206,3 +206,8 @@ td:not(:first-child) { font-family: var(--font-data); }
     .sample-options { gap: .5rem; }
     .panel-heading, .panel-body { padding-inline: .75rem; }
 }
+
+.model-input-evidence { min-width: 0; margin-block: .55rem; }
+.model-input-mode { font-weight: 650; }
+.model-input-images { padding-left: 1.35rem; overflow-wrap: anywhere; }
+.model-input-images li { margin-block: .4rem; }

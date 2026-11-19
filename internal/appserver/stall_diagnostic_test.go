@@ -112,6 +112,9 @@ func TestDiagnosticStallEvidenceWorkflowAndOfflineReplay(t *testing.T) {
 	t.Setenv("STREAMANALYZER_OPENAI_BASE_URL", model.URL+"/v1")
 	t.Setenv("STREAMANALYZER_OPENAI_MODEL", "stall-evidence-fixture")
 	t.Setenv("STREAMANALYZER_OPENAI_API_KEY", "test-model-key")
+	// This original workflow verifies the text-only model contract. Image
+	// requests and fallback are exercised by the dedicated multimodal flows.
+	t.Setenv("STREAMANALYZER_MODEL_IMAGE_INPUT", diagnostic.ImageInputText)
 	server := testDiagnosticServer(t, t.TempDir())
 	const api = "/api/diagnostics"
 	request, _ := json.Marshal(diagnostic.SampleRequest{URL: origin.URL + "/source.flv?token=private-stall-source-token", Seconds: 3, Playback: true})

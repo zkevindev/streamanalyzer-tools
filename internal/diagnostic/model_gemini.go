@@ -36,8 +36,14 @@ func NewGemini(baseURL, model, apiKey string) (*Gemini, error) {
 }
 
 type geminiPart struct {
-	Text    string `json:"text"`
-	Thought bool   `json:"thought,omitempty"`
+	Text       string           `json:"text,omitempty"`
+	Thought    bool             `json:"thought,omitempty"`
+	InlineData *geminiImageData `json:"inlineData,omitempty"`
+}
+
+type geminiImageData struct {
+	MimeType string `json:"mimeType"`
+	Data     string `json:"data"`
 }
 
 type geminiContent struct {
@@ -59,6 +65,34 @@ func (g *Gemini) Explain(ctx context.Context, report Report) (Explanation, error
 	if err != nil {
 		return Explanation{}, err
 	}
+	return g.parseCandidate(candidate, report)
+}
+
+func (g *Gemini) SupportsImages() bool { return true }
+
+func (g *Gemini) ExplainWithImages(ctx context.Context, report Report, images []ModelImage) (Explanation, error) {
+	if len(images) == 0 {
+		return g.Explain(ctx, report)
+	}
+	if err := validateModelImages(images); err != nil {
+		return Explanation{}, err
+	}
+	data, err := modelInputWithImages(report, images)
+	if err != nil {
+		return Explanation{}, err
+	}
+	parts := []geminiPart{{Text: string(data)}}
+	for _, image := range images {
+		parts = append(parts, geminiPart{Text: modelImageLabel(image)}, geminiPart{InlineData: &geminiImageData{MimeType: "image/jpeg", Data: modelImageBase64(image)}})
+	}
+	candidate, err := g.generateParts(ctx, explanationPrompt, parts, 0, true)
+	if err != nil {
+		return Explanation{}, err
+	}
+	return g.parseCandidate(candidate, report)
+}
+
+func (g *Gemini) parseCandidate(candidate geminiCandidate, report Report) (Explanation, error) {
 	if candidate.FinishReason != "" && candidate.FinishReason != "STOP" {
 		return Explanation{}, fmt.Errorf("%w: Gemini 解读未完整生成", ErrProvider)
 	}
@@ -87,6 +121,10 @@ func (g *Gemini) testConnection(ctx context.Context) error {
 }
 
 func (g *Gemini) generate(ctx context.Context, system, input string, maxTokens int) (geminiCandidate, error) {
+	return g.generateParts(ctx, system, []geminiPart{{Text: input}}, maxTokens, false)
+}
+
+func (g *Gemini) generateParts(ctx context.Context, system string, parts []geminiPart, maxTokens int, hasImages bool) (geminiCandidate, error) {
 	request := struct {
 		SystemInstruction geminiContent   `json:"systemInstruction"`
 		Contents          []geminiContent `json:"contents"`
@@ -96,7 +134,7 @@ func (g *Gemini) generate(ctx context.Context, system, input string, maxTokens i
 		} `json:"generationConfig"`
 	}{
 		SystemInstruction: geminiContent{Parts: []geminiPart{{Text: system}}},
-		Contents:          []geminiContent{{Role: "user", Parts: []geminiPart{{Text: input}}}},
+		Contents:          []geminiContent{{Role: "user", Parts: parts}},
 	}
 	request.GenerationConfig.ResponseMimeType = "application/json"
 	request.GenerationConfig.MaxOutputTokens = maxTokens
@@ -107,7 +145,11 @@ func (g *Gemini) generate(ctx context.Context, system, input string, maxTokens i
 		Candidates []geminiCandidate `json:"candidates"`
 	}
 	path := "/models/" + g.identity.Model + ":generateContent"
-	if err := g.post(ctx, path, map[string]string{"x-goog-api-key": g.apiKey}, request, &response); err != nil {
+	post := g.post
+	if hasImages {
+		post = g.postImages
+	}
+	if err := post(ctx, path, map[string]string{"x-goog-api-key": g.apiKey}, request, &response); err != nil {
 		return geminiCandidate{}, err
 	}
 	if len(response.Candidates) == 0 || (response.PromptFeedback.BlockReason != "" && response.PromptFeedback.BlockReason != "BLOCK_REASON_UNSPECIFIED") {

@@ -123,11 +123,17 @@ func validRTSPStallLedgerShape(data []byte, ledger investigationLedger) bool {
 	}
 	hasProof := false
 	for index, item := range ledger.Items {
-		_, present := raw.Items[index].Media["rtsp"]
-		if present && (ledger.Version != 2 || item.Media.RTSP == nil) {
+		present, canonical := modelEvidenceFieldPresence(raw.Items[index].Media, "rtsp")
+		if !canonical {
+			return false
+		}
+		if item.Media.RTSP != nil && (!present || ledger.Version < 2 || ledger.Version > 3) {
+			return false
+		}
+		if present && (ledger.Version < 2 || ledger.Version > 3 || item.Media.RTSP == nil) {
 			return false
 		}
 		hasProof = hasProof || item.Media.RTSP != nil
 	}
-	return ledger.Version == 1 && !hasProof || ledger.Version == 2 && hasProof
+	return ledger.Version == 1 && !hasProof || ledger.Version == 2 && hasProof || ledger.Version == 3
 }

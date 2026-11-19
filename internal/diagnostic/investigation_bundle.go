@@ -123,7 +123,7 @@ func importedStallEvidence(dir string, report *Report, entries map[string]*zip.F
 	var ledger investigationLedger
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
-	if decoder.Decode(&ledger) != nil || decoder.Decode(new(any)) != io.EOF || (ledger.Version != 1 && ledger.Version != 2) || len(ledger.Items) == 0 || len(ledger.Items) > maxStallInvestigations || !validRTSPStallLedgerShape(data, ledger) {
+	if decoder.Decode(&ledger) != nil || decoder.Decode(new(any)) != io.EOF || (ledger.Version != 1 && ledger.Version != 2 && ledger.Version != 3) || len(ledger.Items) == 0 || len(ledger.Items) > maxStallInvestigations || !validRTSPStallLedgerShape(data, ledger) || !validModelInputLedgerShape(data, ledger) {
 		return fmt.Errorf("%w: 卡顿补查记录无效", ErrInvalid)
 	}
 	seenIDs, seenStalls, seenAssets := map[string]bool{}, map[string]bool{}, map[string]bool{}
@@ -186,6 +186,14 @@ func importedStallEvidence(dir string, report *Report, entries map[string]*zip.F
 			}
 			caseFindings = append(caseFindings, item.Assessment.Findings...)
 		}
+		if item.Explanation != nil && item.Explanation.InputEvidence != nil {
+			if !validModelInputEvidence(item.Explanation.InputEvidence, item) {
+				return fmt.Errorf("%w: 模型输入审计无效", ErrInvalid)
+			}
+			if item.Explanation.InputEvidence.Mode == "vision" {
+				caseFindings = append(caseFindings, modelImageFindings(item.Explanation.InputEvidence.Images)...)
+			}
+		}
 		if item.Explanation != nil && (!validExplanation(*item.Explanation, caseFindings) || len(item.Explanation.Provider) > 128 || len(item.Explanation.Model) > 256) {
 			return fmt.Errorf("%w: 卡顿模型建议的证据引用无效", ErrInvalid)
 		}
@@ -212,6 +220,11 @@ func importedStallEvidence(dir string, report *Report, entries map[string]*zip.F
 			}
 			if err := validateStallAssetFile(dir, asset); err != nil {
 				return err
+			}
+		}
+		if item.Explanation != nil && item.Explanation.InputEvidence != nil {
+			if err := validateStallModelInput(dir, *report, item, item.Explanation.InputEvidence); err != nil {
+				return fmt.Errorf("%w: 模型输入图片与归档不一致", ErrInvalid)
 			}
 		}
 	}

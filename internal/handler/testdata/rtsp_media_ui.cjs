@@ -35,7 +35,7 @@ async function until(f){for(let n=0;n<100;n++){const result=await f();if(result)
   const metrics=await evaluate(`Object.fromEntries(Array.from(document.querySelectorAll('.rtsp-media-metrics > div')).map(row=>[row.querySelector('dt').textContent,row.querySelector('dd').textContent]))`);
   assert.equal(metrics['锚点采样偏移'],'7000 ms');assert.equal(metrics['锚点播放器媒体时间'],'3000 ms');assert.equal(metrics['预览解码时钟起点'],'2000 ms');assert.equal(metrics['重组媒体起点'],'-66 ms');assert.equal(metrics['未用于重建的 RTP 包'],'0');assert.equal(metrics['播放器记录修订'],'#0');assert.equal(metrics['重建音频处理'],'G.711 解码为 PCM');
   const text=await evaluate(`document.getElementById('rtsp-media-test').textContent`);
-  for(const label of ['接收端 RTP 时钟与播放器媒体时间估算','不能重现或证明本机画面冻结','未向模型发送截图像素','不会重新连接源站','也未按收包到达时间直接定位画面','重建媒体时间 0 ms','重建依据与文件指纹','0 ms66 ms9000 ms'])assert.ok(text.includes(label),label);
+  for(const label of ['接收端 RTP 时钟与播放器媒体时间估算','不能重现或证明本机画面冻结','该历史结果未记录截图输入方式','不会重新连接源站','也未按收包到达时间直接定位画面','重建媒体时间 0 ms','重建依据与文件指纹','0 ms66 ms9000 ms'])assert.ok(text.includes(label),label);
   await evaluate(`document.querySelector('.rtsp-media-identities').open=true`);
   for(const width of [1440,375]){await cdp('Emulation.setDeviceMetricsOverride',{width,height:1000,deviceScaleFactor:1,mobile:false});assert.equal(await evaluate(`document.documentElement.scrollWidth>innerWidth`),false,'page overflow at '+width);}
   assert.equal(await evaluate(`document.querySelector('a[href="#case-S001-E001"]').getAttribute('href')`),'#case-S001-E001');

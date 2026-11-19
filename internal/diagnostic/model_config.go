@@ -12,10 +12,11 @@ const connectionProbeInput = `Return this object: {"ok":true}`
 // ModelConfig is the configuration shared by the CLI and desktop settings.
 // APIKey is excluded from JSON so configuration views cannot expose it.
 type ModelConfig struct {
-	Provider string `json:"provider"`
-	BaseURL  string `json:"base_url"`
-	Model    string `json:"model"`
-	APIKey   string `json:"-"`
+	ImageInput string `json:"image_input,omitempty"`
+	Provider   string `json:"provider"`
+	BaseURL    string `json:"base_url"`
+	Model      string `json:"model"`
+	APIKey     string `json:"-"`
 }
 
 // Normalize supplies the base URL for native providers while retaining a
@@ -28,8 +29,12 @@ func (c ModelConfig) Normalize() ModelConfig {
 	}
 	c.Model = strings.TrimSpace(c.Model)
 	c.APIKey = strings.TrimSpace(c.APIKey)
+	c.ImageInput = strings.ToLower(strings.TrimSpace(c.ImageInput))
 	if c == (ModelConfig{}) {
 		return c
+	}
+	if c.ImageInput == "" {
+		c.ImageInput = ImageInputAuto
 	}
 	if c.Provider == "" {
 		c.Provider = ProviderOpenAICompatible
@@ -52,6 +57,9 @@ func (c ModelConfig) NewExplainer() (Explainer, error) {
 	if c == (ModelConfig{}) {
 		return nil, nil
 	}
+	if c.ImageInput != ImageInputAuto && c.ImageInput != ImageInputText {
+		return nil, fmt.Errorf("%w: 截图输入须为 auto 或 text", ErrInvalid)
+	}
 	var model Explainer
 	var err error
 	switch c.Provider {
@@ -68,6 +76,9 @@ func (c ModelConfig) NewExplainer() (Explainer, error) {
 	}
 	if err != nil {
 		return nil, err
+	}
+	if configurable, ok := model.(interface{ setImageInput(string) }); ok {
+		configurable.setImageInput(c.ImageInput)
 	}
 	return model, nil
 }

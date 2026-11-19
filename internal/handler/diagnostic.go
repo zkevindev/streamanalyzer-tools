@@ -46,6 +46,7 @@ func RegisterDiagnosticRoutes(r *gin.Engine, service *diagnostic.Service) {
 		if configured {
 			config["model_provider"] = identity.Provider
 			config["model_name"] = identity.Model
+			config["model_image_input"] = service.ModelImageInput()
 		}
 		c.JSON(http.StatusOK, config)
 	})
