@@ -16,6 +16,7 @@ import (
 const ringTimeout = 45 * time.Second
 
 type CallStatus struct {
+	PRACK           *PRACKStatus    `json:"prack,omitempty"`
 	MediaDirection  string          `json:"media_direction,omitempty"`
 	PreviousRemote  string          `json:"previous_remote,omitempty"`
 	MediaChanges    int             `json:"media_changes,omitempty"`
@@ -43,6 +44,7 @@ type CallStatus struct {
 }
 
 type phoneCall struct {
+	pendingPRACK  *inboundPRACK
 	pendingMedia  *mediaChange
 	mediaUpdates  chan *mediaChange
 	peerInviteSeq uint32
@@ -159,8 +161,16 @@ func (a *agent) outgoing(ctx context.Context, c *phoneCall, recipient sip.Uri) e
 	req.AppendHeader(from)
 	req.AppendHeader(&sip.ToHeader{Address: recipient})
 	req.AppendHeader(sip.NewHeader("Content-Type", "application/sdp"))
+	req.AppendHeader(sip.NewHeader("Supported", "100rel"))
 
-	dialog, err := a.dialogs.WriteInvite(ctx, req)
+	client, err := sipgo.NewClient(a.client.UserAgent, sipgo.WithClientAddr(a.local.String()), sipgo.WithClientConnectionAddr(a.local.String()), sipgo.WithClientNAT())
+	if err != nil {
+		return errors.New("无法初始化 SIP 呼出客户端")
+	}
+	client.TxRequester = &prackDialogTransport{client: a.client}
+	ua := a.dialogs
+	ua.Client = client
+	dialog, err := ua.WriteInvite(ctx, req)
 	if err != nil {
 		if errors.Is(ctx.Err(), context.Canceled) {
 			return nil
@@ -172,10 +182,15 @@ func (a *agent) outgoing(ctx context.Context, c *phoneCall, recipient sip.Uri) e
 	c.status.ID = req.CallID().Value()
 	a.mu.Unlock()
 
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	seenReliable := make(map[string]uint32)
+	var prackErr error
 	var earlyMedia audioParameters
 	var stopEarly func()
 	err = dialog.WaitAnswer(ctx, sipgo.AnswerOptions{Username: a.cfg.Username, Password: a.cfg.Password,
 		OnResponse: func(res *sip.Response) error {
+
 			if res.StatusCode == 180 || res.StatusCode == 183 {
 				var params audioParameters
 				if res.StatusCode == 183 && stopEarly == nil && len(res.Body()) > 0 {
@@ -195,6 +210,12 @@ func (a *agent) outgoing(ctx context.Context, c *phoneCall, recipient sip.Uri) e
 				}
 				a.mu.Unlock()
 			}
+			if prackErr == nil && res.IsProvisional() && res.StatusCode != 100 && headerOption(res, "Require", "100rel") {
+				prackErr = a.sendPRACK(ctx, c, dialog, res, seenReliable)
+				if prackErr != nil {
+					cancel()
+				}
+			}
 			return nil
 		},
 	})
@@ -202,6 +223,9 @@ func (a *agent) outgoing(ctx context.Context, c *phoneCall, recipient sip.Uri) e
 		stopEarly()
 	}
 	if err != nil && (dialog.InviteResponse == nil || !dialog.InviteResponse.IsSuccess()) {
+		if prackErr != nil {
+			return prackErr
+		}
 		if errors.Is(ctx.Err(), context.Canceled) {
 			return nil
 		}
@@ -230,6 +254,10 @@ func (a *agent) outgoing(ctx context.Context, c *phoneCall, recipient sip.Uri) e
 	if err := dialog.Ack(context.Background()); err != nil {
 		return errors.New("无法发送 SIP ACK")
 	}
+	if prackErr != nil {
+		_ = a.sendBye(dialog.Bye)
+		return prackErr
+	}
 	media := earlyMedia
 	if !media.remote.IsValid() || len(dialog.InviteResponse.Body()) != 0 {
 		_, _, media, err = negotiateAudio(dialog.InviteResponse.Body(), false)
@@ -245,9 +273,10 @@ func (a *agent) routes(server *sipgo.Server) {
 	server.OnInvite(a.incoming)
 	server.OnAck(a.ack)
 	server.OnBye(a.bye)
+	server.OnRequest(prackMethod, a.prack)
 	server.OnOptions(func(req *sip.Request, tx sip.ServerTransaction) {
 		res := sip.NewResponseFromRequest(req, 200, "OK", nil)
-		res.AppendHeader(sip.NewHeader("Allow", "OPTIONS, INVITE, ACK, CANCEL, BYE"))
+		res.AppendHeader(sip.NewHeader("Allow", "OPTIONS, INVITE, ACK, CANCEL, BYE, PRACK"))
 		_ = tx.Respond(res)
 	})
 	server.OnNoRoute(func(req *sip.Request, tx sip.ServerTransaction) {
@@ -333,16 +362,31 @@ func (a *agent) ring(c *phoneCall, tx sip.ServerTransaction, dialog *sipgo.Dialo
 		return nil
 	}
 	var stopEarly func()
-	if a.cfg.EarlyMedia && media.send {
-		if err := dialog.Respond(183, "Session Progress", answer, sip.NewHeader("Content-Type", "application/sdp")); err != nil {
+	early := a.cfg.EarlyMedia && media.send
+	reliable := headerOption(dialog.InviteRequest, "Require", "100rel") ||
+		a.cfg.ReliableEarly && headerOption(dialog.InviteRequest, "Supported", "100rel")
+	var earlyBody []byte
+	var earlyHeaders []sip.Header
+	if early {
+		earlyBody = answer
+		earlyHeaders = []sip.Header{sip.NewHeader("Content-Type", "application/sdp")}
+	}
+	if reliable {
+		confirmed, err := a.awaitPRACK(c, tx, dialog, earlyBody, earlyHeaders)
+		if err != nil || !confirmed {
+			return err
+		}
+	} else if early {
+		if err := dialog.Respond(183, "Session Progress", earlyBody, earlyHeaders...); err != nil {
 			return errors.New("无法发送早期媒体响应")
 		}
+	}
+	if early {
 		a.mu.Lock()
 		c.status.EarlyMedia = true
 		a.mu.Unlock()
 		stopEarly = c.audio.run(a.ctx, media, true)
 		defer stopEarly()
-
 	}
 	timer := time.NewTimer(ringTimeout)
 	defer timer.Stop()
