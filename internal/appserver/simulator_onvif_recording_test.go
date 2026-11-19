@@ -122,3 +122,73 @@ func playRecordingRange(t *testing.T, target string, at time.Time, code base.Sta
 		t.Fatal("timed out waiting for archive video RTP")
 	}
 }
+
+func TestONVIFRecordingGapAndCrossSegmentReplay(t *testing.T) {
+	app := testDiagnosticServer(t, t.TempDir())
+	camera := decodeDiagnostic[onvif.Status](t, diagnosticRequest(t, app, "POST", onvifAPI+"/start", http.StatusCreated,
+		[]byte(`{"recording_fixture":true,"recording_gap_seconds":8}`)))
+	recording := camera.Recording
+	if recording == nil || len(recording.Segments) != 2 || recording.Segments[1].From.Sub(recording.Segments[0].Until) != 8*time.Second {
+		t.Fatalf("missing gap fixture: %+v", recording)
+	}
+	httpClient := &http.Client{Timeout: time.Second}
+	const search = "http://www.onvif.org/ver10/search/wsdl"
+	summary := queryONVIF(t, httpClient, recording.SearchURL, search, "GetRecordingSummary", "", 200)
+	if !strings.Contains(summary, recording.From.Format(time.RFC3339)) || !strings.Contains(summary, recording.Until.Format(time.RFC3339)) {
+		t.Fatal(summary)
+	}
+	sub := queryONVIF(t, httpClient, camera.EventURL, simulatorEventNamespace, "CreatePullPointSubscription", "", 200)
+	diagnosticRequest(t, app, "POST", onvifAPI+"/recording-motion", 200, []byte(`{"recorded":false}`))
+	event := queryONVIF(t, httpClient, onvifEventText(sub, "wsa:Address"), simulatorEventNamespace, "PullMessages",
+		"<o:Timeout>PT0S</o:Timeout><o:MessageLimit>4</o:MessageLimit>", 200)
+	if !strings.Contains(event, recording.MissingMotion.Format(time.RFC3339)) {
+		t.Fatal(event)
+	}
+	playRecordingRange(t, recording.StreamURL, recording.MissingMotion, base.StatusInvalidRange)
+	playRecordingRange(t, recording.StreamURL, recording.RecordedMotion, base.StatusOK)
+
+	u, err := base.ParseURL(recording.StreamURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transport := gortsplib.ProtocolTCP
+	client := &gortsplib.Client{Scheme: u.Scheme, Host: u.Host, Protocol: &transport, ReadTimeout: 4 * time.Second}
+	if err := client.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	desc, _, err := client.Describe(u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.SetupAll(desc.BaseURL, desc.Medias); err != nil {
+		t.Fatal(err)
+	}
+	start := recording.Segments[0].Until.Add(-time.Second)
+	end := recording.Segments[1].From.Add(time.Second)
+	res, err := client.Play(&headers.Range{Value: &headers.RangeUTC{Start: start, End: &end}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reply headers.Range
+	if reply.Unmarshal(res.Header["Range"]) != nil || !reply.Value.(*headers.RangeUTC).Start.Equal(start) ||
+		!reply.Value.(*headers.RangeUTC).End.Equal(end) {
+		t.Fatalf("wrong response Range: %+v", res)
+	}
+	for deadline := time.Now().Add(3 * time.Second); time.Now().Before(deadline); time.Sleep(20 * time.Millisecond) {
+		state := decodeDiagnostic[onvif.Status](t, diagnosticRequest(t, app, "GET", onvifAPI, 200, nil)).Recording
+		if len(state.Playback) != 3 {
+			continue
+		}
+		trace := state.Playback[2]
+		if len(trace.Keyframes) < 2 {
+			continue
+		}
+		if state.Playback[0].Code != 457 || trace.Code != 200 || !trace.Requested.From.Equal(start) ||
+			!trace.Returned.Until.Equal(end) || len(trace.Parts) != 2 || trace.Keyframes[1].Sub(trace.Keyframes[0]) > 2*time.Second {
+			t.Fatalf("incorrect gap playback trace: %+v", state.Playback)
+		}
+		return
+	}
+	t.Fatal("did not see keyframes from both recording segments")
+}

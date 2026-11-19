@@ -69,6 +69,17 @@ function render(status) {
     (status.resolution_switch_at ? ' · 已切换分辨率' : '') + (status.silent_udp ? ' · UDP 无 RTP' : '');
   const recording = status.recording;
   el('recording-controls').hidden = !active || !recording;
+  const playback = el('recording-playbacks');
+  const logs = recording?.playback || [];
+  playback.hidden = !logs.length;
+  playback.replaceChildren(...logs.slice().reverse().map(trace => {
+    const line = document.createElement('li');
+    const text = span => new Date(span.from).toISOString() + ' → ' + new Date(span.until).toISOString();
+    line.textContent = ['RTSP ' + trace.code, '请求 ' + text(trace.requested),
+      trace.returned && '返回 ' + text(trace.returned), trace.parts && '实际录像 ' + trace.parts.length + ' 段',
+      trace.keyframes && '送出 ' + trace.keyframes.length + ' 段首关键帧'].filter(Boolean).join(' · ');
+    return line;
+  }));
   if (recording) {
     const date = value => new Date(value).toLocaleString('zh-CN', {timeZone: 'UTC'});
     el('recording-window').textContent = '录像 ' + date(recording.from) + ' 至 ' + date(recording.until) + ' UTC · ' + recording.stream_url;
@@ -163,7 +174,8 @@ form.addEventListener('submit', event => {
   config.rtsp_port = Number(config.rtsp_port);
   config.clock_offset_seconds = Number(config.clock_offset_seconds);
   config.silent_udp = el('silent-udp').checked;
-  config.recording_fixture = el('recording-fixture').checked;
+  config.recording_fixture = el('recording-fixture').checked || el('recording-gap').checked;
+  config.recording_gap_seconds = el('recording-gap').checked ? 8 : 0;
   config.rtsp_disconnect_ms = el('rtsp-outage').checked ? 3000 : 0;
   config.rtsp_resolution_switch_ms = el('resolution-switch').checked ? 3000 : 0;
   config.rtcp_clock_step_ms = el('rtcp-step').checked ? 350 : 0;
