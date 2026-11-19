@@ -22,10 +22,11 @@ import (
 )
 
 type RTMPConfig struct {
-	StallMS         int    `json:"stall_ms,omitempty"`
-	DelayKeyframeMS int    `json:"delay_keyframe_ms,omitempty"`
-	Fault           string `json:"fault"`
-	Port            int    `json:"port"`
+	FailbackStableMS int    `json:"failback_stable_ms,omitempty"`
+	StallMS          int    `json:"stall_ms,omitempty"`
+	DelayKeyframeMS  int    `json:"delay_keyframe_ms,omitempty"`
+	Fault            string `json:"fault"`
+	Port             int    `json:"port"`
 }
 
 type RTMPStatus struct {
@@ -71,6 +72,9 @@ func (m *RTMPManager) Start(cfg RTMPConfig) (RTMPStatus, error) {
 	}
 	if cfg.Fault == "publish_failover" && (cfg.StallMS < 500 || cfg.StallMS > 10000) ||
 		cfg.Fault != "publish_failover" && cfg.StallMS != 0 {
+		return RTMPStatus{}, ErrInvalid
+	}
+	if cfg.FailbackStableMS != 0 && (cfg.Fault != "publish_failover" || cfg.FailbackStableMS < 500 || cfg.FailbackStableMS > 30000) {
 		return RTMPStatus{}, ErrInvalid
 	}
 	if cfg.Port < 0 || cfg.Port > 65535 || cfg.DelayKeyframeMS < 0 || cfg.DelayKeyframeMS > 15000 ||
@@ -122,7 +126,7 @@ func (m *RTMPManager) Start(cfg RTMPConfig) (RTMPStatus, error) {
 	if cfg.Fault == "publish_failover" {
 		backup := target
 		backup.Path = "/live/backup"
-		source.relay.failover = &rtmpFailover{report: RTMPFailoverStatus{StallMS: cfg.StallMS, BackupURL: backup.String()}}
+		source.relay.failover = &rtmpFailover{report: RTMPFailoverStatus{StallMS: cfg.StallMS, BackupURL: backup.String(), FailbackStableMS: cfg.FailbackStableMS}}
 	}
 	source.server = rtmp.NewServer(&rtmp.ServerConfig{OnConnect: source.accept})
 	m.source = source

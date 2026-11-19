@@ -3,6 +3,7 @@ package appserver
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"testing"
@@ -132,10 +133,17 @@ func TestRTMPSimulatorRelaysPublisherKeyframesAndReconnect(t *testing.T) {
 }
 
 func TestRTMPFailoverWhenPrimaryKeepsConnection(t *testing.T) {
+	for _, stable := range []int{0, 700} {
+		t.Run(fmt.Sprint(stable), func(t *testing.T) { checkRTMPStableFailback(t, stable) })
+	}
+}
+
+func checkRTMPStableFailback(t *testing.T, stable int) {
+	t.Helper()
 	server := testDiagnosticServer(t, t.TempDir())
 	const api = "/api/simulators/rtmp"
 	status := decodeDiagnostic[mediasource.RTMPStatus](t, diagnosticRequest(t, server, "POST", api+"/start", 201,
-		[]byte(`{"fault":"publish_failover","stall_ms":500}`)))
+		fmt.Appendf(nil, `{"fault":"publish_failover","stall_ms":500,"failback_stable_ms":%d}`, stable)))
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
 	reader := &relayReader{video: make(chan relayVideo, 16)}
@@ -219,4 +227,37 @@ func TestRTMPFailoverWhenPrimaryKeepsConnection(t *testing.T) {
 	primary(1000, mainKey)
 	backup(700, backupKey)
 	next(backupKey)
+	if stable == 0 {
+		return
+	}
+
+	time.Sleep(560 * time.Millisecond)
+	mainDelta := []byte{0x27, 1, 0, 0, 0, 0, 0, 0, 2, 0x41, 1}
+	backupDelta := []byte{0x27, 1, 0, 0, 0, 0, 0, 0, 2, 0x41, 2}
+	for index := range 6 {
+		primary(1600+uint32(index)*150, mainDelta)
+		backup(1300+uint32(index)*150, backupDelta)
+		next(backupDelta)
+		time.Sleep(150 * time.Millisecond)
+	}
+	if got := get().Failover; len(got.Switches) != 1 || got.RecoveryRestarts != 1 || got.ActivePublisher != "backup" {
+		t.Fatalf("stable interval must wait for a keyframe: %+v", got)
+	}
+	primary(2500, mainKey)
+	next(mainHeader)
+	resumed := next(mainKey)
+	after := get().Failover
+	if len(after.Switches) != 2 || after.Switches[1].To != "primary" || after.ActivePublisher != "primary" ||
+		resumed.timestamp <= switched.timestamp {
+		t.Fatalf("main stream did not resume on the original viewer: %+v", after)
+	}
+	time.Sleep(560 * time.Millisecond)
+	backup(2800, backupKey)
+	next(backupHeader)
+	second := next(backupKey)
+	final := get()
+	if second.timestamp <= resumed.timestamp || final.Viewers != 1 || len(final.Failover.Switches) != 3 ||
+		final.Failover.Switches[2].To != "backup" || final.Failover.Switches[2].MediaGapMS < 500 {
+		t.Fatalf("repeat switch missing: %+v", final.Failover)
+	}
 }
