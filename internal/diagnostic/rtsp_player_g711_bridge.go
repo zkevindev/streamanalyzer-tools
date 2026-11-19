@@ -31,7 +31,8 @@ func (p *rtspPreview) startG711(client *gortsplib.Client, desc *description.Sess
 			p.report.AudioTrackID, p.report.AudioCodec = id, name
 			p.report.AudioOutputCodec, p.report.AudioTransform = "aac", "g711_to_aac"
 			p.report.AudioReason = ""
-			p.g711 = newRTSPG711Encoder(rtspG711Config{codec: name, rate: value.SampleRate, channels: value.ChannelCount}, p.g711Lookup, func(at int64, asc, au []byte) bool {
+			p.g711HeaderReady = make(chan struct{})
+			p.g711 = makeRTSPG711Encoder(rtspG711Config{codec: name, rate: value.SampleRate, channels: value.ChannelCount}, func(at int64, asc, au []byte) bool {
 				p.mu.Lock()
 				failed := p.failed
 				p.mu.Unlock()
@@ -54,10 +55,7 @@ func (p *rtspPreview) startG711(client *gortsplib.Client, desc *description.Sess
 				p.output(false)
 				return true
 			}, p.fail)
-			if !p.g711.available() {
-				p.report.AudioReason = p.g711.report.ReasonCode
-				return
-			}
+			go p.g711.initialize(p.g711Lookup, p.g711HeaderReady)
 			client.OnPacketRTP(media, codec, func(packet *rtp.Packet) {
 				pts, ok := p.packetPTS(codec, packet)
 				if ok {
@@ -89,7 +87,7 @@ func validRTSPG711Preview(preview *RTSPPreviewReport, tracks []RTSPTrackMetrics)
 	if value == nil {
 		return preview.AudioTransform != "g711_to_aac" && preview.AudioCodec != "pcma" && preview.AudioCodec != "pcmu"
 	}
-	if preview.Version != 2 || preview.CodecCapabilitiesVersion < 3 || preview.AudioTransform != "g711_to_aac" || preview.AudioOutputCodec != "aac" || (preview.AudioCodec != "pcma" && preview.AudioCodec != "pcmu") || preview.AudioTrackID == 0 || value.Version != 1 || value.Encoder != "ffmpeg" || value.OutputSampleRate != rtspG711OutputRate || value.InputSampleRate <= 0 || value.InputSampleRate > 192000 || value.Channels < 1 || value.Channels > 8 || value.OutputAUs != preview.AudioAUs {
+	if preview.Version != 2 || preview.CodecCapabilitiesVersion < 3 || preview.AudioTransform != "g711_to_aac" || preview.AudioOutputCodec != "aac" || (preview.AudioCodec != "pcma" && preview.AudioCodec != "pcmu") || preview.AudioTrackID == 0 || value.Version != 1 || value.Encoder != "ffmpeg" || value.OutputSampleRate != rtspG711OutputRate || value.InputSampleRate <= 0 || value.InputSampleRate > 1<<31-1 || value.Channels < 1 || value.Channels > 1<<31-1 || value.OutputAUs != preview.AudioAUs {
 		return false
 	}
 	matched := false
@@ -106,7 +104,7 @@ func validRTSPG711Preview(preview *RTSPPreviewReport, tracks []RTSPTrackMetrics)
 	}
 	switch value.State {
 	case "ready":
-		if value.OutputAUs == 0 || value.ReasonCode != "" {
+		if value.OutputAUs == 0 || value.InputPackets == 0 || value.InputSamples == 0 || value.OutputSamples == 0 || value.ReasonCode != "" {
 			return false
 		}
 	case "no_media":
@@ -114,7 +112,12 @@ func validRTSPG711Preview(preview *RTSPPreviewReport, tracks []RTSPTrackMetrics)
 			return false
 		}
 	case "unavailable":
-		if value.OutputAUs != 0 || value.InputSamples != 0 {
+		if value.OutputAUs != 0 || value.InputSamples != 0 || value.InputPackets != 0 || value.OutputSamples != 0 || value.InsertedSilenceSamples != 0 || value.DroppedLateSamples != 0 || value.DroppedPackets != 0 || value.PacketErrors != 0 || value.TimelineResets != 0 || value.FirstInputPTS != nil || value.StartupMS != nil || value.EncoderPrimingSamples != nil || value.EncoderPaddingSamples != nil {
+			return false
+		}
+		switch value.ReasonCode {
+		case "ffmpeg_unavailable", "ffmpeg_unsupported", "ffmpeg_start_failed", "g711_configuration_unsupported":
+		default:
 			return false
 		}
 	case "failed":
@@ -132,10 +135,13 @@ func validRTSPG711Preview(preview *RTSPPreviewReport, tracks []RTSPTrackMetrics)
 			return false
 		}
 	}
+	if (value.InputPackets > 0) != (value.InputSamples > 0) || value.OutputSamples < int64(value.OutputAUs) || value.OutputSamples > int64(value.OutputAUs)*rtspG711AACSamples || value.OutputAUs > 0 && value.InputSamples == 0 {
+		return false
+	}
 	if value.InputSamples > int64(maxSeconds+2)*int64(value.InputSampleRate) || value.InsertedSilenceSamples > 5*int64(value.InputSampleRate) || value.OutputSamples > int64(maxSeconds+4)*rtspG711OutputRate {
 		return false
 	}
-	if (value.InputSamples > 0) != (value.FirstInputPTS != nil) || (value.OutputAUs > 0) != (value.EncoderPrimingSamples != nil && value.EncoderPaddingSamples != nil && value.StartupMS != nil) {
+	if (value.InputSamples > 0) != (value.FirstInputPTS != nil) || value.OutputAUs == 0 && (value.EncoderPrimingSamples != nil || value.EncoderPaddingSamples != nil || value.StartupMS != nil) || value.OutputAUs > 0 && (value.EncoderPrimingSamples == nil || value.EncoderPaddingSamples == nil || value.StartupMS == nil) {
 		return false
 	}
 	if value.FirstInputPTS != nil && (*value.FirstInputPTS < -int64(value.InputSampleRate)*2 || *value.FirstInputPTS > maxPlayerElapsedMS*int64(value.InputSampleRate)/1000) {
@@ -157,7 +163,7 @@ func validRTSPG711Preview(preview *RTSPPreviewReport, tracks []RTSPTrackMetrics)
 
 func validRTSPG711Reason(code string) bool {
 	switch code {
-	case "ffmpeg_unavailable", "ffmpeg_unsupported", "ffmpeg_start_failed", "ffmpeg_failed", "ffmpeg_output_invalid", "ffmpeg_drain_timeout", "g711_configuration_unsupported", "g711_packet_invalid", "g711_queue_limit", "g711_timeline_discontinuity", "g711_silence_limit", "g711_sample_limit", "audio_no_media":
+	case "ffmpeg_unavailable", "ffmpeg_unsupported", "ffmpeg_start_failed", "ffmpeg_failed", "ffmpeg_output_invalid", "ffmpeg_drain_timeout", "g711_configuration_unsupported", "g711_packet_invalid", "g711_queue_limit", "g711_timeline_discontinuity", "g711_silence_limit", "g711_sample_limit", "g711_player_unavailable", "audio_no_media":
 		return true
 	}
 	return false
@@ -208,6 +214,8 @@ func rtspG711ReasonLabel(code string) string {
 		return "已达到按 RTP 缺口补入静音的上限"
 	case "g711_sample_limit":
 		return "音频样本时间范围达到预览上限"
+	case "g711_player_unavailable":
+		return "本机播放器不再接收转码后的音频，已停止预览"
 	case "audio_no_media":
 		return "没有得到可供预览的 G711 音频输出"
 	}

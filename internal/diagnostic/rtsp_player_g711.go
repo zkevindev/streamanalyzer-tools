@@ -34,6 +34,7 @@ type rtspG711Encoder struct {
 	report           RTSPG711PreviewReport
 	queue            chan rtspG711Input
 	done             chan struct{}
+	initialized      chan struct{}
 	ctx              context.Context
 	cancel           context.CancelFunc
 	command          *exec.Cmd
@@ -68,8 +69,8 @@ func rtspG711Configuration(codec string, rate, channels int) bool {
 
 // qualifyRTSPG711 checks a small constant probe before a FLV header advertises
 // audio. Probe bytes are discarded and never counted or published as media.
-func qualifyRTSPG711(config rtspG711Config) bool {
-	ctx, cancel := context.WithTimeout(context.Background(), 1500*time.Millisecond)
+func qualifyRTSPG711(parent context.Context, config rtspG711Config) bool {
+	ctx, cancel := context.WithTimeout(parent, 1500*time.Millisecond)
 	defer cancel()
 	command := exec.CommandContext(ctx, config.tool, rtspG711Args(config)...)
 	command.WaitDelay = 250 * time.Millisecond
@@ -115,10 +116,22 @@ func (buffer *rtspG711ProbeBuffer) Write(data []byte) (int, error) {
 }
 
 func newRTSPG711Encoder(config rtspG711Config, lookup func() (string, error), emit func(int64, []byte, []byte) bool, onFailure func(string)) *rtspG711Encoder {
-	encoder := &rtspG711Encoder{config: config, queue: make(chan rtspG711Input, rtspG711QueueSize), done: make(chan struct{}), emit: emit, onFailure: onFailure, report: RTSPG711PreviewReport{Version: 1, Encoder: "ffmpeg", State: "starting", InputSampleRate: config.rate, OutputSampleRate: rtspG711OutputRate, Channels: config.channels}}
+	encoder := makeRTSPG711Encoder(config, emit, onFailure)
+	encoder.initialize(lookup, nil)
+	return encoder
+}
+
+func makeRTSPG711Encoder(config rtspG711Config, emit func(int64, []byte, []byte) bool, onFailure func(string)) *rtspG711Encoder {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(maxSeconds+5)*time.Second)
+	return &rtspG711Encoder{config: config, queue: make(chan rtspG711Input, rtspG711QueueSize), done: make(chan struct{}), initialized: make(chan struct{}), ctx: ctx, cancel: cancel, emit: emit, onFailure: onFailure, report: RTSPG711PreviewReport{Version: 1, Encoder: "ffmpeg", State: "starting", InputSampleRate: config.rate, OutputSampleRate: rtspG711OutputRate, Channels: config.channels}}
+}
+
+func (encoder *rtspG711Encoder) initialize(lookup func() (string, error), headerReady <-chan struct{}) {
+	defer close(encoder.initialized)
+	config := encoder.config
 	if !rtspG711Configuration(config.codec, config.rate, config.channels) {
 		encoder.unavailable("g711_configuration_unsupported")
-		return encoder
+		return
 	}
 	start := time.Now()
 	if config.tool == "" {
@@ -129,21 +142,32 @@ func newRTSPG711Encoder(config rtspG711Config, lookup func() (string, error), em
 		config.tool, err = lookup()
 		if err != nil {
 			elapsed := time.Since(start).Milliseconds()
+			encoder.mu.Lock()
 			encoder.report.ToolCheckMS = &elapsed
+			encoder.mu.Unlock()
 			encoder.unavailable("ffmpeg_unavailable")
-			return encoder
+			return
 		}
+		encoder.mu.Lock()
 		encoder.config.tool = config.tool
+		encoder.mu.Unlock()
 	}
-	if !qualifyRTSPG711(config) {
+	if !qualifyRTSPG711(encoder.ctx, config) {
 		elapsed := time.Since(start).Milliseconds()
+		encoder.mu.Lock()
 		encoder.report.ToolCheckMS = &elapsed
+		encoder.mu.Unlock()
 		encoder.unavailable("ffmpeg_unsupported")
-		return encoder
+		return
 	}
 	elapsed := time.Since(start).Milliseconds()
+	encoder.mu.Lock()
 	encoder.report.ToolCheckMS = &elapsed
-	encoder.ctx, encoder.cancel = context.WithTimeout(context.Background(), time.Duration(maxSeconds+5)*time.Second)
+	if encoder.failed {
+		encoder.mu.Unlock()
+		close(encoder.done)
+		return
+	}
 	encoder.command = exec.CommandContext(encoder.ctx, config.tool, rtspG711Args(config)...)
 	encoder.command.WaitDelay = 250 * time.Millisecond
 	var err error
@@ -157,20 +181,37 @@ func newRTSPG711Encoder(config rtspG711Config, lookup func() (string, error), em
 	if err == nil {
 		err = encoder.command.Start()
 	}
+	encoder.mu.Unlock()
 	if err != nil {
 		encoder.cancel()
 		encoder.closePipes()
 		encoder.unavailable("ffmpeg_start_failed")
-		return encoder
+		return
 	}
-	go encoder.run()
-	return encoder
+	go func() {
+		select {
+		case <-encoder.ctx.Done():
+			encoder.closePipes()
+		case <-encoder.done:
+		}
+	}()
+	go func() {
+		if headerReady != nil {
+			<-headerReady
+		}
+		encoder.run()
+	}()
 }
 
 func (encoder *rtspG711Encoder) unavailable(code string) {
-	encoder.failed = true
-	encoder.report.State = "unavailable"
-	encoder.report.ReasonCode = code
+	encoder.mu.Lock()
+	if !encoder.failed {
+		encoder.failed = true
+		encoder.report.State = "unavailable"
+		encoder.report.ReasonCode = code
+	}
+	encoder.mu.Unlock()
+	encoder.cancel()
 	close(encoder.done)
 }
 func (encoder *rtspG711Encoder) available() bool {
@@ -179,7 +220,10 @@ func (encoder *rtspG711Encoder) available() bool {
 	return !encoder.failed
 }
 func (encoder *rtspG711Encoder) closePipes() {
-	for _, pipe := range []io.Closer{encoder.stdin, encoder.stdout, encoder.metadata} {
+	encoder.mu.Lock()
+	pipes := []io.Closer{encoder.stdin, encoder.stdout, encoder.metadata}
+	encoder.mu.Unlock()
+	for _, pipe := range pipes {
 		if pipe != nil {
 			pipe.Close()
 		}
@@ -201,6 +245,7 @@ func (encoder *rtspG711Encoder) fail(code string) {
 	if cancel != nil {
 		cancel()
 	}
+	encoder.closePipes()
 	if callback != nil {
 		callback(code)
 	}
@@ -351,14 +396,16 @@ func (encoder *rtspG711Encoder) writeInput() {
 			}
 		}
 		encoder.mu.Lock()
-		encoder.report.InputPackets++
-		encoder.report.InputSamples += samples
-		supplied := encoder.report.InputSamples + encoder.report.InsertedSilenceSamples
-		encoder.mu.Unlock()
+		supplied := encoder.report.InputSamples + samples + encoder.report.InsertedSilenceSamples
 		if supplied > int64(maxSeconds+2)*int64(encoder.config.rate) {
+			encoder.report.DroppedPackets++
+			encoder.mu.Unlock()
 			encoder.fail("g711_sample_limit")
 			return
 		}
+		encoder.report.InputPackets++
+		encoder.report.InputSamples += samples
+		encoder.mu.Unlock()
 		var pcm []byte
 		if encoder.config.codec == "pcma" {
 			var value g711.Alaw
@@ -432,7 +479,7 @@ func (encoder *rtspG711Encoder) readOutput(meta <-chan rtspG711CRC) string {
 			return "g711_timeline_discontinuity"
 		}
 		if !encoder.emit(timestamp, asc, au) {
-			return "player_unavailable"
+			return "g711_player_unavailable"
 		}
 		encoder.mu.Lock()
 		if encoder.report.EncoderPrimingSamples == nil {

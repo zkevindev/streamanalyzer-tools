@@ -4,10 +4,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"fmt"
 	"io"
 	"math"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"runtime"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -196,3 +201,106 @@ func TestG711MetadataAndADTSValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestG711InheritedPipesAndSinkFailureTerminate(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX inherited-pipe wrapper regression")
+	}
+	tool := rtspG711TestTool(t)
+	dir := t.TempDir()
+	wrapper := filepath.Join(dir, "ffmpeg")
+	marker, childPID := filepath.Join(dir, "started"), filepath.Join(dir, "child")
+	script := fmt.Sprintf("#!/bin/sh\nif [ ! -e %q ]; then touch %q; exec %q \"$@\"; fi\ncat >/dev/null\nsleep 10 &\necho $! > %q\nwait\n", marker, marker, tool, childPID)
+	if err := os.WriteFile(wrapper, []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		data, _ := os.ReadFile(childPID)
+		pid, _ := strconv.Atoi(strings.TrimSpace(string(data)))
+		if pid > 0 {
+			if process, err := os.FindProcess(pid); err == nil {
+				_ = process.Kill()
+			}
+		}
+	})
+	encoder := newRTSPG711Encoder(rtspG711Config{codec: "pcmu", rate: 8000, channels: 1, tool: wrapper}, nil, func(int64, []byte, []byte) bool { return true }, nil)
+	encoder.enqueue(&rtp.Packet{Header: rtp.Header{SSRC: 1}, Payload: rtspG711Tone("pcmu", 0, 160)}, 0)
+	start := time.Now()
+	report := encoder.finish()
+	if time.Since(start) > 2500*time.Millisecond || report.ReasonCode != "ffmpeg_drain_timeout" || encoder.command.ProcessState == nil {
+		t.Fatalf("inherited pipe prevented bounded reap: %+v elapsed=%s", report, time.Since(start))
+	}
+	failed := newRTSPG711Encoder(rtspG711Config{codec: "pcmu", rate: 8000, channels: 1, tool: tool}, nil, func(int64, []byte, []byte) bool { return false }, nil)
+	failed.enqueue(&rtp.Packet{Header: rtp.Header{SSRC: 1}, Payload: rtspG711Tone("pcmu", 0, 160)}, 0)
+	report = failed.finish()
+	if report.ReasonCode != "g711_player_unavailable" || report.OutputAUs != 0 || !validRTSPG711Reason(report.ReasonCode) {
+		t.Fatalf("unimportable sink failure: %+v", report)
+	}
+}
+
+func TestG711NestedMetadataRequiresActualMeasurements(t *testing.T) {
+	zero, priming, padding := int64(0), int64(1024), int64(0)
+	base := RTSPPreviewReport{Version: 2, CodecCapabilitiesVersion: 3, State: "ready", ClockAlignment: "receiver_rtp", AudioTrackID: 1, AudioCodec: "pcmu", AudioOutputCodec: "aac", AudioTransform: "g711_to_aac", AudioAUs: 2, G711: &RTSPG711PreviewReport{Version: 1, Encoder: "ffmpeg", State: "ready", InputSampleRate: 8000, OutputSampleRate: 48000, Channels: 1, InputPackets: 1, InputSamples: 160, OutputAUs: 2, OutputSamples: 1984, FirstInputPTS: &zero, EncoderPrimingSamples: &priming, EncoderPaddingSamples: &padding, ToolCheckMS: &zero, StartupMS: &zero, DrainMS: &zero}}
+	tracks := []RTSPTrackMetrics{{ID: 1, Kind: "audio", Codec: "pcmu", ClockRate: 8000, Channels: 1}}
+	if !validRTSPPreview(&base, tracks) {
+		t.Fatal("measured baseline rejected")
+	}
+	for name, set := range map[string]func(*RTSPG711PreviewReport){
+		"priming": func(v *RTSPG711PreviewReport) { v.EncoderPrimingSamples = &zero },
+		"padding": func(v *RTSPG711PreviewReport) { v.EncoderPaddingSamples = &zero },
+		"startup": func(v *RTSPG711PreviewReport) { v.StartupMS = &zero },
+	} {
+		t.Run("zero output with partial "+name, func(t *testing.T) {
+			copy := base
+			value := RTSPG711PreviewReport{Version: 1, Encoder: "ffmpeg", State: "no_media", ReasonCode: "audio_no_media", InputSampleRate: 8000, OutputSampleRate: 48000, Channels: 1}
+			set(&value)
+			copy.State, copy.ReasonCode, copy.AudioAUs, copy.G711 = "failed", "audio_no_media", 0, &value
+			if validRTSPPreview(&copy, tracks) {
+				t.Fatal("zero-output report accepted partial measured output pointers")
+			}
+		})
+	}
+	for name, mutate := range map[string]func(*RTSPG711PreviewReport){
+		"zero input packets":      func(v *RTSPG711PreviewReport) { v.InputPackets = 0 },
+		"zero input samples":      func(v *RTSPG711PreviewReport) { v.InputSamples = 0; v.FirstInputPTS = nil },
+		"zero output samples":     func(v *RTSPG711PreviewReport) { v.OutputSamples = 0 },
+		"too many output samples": func(v *RTSPG711PreviewReport) { v.OutputSamples = 2049 },
+		"unavailable without reason": func(v *RTSPG711PreviewReport) {
+			*v = RTSPG711PreviewReport{Version: 1, Encoder: "ffmpeg", State: "unavailable", InputSampleRate: 8000, OutputSampleRate: 48000, Channels: 1}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			copy := base
+			nested := cloneRTSPG711Report(*base.G711)
+			copy.G711 = &nested
+			mutate(copy.G711)
+			copy.AudioAUs = copy.G711.OutputAUs
+			if validRTSPPreview(&copy, tracks) {
+				t.Fatal("contradictory counters accepted")
+			}
+		})
+	}
+}
+
+func TestG711SampleLimitPreservesImportableCounts(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	encoder := &rtspG711Encoder{config: rtspG711Config{codec: "pcmu", rate: 8000, channels: 1}, ctx: ctx, cancel: cancel, queue: make(chan rtspG711Input, 4), stdin: nopRTSPG711Writer{}}
+	limit := int64(maxSeconds+2) * 8000
+	encoder.report = RTSPG711PreviewReport{Version: 1, Encoder: "ffmpeg", State: "starting", InputSampleRate: 8000, OutputSampleRate: 48000, Channels: 1, InputPackets: 1, InputSamples: limit - 160}
+	for _, pts := range []int64{0, 160} {
+		encoder.queue <- rtspG711Input{payload: rtspG711Tone("pcmu", 0, 160), pts: pts, ssrc: 1}
+	}
+	close(encoder.queue)
+	encoder.writeInput()
+	value := encoder.report
+	preview := &RTSPPreviewReport{Version: 2, CodecCapabilitiesVersion: 3, State: "failed", ReasonCode: value.ReasonCode, ClockAlignment: "receiver_rtp", AudioTrackID: 1, AudioCodec: "pcmu", AudioOutputCodec: "aac", AudioTransform: "g711_to_aac", G711: &value}
+	if value.InputSamples != limit || value.InputPackets != 2 || value.DroppedPackets != 1 || value.ReasonCode != "g711_sample_limit" || !validRTSPPreview(preview, []RTSPTrackMetrics{{ID: 1, Kind: "audio", Codec: "pcmu", ClockRate: 8000, Channels: 1}}) {
+		t.Fatalf("limit failure invalidates own report: %+v", value)
+	}
+}
+
+type nopRTSPG711Writer struct{}
+
+func (nopRTSPG711Writer) Write(data []byte) (int, error) { return len(data), nil }
+func (nopRTSPG711Writer) Close() error                   { return nil }

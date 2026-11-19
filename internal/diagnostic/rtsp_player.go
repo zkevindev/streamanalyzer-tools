@@ -67,6 +67,7 @@ type rtspPreview struct {
 	opus                       *rtspOpusPreview
 	g711                       *rtspG711Encoder
 	g711Lookup                 func() (string, error)
+	g711HeaderReady            chan struct{}
 	videoDecoder               *rtph264.Decoder
 	audioDecoder               *rtpmpeg4audio.Decoder
 	sps, pps                   []byte
@@ -192,16 +193,45 @@ func (p *rtspPreview) start(client *gortsplib.Client, desc *description.Session)
 		}
 	}
 	p.startG711(client, desc)
+	if p.g711 != nil {
+		go func() {
+			<-p.g711.initialized
+			p.begin()
+			close(p.g711HeaderReady)
+		}()
+	} else {
+		p.begin()
+	}
+}
+
+// begin publishes the FLV header only once local audio capability is known.
+// Native PLAY and wire recording proceed while optional tool checks run.
+func (p *rtspPreview) begin() {
+	p.mu.Lock()
+	if p.g711 != nil {
+		p.g711.mu.Lock()
+		if p.g711.failed {
+			p.report.AudioReason = p.g711.report.ReasonCode
+		}
+		p.g711.mu.Unlock()
+	}
+	if p.failed {
+		p.mu.Unlock()
+		close(p.done)
+		return
+	}
 	if !p.hasVideo() && !p.hasAudio() {
 		reason := "codec_unsupported"
 		if p.g711 != nil {
 			reason = p.report.AudioReason
 		}
-		p.fail(reason)
+		p.failLocked(reason)
 		p.report.State = "unsupported"
+		p.mu.Unlock()
 		close(p.done)
 		return
 	}
+	p.mu.Unlock()
 	p.dts.Initialize()
 	flags := byte(0)
 	if p.hasVideo() {
@@ -295,7 +325,7 @@ func (p *rtspPreview) finish() RTSPPreviewReport {
 			p.report.VideoReason = "no_random_access"
 		}
 	}
-	if p.hasAudio() && p.report.AudioAUs == 0 {
+	if p.g711 == nil && p.hasAudio() && p.report.AudioAUs == 0 {
 		p.report.AudioReason = "no_media"
 	}
 	if p.player.StreamDropped() && !p.failed {
