@@ -731,3 +731,43 @@ func TestRTSPIntegrationTLSValidationAndTrustedCapture(t *testing.T) {
 		})
 	}
 }
+
+func TestRTSPIntegrationVideoGapKeepsAudio(t *testing.T) {
+	manager := &onvif.Manager{}
+	t.Cleanup(manager.Close)
+	status, err := manager.Start(onvif.Config{BindIP: "127.0.0.1", VideoGapMS: 1250})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := rtspIntegrationOpen(t)
+	run, err := service.Start(SampleRequest{URL: status.StreamURL, Protocol: ProtocolRTSP, Seconds: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	detail := rtspIntegrationAwait(t, service, run.ID)
+	metrics := detail.Report.RTSP
+	if metrics == nil || len(metrics.Tracks) != 2 || metrics.Connections != 1 {
+		t.Fatalf("expected both tracks in one RTSP session: %+v", metrics)
+	}
+	var video, audio RTSPTrackMetrics
+	for _, track := range metrics.Tracks {
+		if track.Kind == "video" {
+			video = track
+		} else if track.Kind == "audio" {
+			audio = track
+		}
+	}
+	if !video.Received || !audio.Received || video.MaxArrivalGapMS < 1100 || audio.MaxArrivalGapMS > 500 {
+		t.Fatalf("video-only RTP gap not observed: video=%+v audio=%+v", video, audio)
+	}
+	var found bool
+	for _, finding := range detail.Report.Findings {
+		if finding.Code == "rtsp_receive_gap" && finding.EndMS-finding.StartMS >= 1100 && len(finding.Evidence) == 2 && int(finding.Evidence[0].Track) == video.ID {
+			found = true
+		}
+	}
+	gaps := manager.Status().VideoGaps
+	if !found || len(gaps) != 2 || gaps[0].Begin.IsZero() || gaps[0].End.IsZero() {
+		t.Fatalf("missing source/reception gap timestamps: %+v / %+v", gaps, detail.Report.Findings)
+	}
+}
