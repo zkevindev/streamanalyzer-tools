@@ -14,6 +14,8 @@ const (
 )
 
 type MPEGTSMetrics struct {
+	FirstPacketMS    *int64               `json:"first_packet_ms,omitempty"`
+	FirstPATMS       *int64               `json:"first_pat_ms,omitempty"`
 	Programs         []TSProgramSummary   `json:"programs,omitempty"`
 	ProgramMaps      []TSProgramMapChange `json:"program_map_changes,omitempty"`
 	Packets          int                  `json:"packets"`
@@ -39,6 +41,7 @@ type MPEGTSMetrics struct {
 }
 
 type MPEGTSPIDMetrics struct {
+	FirstMappedPESMS *int64 `json:"first_mapped_pes_ms,omitempty"`
 	PID              uint16 `json:"pid"`
 	Packets          int    `json:"packets"`
 	TransportErrors  int    `json:"transport_errors"`
@@ -204,6 +207,10 @@ func decodeTSPacket(p []byte) (tsPacket, bool) {
 func (a *tsAnalyzer) inspectPacket(p []byte, event Event, ordered bool) {
 	metrics := a.report.MPEGTS
 	metrics.Packets++
+	if metrics.FirstPacketMS == nil {
+		at := event.ArrivalMS
+		metrics.FirstPacketMS = &at
+	}
 	id := uint16(p[1]&0x1f)<<8 | uint16(p[2])
 	event.Kind, event.PID = "ts_packet", &id
 	state := a.pid(id)
@@ -329,6 +336,10 @@ func (a *tsAnalyzer) observePES(s *tsPID, payload []byte, event Event) {
 	s.metrics.PESStarts++
 	if s.mediaGeneration == a.generation {
 		markMediaArrival(&a.report.Metrics, s.mediaKind, event.ArrivalMS)
+		if s.metrics.FirstMappedPESMS == nil && (s.mediaKind == "audio" || s.mediaKind == "video") {
+			at := event.ArrivalMS
+			s.metrics.FirstMappedPESMS = &at
+		}
 		if a.onMedia != nil && (s.mediaKind == "audio" || s.mediaKind == "video") {
 			event.Kind, event.Codec = s.mediaKind, s.metrics.Codec
 			defer func() { a.onMedia(event) }()

@@ -483,6 +483,8 @@ thead{color:#52657e;background:#f7f9fc}
 <dt>重复 TS 包</dt><dd>{{.Duplicates}}</dd>
 <dt>格式错误 TS 包</dt><dd>{{.MalformedPackets}}</dd>
 <dt>同步丢失</dt><dd>{{.SyncLossBytes}} 字节</dd>
+<dt>首个 TS 包</dt><dd>{{videoMS .FirstPacketMS}}</dd>
+<dt>首个有效 PAT</dt><dd>{{videoMS .FirstPATMS}}</dd>
 <dt>PAT / PMT 段数</dt><dd>{{.PATSections}} / {{.PMTSections}}</dd>
 <dt>PCR PID 数</dt><dd>{{.PCRPIDs}}</dd>
 <dt>PSI 解析错误</dt><dd>{{.PSIErrors}}</dd>
@@ -498,17 +500,17 @@ thead{color:#52657e;background:#f7f9fc}
 {{template "codecRows" $.Report.Metrics}}
 </dl>
 {{if .Programs}}<h3>节目连续性</h3>
-<div class="scroll"><table><thead><tr><th>节目 / PMT PID</th><th>媒体 PID</th><th>收到 TS 包</th><th>连续计数错误</th><th>首次切换后收到 TS 包</th><th>首次切换后连续计数错误</th><th>PTS−PCR 首尾偏移</th></tr></thead>
-<tbody>{{range .Programs}}{{$program := .}}{{range .Streams}}<tr><td>{{$program.Number}} / {{pid $program.PMTPID}}</td><td>{{pid .PID}}</td><td>{{.Packets}}</td><td>{{.ContinuityErrors}}</td><td>{{if .AfterSwitchPackets}}{{.AfterSwitchPackets}}{{else}}—{{end}}</td><td>{{if .AfterSwitchErrors}}{{.AfterSwitchErrors}}{{else}}—{{end}}</td><td>{{with .Clock}}{{.}}{{else}}—{{end}}</td></tr>{{end}}{{end}}</tbody></table></div>{{end}}
+<div class="scroll"><table><thead><tr><th>节目 / PMT PID</th><th>首个有效 PMT</th><th>媒体 PID</th><th>收到 TS 包</th><th>连续计数错误</th><th>首次切换后收到 TS 包</th><th>首次切换后连续计数错误</th><th>PTS−PCR 首尾偏移</th></tr></thead>
+<tbody>{{range .Programs}}{{$program := .}}{{range .Streams}}<tr><td>{{$program.Number}} / {{pid $program.PMTPID}}</td><td>{{videoMS $program.FirstPMTMS}}</td><td>{{pid .PID}}</td><td>{{.Packets}}</td><td>{{.ContinuityErrors}}</td><td>{{if .AfterSwitchPackets}}{{.AfterSwitchPackets}}{{else}}—{{end}}</td><td>{{if .AfterSwitchErrors}}{{.AfterSwitchErrors}}{{else}}—{{end}}</td><td>{{with .Clock}}{{.}}{{else}}—{{end}}</td></tr>{{end}}{{end}}</tbody></table></div>{{end}}
 {{if .ProgramMaps}}<h3>PMT 与媒体 PID 切换</h3>
 <div class="scroll"><table><thead><tr><th scope="col">节目 / PMT PID</th><th scope="col">切换偏移</th><th scope="col">版本</th><th scope="col">PCR PID</th><th scope="col">原媒体 PID</th><th scope="col">新媒体 PID / 首包</th></tr></thead>
 <tbody>{{range .ProgramMaps}}<tr><td>{{.Program}} / {{if .BeforePMTPID}}{{pid .BeforePMTPID}} → {{end}}{{pid .PMTPID}}</td><td>{{.AtMS}} ms</td><td>{{.Before.Version}} → {{.After.Version}}</td><td>{{pid .Before.PCRPID}} → {{pid .After.PCRPID}}</td>
 <td>{{range .Before.Streams}}<div>{{pid .PID}}</div>{{end}}</td><td>{{range .After.Streams}}<div>{{pid .PID}} · {{if .FirstPacketMS}}{{.FirstPacketMS}} ms{{else}}未观测{{end}}</div>{{end}}</td></tr>{{end}}</tbody></table></div>{{end}}
 {{if .PIDs}}<h3>PID 明细{{if gt .PIDCount (len .PIDs)}}（显示 {{len .PIDs}} / {{.PIDCount}}）{{end}}</h3>
 <div class="scroll"><table>
-<thead><tr><th scope="col">PID</th><th scope="col">编码</th><th scope="col">流类型</th><th scope="col">TS 包数</th><th scope="col">TEI</th><th scope="col">连续计数错误</th><th scope="col">重复包</th><th scope="col">PES 起始数</th><th scope="col">PCR / PTS / DTS 计数</th></tr></thead>
+<thead><tr><th scope="col">PID</th><th scope="col">编码</th><th scope="col">流类型</th><th scope="col">TS 包数</th><th scope="col">TEI</th><th scope="col">连续计数错误</th><th scope="col">重复包</th><th scope="col">PES 起始数</th><th scope="col">首个已识别 PES</th><th scope="col">PCR / PTS / DTS 计数</th></tr></thead>
 <tbody>{{range .PIDs}}
-<tr><th scope="row"><code>{{pid .PID}}</code></th><td>{{with .Codec}}{{.}}{{else}}—{{end}}</td><td>{{with .StreamType}}{{streamType .}}{{else}}—{{end}}</td><td>{{.Packets}}</td><td>{{.TransportErrors}}</td><td>{{.ContinuityErrors}}</td><td>{{.Duplicates}}</td><td>{{.PESStarts}}</td><td>{{.PCRCount}} / {{.PTSCount}} / {{.DTSCount}}</td></tr>
+<tr><th scope="row"><code>{{pid .PID}}</code></th><td>{{with .Codec}}{{.}}{{else}}—{{end}}</td><td>{{with .StreamType}}{{streamType .}}{{else}}—{{end}}</td><td>{{.Packets}}</td><td>{{.TransportErrors}}</td><td>{{.ContinuityErrors}}</td><td>{{.Duplicates}}</td><td>{{.PESStarts}}</td><td>{{videoMS .FirstMappedPESMS}}</td><td>{{.PCRCount}} / {{.PTSCount}} / {{.DTSCount}}</td></tr>
 {{end}}</tbody>
 </table></div>{{end}}
 </article>

@@ -7,15 +7,17 @@ import (
 )
 
 type tsProgramState struct {
-	pmt     uint16
-	mapping TSProgramMap
+	firstPMTMS int64
+	pmt        uint16
+	mapping    TSProgramMap
 }
 
 type TSProgramSummary struct {
-	Number  uint16                   `json:"number"`
-	PMTPID  uint16                   `json:"pmt_pid"`
-	Version byte                     `json:"version"`
-	Streams []TSProgramStreamSummary `json:"streams"`
+	FirstPMTMS *int64                   `json:"first_pmt_ms,omitempty"`
+	Number     uint16                   `json:"number"`
+	PMTPID     uint16                   `json:"pmt_pid"`
+	Version    byte                     `json:"version"`
+	Streams    []TSProgramStreamSummary `json:"streams"`
 }
 
 type TSProgramStreamSummary struct {
@@ -40,7 +42,7 @@ func (a *tsAnalyzer) summarizeTSPrograms() {
 		if a.pmt[state.pmt] != number {
 			continue
 		}
-		program := TSProgramSummary{Number: number, PMTPID: state.pmt, Version: state.mapping.Version,
+		program := TSProgramSummary{FirstPMTMS: &state.firstPMTMS, Number: number, PMTPID: state.pmt, Version: state.mapping.Version,
 			Streams: make([]TSProgramStreamSummary, 0, len(state.mapping.Streams))}
 		for _, stream := range state.mapping.Streams {
 			current := a.pids[stream.PID]

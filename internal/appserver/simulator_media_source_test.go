@@ -85,6 +85,7 @@ func TestMediaSimulatorDatagramFaults(t *testing.T) {
 		multicast       bool
 	}{
 		{"rtp-ts", "rtp_drop", false}, {"rtp-ts", "rtp_reorder", false}, {"rtp-ts", "rtp_duplicate", false}, {"rtp-ts", "pmt_pid_switch", false}, {"rtp-ts", "program_outage", false}, {"rtp-ts", "program_clock_drift", false}, {"udp-ts", "continuity", true},
+		{"udp-ts", "late_pat", true}, {"udp-ts", "late_pmt", true},
 	} {
 		t.Run(tc.fault, func(t *testing.T) {
 			t.Parallel()
@@ -116,10 +117,21 @@ func TestMediaSimulatorDatagramFaults(t *testing.T) {
 			if tc.fault == "pmt_pid_switch" || tc.fault == "program_outage" || tc.fault == "program_clock_drift" {
 				seconds = 5
 			}
+			latePSI := tc.fault == "late_pat" || tc.fault == "late_pmt"
+			if latePSI {
+				diagnosticRequest(t, server, "POST", api+"/send", http.StatusAccepted, nil)
+				time.Sleep(200 * time.Millisecond)
+				state := decodeDiagnostic[mediasource.Status](t, diagnosticRequest(t, server, "GET", api, http.StatusOK, nil))
+				if state.SentDatagrams == 0 || !state.Sending {
+					t.Fatal("sender was not already streaming before join", state)
+				}
+			}
 			request, _ := json.Marshal(diagnostic.SampleRequest{Protocol: tc.protocol, URL: source.URL, Seconds: seconds})
 			run := decodeDiagnostic[diagnostic.Run](t, diagnosticRequest(t, server, "POST", "/api/diagnostics/runs", http.StatusAccepted, request))
-			time.Sleep(150 * time.Millisecond)
-			diagnosticRequest(t, server, "POST", api+"/send", http.StatusAccepted, nil)
+			if !latePSI {
+				time.Sleep(150 * time.Millisecond)
+				diagnosticRequest(t, server, "POST", api+"/send", http.StatusAccepted, nil)
+			}
 			report := waitDiagnostic(t, server, "/api/diagnostics/runs/"+run.ID).Report
 			if report == nil || report.MPEGTS == nil || report.MPEGTS.Packets == 0 {
 				t.Fatal("MPEG-TS packets did not reach diagnostic capture")
@@ -137,6 +149,21 @@ func TestMediaSimulatorDatagramFaults(t *testing.T) {
 			case "rtp_duplicate":
 				if m.RTPDuplicates != 1 {
 					t.Fatalf("wrong RTP duplicates: %+v", m)
+				}
+			case "late_pat", "late_pmt":
+				if m.FirstPacketMS == nil || m.FirstPATMS == nil || len(m.Programs) != 1 || m.Programs[0].FirstPMTMS == nil ||
+					m.ContinuityErrors != 0 || m.PSIErrors != 0 || m.Programs[0].PMTPID != 4096 {
+					t.Fatalf("missing PSI acquisition evidence or unexpected loss: %+v", m)
+				}
+				packet, pat, pmt := *m.FirstPacketMS, *m.FirstPATMS, *m.Programs[0].FirstPMTMS
+				if tc.fault == "late_pat" && (pat-packet < 1500 || pmt < pat) ||
+					tc.fault == "late_pmt" && (pat-packet > 500 || pmt-pat < 1500) {
+					t.Fatalf("unexpected first packet/PAT/PMT: %d/%d/%d ms", packet, pat, pmt)
+				}
+				video := slices.IndexFunc(m.PIDs, func(pid diagnostic.MPEGTSPIDMetrics) bool { return pid.PID == 256 })
+				if video < 0 || m.PIDs[video].FirstMappedPESMS == nil || *m.PIDs[video].FirstMappedPESMS < pmt ||
+					report.Metrics.FirstVideoMS == nil || *report.Metrics.FirstVideoMS != *m.PIDs[video].FirstMappedPESMS {
+					t.Fatal("missing first video PES after acquiring program", m.PIDs)
 				}
 			case "pmt_pid_switch":
 				if m.RTPMissing != 0 || m.RTPOutOfOrder != 0 || m.RTPDuplicates != 0 || m.ContinuityErrors != 0 || m.PSIErrors != 0 ||
