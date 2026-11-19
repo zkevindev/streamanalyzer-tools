@@ -128,6 +128,8 @@ func (c *Config) normalize() (net.IP, *net.Interface, error) {
 }
 
 type Status struct {
+	EventURL          string         `json:"event_url,omitempty"`
+	Events            EventStatus    `json:"events"`
 	VideoGaps         []RTPGapStatus `json:"video_gaps,omitempty"`
 	SOAPDigest        bool           `json:"soap_digest"`
 	SOAPAuthRejected  uint64         `json:"soap_auth_rejected"`
@@ -153,6 +155,7 @@ type Status struct {
 }
 
 type camera struct {
+	events        eventBroker
 	auth          soapAuth
 	authRejected  atomic.Uint64
 	clockRejected atomic.Uint64
@@ -239,7 +242,7 @@ func (m *Manager) StartFiles(ctx context.Context, cfg Config, files [2]LocalVide
 	c.status = Status{
 		Active: true, SOAPDigest: cfg.SOAPUsername != "", ClockOffset: cfg.ClockOffset, SilentUDP: cfg.SilentUDP, Name: cfg.Name, Interface: nic.Name, DiscoveryAddress: discovery.group.String(),
 		EndpointID: "urn:uuid:" + uuid.NewSHA1(uuid.NameSpaceURL, []byte("streamanalyzer:onvif:"+cfg.BindIP+"/"+cfg.Name)).String(),
-		DeviceURL:  origin + devicePath, MediaURL: origin + mediaPath, PTZURL: origin + ptzPath, RTSPDigest: cfg.RTSPUsername != "",
+		DeviceURL:  origin + devicePath, MediaURL: origin + mediaPath, PTZURL: origin + ptzPath, EventURL: origin + eventPath, RTSPDigest: cfg.RTSPUsername != "",
 	}
 	for _, profile := range profiles {
 		profile.SnapshotURL = origin + snapshotPath + profile.Token
@@ -251,6 +254,8 @@ func (m *Manager) StartFiles(ctx context.Context, cfg Config, files [2]LocalVide
 	mux.HandleFunc(devicePath, c.serveSOAP(deviceNS, c.deviceReply))
 	mux.HandleFunc(mediaPath, c.serveSOAP(mediaNS, c.mediaReply))
 	mux.HandleFunc(ptzPath, c.serveSOAP(ptzNS, c.ptzReply))
+	mux.HandleFunc(eventPath, c.serveSOAPRequest(eventNS, c.eventReply))
+	mux.HandleFunc(pullPath+"{subscription}", c.serveSOAPRequest(eventNS, c.eventReply))
 	mux.HandleFunc("GET "+snapshotPath+"{profile}", c.serveSnapshot)
 	c.http = &http.Server{
 		Handler: mux, ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second, IdleTimeout: 15 * time.Second,
@@ -272,6 +277,7 @@ func (m *Manager) StartFiles(ctx context.Context, cfg Config, files [2]LocalVide
 
 func (c *camera) snapshot() Status {
 	status := c.status
+	status.Events = c.events.snapshot()
 	status.DiscoveryReplies = c.discoveryReplies.Load()
 	status.SOAPRequests = c.soapRequests.Load()
 	status.SOAPAuthRejected, status.SOAPClockRejected = c.authRejected.Load(), c.clockRejected.Load()
@@ -306,6 +312,7 @@ func (m *Manager) stop() {
 		c.video.close()
 		m.last = c.snapshot()
 		m.last.Active = false
+		m.last.Events.Subscriptions = 0
 		m.camera = nil
 	}
 }

@@ -25,11 +25,15 @@ func (c *camera) deviceReply(op operation) (string, *soapFault) {
 	case "GetServices":
 		return serviceEntry(deviceNS, c.status.DeviceURL, c.deviceCapabilities(), op.IncludeCapability) +
 			serviceEntry(mediaNS, c.status.MediaURL, mediaCapabilities, op.IncludeCapability) +
-			serviceEntry(ptzNS, c.status.PTZURL, ptzCapabilities, op.IncludeCapability), nil
+			serviceEntry(ptzNS, c.status.PTZURL, ptzCapabilities, op.IncludeCapability) +
+			serviceEntry(eventNS, c.status.EventURL, eventCapabilities, op.IncludeCapability), nil
 	case "GetCapabilities":
 		var parts strings.Builder
 		if len(op.Category) == 0 || slices.Contains(op.Category, "All") || slices.Contains(op.Category, "Device") {
 			parts.WriteString("<tt:Device><tt:XAddr>" + c.status.DeviceURL + "</tt:XAddr></tt:Device>")
+		}
+		if len(op.Category) == 0 || slices.Contains(op.Category, "All") || slices.Contains(op.Category, "Events") {
+			parts.WriteString("<tt:Events><tt:XAddr>" + c.status.EventURL + "</tt:XAddr><tt:WSSubscriptionPolicySupport>false</tt:WSSubscriptionPolicySupport><tt:WSPullPointSupport>true</tt:WSPullPointSupport><tt:WSPausableSubscriptionManagerInterfaceSupport>false</tt:WSPausableSubscriptionManagerInterfaceSupport></tt:Events>")
 		}
 		if len(op.Category) == 0 || slices.Contains(op.Category, "All") || slices.Contains(op.Category, "Media") {
 			parts.WriteString("<tt:Media><tt:XAddr>" + c.status.MediaURL + "</tt:XAddr>" +

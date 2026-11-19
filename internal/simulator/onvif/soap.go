@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 )
 
 const (
@@ -33,22 +34,26 @@ type soapHeader struct {
 }
 
 type operation struct {
-	XMLName            xml.Name
-	Attrs              []xml.Attr `xml:",any,attr"`
-	ProfileToken       string
-	ConfigurationToken string
-	IncludeCapability  bool
-	NodeToken          string
-	PresetToken        string
-	PresetName         string
-	Position           ptzVector
-	Translation        ptzVector
-	Velocity           ptzVector
-	Timeout            string
-	PanTilt            *bool
-	Zoom               *bool
-	Category           []string
-	StreamSetup        struct {
+	InitialTerminationTime string
+	TerminationTime        string
+	MessageLimit           string
+	Filter                 *eventFilter
+	XMLName                xml.Name
+	Attrs                  []xml.Attr `xml:",any,attr"`
+	ProfileToken           string
+	ConfigurationToken     string
+	IncludeCapability      bool
+	NodeToken              string
+	PresetToken            string
+	PresetName             string
+	Position               ptzVector
+	Translation            ptzVector
+	Velocity               ptzVector
+	Timeout                string
+	PanTilt                *bool
+	Zoom                   *bool
+	Category               []string
+	StreamSetup            struct {
 		Stream    string
 		Transport struct {
 			Protocol string
@@ -149,11 +154,19 @@ func unsupportedAction() *soapFault {
 }
 
 func faultBody(fault *soapFault) string {
-	return `<s:Fault><s:Code><s:Value>s:Sender</s:Value><s:Subcode><s:Value>ter:` + fault.code +
+	code := fault.code
+	if !strings.Contains(code, ":") {
+		code = "ter:" + code
+	}
+	return `<s:Fault><s:Code><s:Value>s:Sender</s:Value><s:Subcode><s:Value>` + code +
 		`</s:Value></s:Subcode></s:Code><s:Reason><s:Text xml:lang="en">` + xmlText(fault.message) + "</s:Text></s:Reason></s:Fault>"
 }
 
 func (c *camera) serveSOAP(namespace string, reply func(operation) (string, *soapFault)) http.HandlerFunc {
+	return c.serveSOAPRequest(namespace, func(_ *http.Request, op operation) (string, *soapFault) { return reply(op) })
+}
+
+func (c *camera) serveSOAPRequest(namespace string, reply func(*http.Request, operation) (string, *soapFault)) http.HandlerFunc {
 	const maxSOAPBytes = 32 << 10
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
@@ -187,10 +200,18 @@ func (c *camera) serveSOAP(namespace string, reply func(operation) (string, *soa
 				status = http.StatusUnauthorized
 			}
 		}
-		if status == http.StatusOK && op.XMLName.Space == namespace {
-			content, fault = reply(op)
+		opNamespace := op.XMLName.Space
+		events := namespace == eventNS
+		if status == http.StatusOK && (opNamespace == namespace || events && opNamespace == notificationNS) {
+			if events && opNamespace == eventNS && op.XMLName.Local == "PullMessages" && r.PathValue("subscription") != "" {
+				_ = http.NewResponseController(w).SetWriteDeadline(time.Now().Add(maxPullWait + 5*time.Second))
+			}
+			content, fault = reply(r, op)
+			if r.Context().Err() != nil {
+				return
+			}
 		}
-		action := namespace + "/" + op.XMLName.Local + "Response"
+		action := opNamespace + "/" + op.XMLName.Local + "Response"
 		if fault != nil {
 			content = faultBody(fault)
 			if status == http.StatusOK {
@@ -200,11 +221,21 @@ func (c *camera) serveSOAP(namespace string, reply func(operation) (string, *soa
 			action = ""
 		} else {
 			prefix := "tds"
-			switch namespace {
+			switch opNamespace {
 			case ptzNS:
 				prefix = "tptz"
 			case mediaNS:
 				prefix = "trt"
+			case eventNS:
+				prefix = "tev"
+				if r.PathValue("subscription") != "" {
+					action = eventNS + "/PullPointSubscription/" + op.XMLName.Local + "Response"
+				} else {
+					action = eventNS + "/EventPortType/" + op.XMLName.Local + "Response"
+				}
+			case notificationNS:
+				prefix = "wsnt"
+				action = "http://docs.oasis-open.org/wsn/bw-2/SubscriptionManager/" + op.XMLName.Local + "Response"
 			}
 			name := prefix + ":" + op.XMLName.Local + "Response"
 			content = "<" + name + ">" + content + "</" + name + ">"
@@ -218,6 +249,12 @@ func (c *camera) serveSOAP(namespace string, reply func(operation) (string, *soa
 		}
 		ns, header := addressedReply(request.Header, action)
 		namespaces := ` xmlns:tds="` + deviceNS + `" xmlns:trt="` + mediaNS + `" xmlns:tptz="` + ptzNS + `" xmlns:tt="` + schemaNS + `" xmlns:ter="` + errorNS + `"`
+		if events || namespace == deviceNS {
+			namespaces += ` xmlns:tev="` + eventNS + `"`
+		}
+		if events {
+			namespaces += ` xmlns:wsa="` + addressNS05 + `" xmlns:wsnt="` + notificationNS + `" xmlns:wstop="http://docs.oasis-open.org/wsn/t-1" xmlns:wsrf="http://docs.oasis-open.org/wsrf/r-2" xmlns:tns1="` + topicNS + `" xmlns:xs="http://www.w3.org/2001/XMLSchema"`
+		}
 		if ns != "" {
 			namespaces += ` xmlns:a="` + ns + `"`
 		}

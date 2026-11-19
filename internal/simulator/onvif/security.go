@@ -35,7 +35,7 @@ type soapAuth struct {
 }
 
 func (c *camera) clock() time.Time {
-	return time.Now().UTC().Add(time.Duration(c.status.ClockOffset) * time.Second)
+	return c.deviceTime(time.Now())
 }
 
 func (a *soapAuth) verify(token *usernameToken, now time.Time) (bool, bool) {

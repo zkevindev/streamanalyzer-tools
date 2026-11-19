@@ -75,6 +75,22 @@ func registerONVIFRoutes(r *gin.Engine, simulator *onvif.Manager) {
 		status, err := simulator.StartFiles(c.Request.Context(), cfg, files)
 		respondONVIFStart(c, status, err)
 	})
+	api.POST("/motion", func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 512)
+		var input struct {
+			Active *bool `json:"active"`
+		}
+		if err := c.ShouldBindJSON(&input); err != nil || input.Active == nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "指定移动侦测状态"})
+			return
+		}
+		status, err := simulator.SetMotion(*input.Active)
+		if err != nil {
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, status)
+	})
 	api.POST("/stop", func(c *gin.Context) {
 		c.JSON(http.StatusOK, simulator.Stop())
 	})
