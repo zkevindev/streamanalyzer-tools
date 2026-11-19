@@ -87,7 +87,11 @@ func (h *serverDataInactiveHandler) onCommand(
 			StreamID: h.sh.stream.streamID,
 		}
 		if err := h.sh.stream.userHandler().OnPlay(streamCtx, timestamp, cmd); err != nil {
-			result := h.newOnStatus(message.NetStreamOnStatusCodePlayFailed, "Play failed.")
+			code := message.NetStreamOnStatusCodePlayFailed
+			if errors.Is(err, ErrStreamNotFound) {
+				code = message.NetStreamOnStatusCodePlayStreamNotFound
+			}
+			result := h.newOnStatus(code, "Play failed.")
 
 			l.Infof("Reject a Play request: Response = %#v, Err = %+v", result, err)
 			if err1 := h.sh.stream.NotifyStatus(chunkStreamID, timestamp, result); err1 != nil {
@@ -104,7 +108,9 @@ func (h *serverDataInactiveHandler) onCommand(
 		l.Infof("Player accepted")
 
 		h.sh.ChangeState(streamStateServerPlay)
-
+		if observer, ok := h.sh.stream.userHandler().(interface{ OnPlayStarted(*StreamContext) }); ok {
+			observer.OnPlayStarted(streamCtx)
+		}
 		return nil
 
 	default:
@@ -121,7 +127,7 @@ func (h *serverDataInactiveHandler) newOnStatus(
 	switch code {
 	case message.NetStreamOnStatusCodeConnectFailed:
 		fallthrough
-	case message.NetStreamOnStatusCodePlayFailed:
+	case message.NetStreamOnStatusCodePlayFailed, message.NetStreamOnStatusCodePlayStreamNotFound:
 		fallthrough
 	case message.NetStreamOnStatusCodePublishBadName, message.NetStreamOnStatusCodePublishFailed:
 		level = message.NetStreamOnStatusLevelError

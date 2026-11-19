@@ -1522,6 +1522,15 @@ if (simulatedMedia && /^[a-f0-9-]{36}$/.test(simulatedMedia) && ['udp-ts', 'rtp-
     }).catch(() => {});
 }
 
+if (launchOptions.get('rtmp_simulator') === '1') {
+    void fetch('/api/simulators/rtmp', {cache: 'no-store'}).then(response => response.json()).then(source => {
+        if (!source.active || !/^rtmps?:\/\/127\.0\.0\.1:\d+\/live\/test$/.test(source.url)) return;
+        node('protocol').value = 'rtmp';
+        node('protocol').dispatchEvent(new Event('change'));
+        node('url').value = source.url;
+        node('seconds').value = '10';
+    }).catch(() => {});
+}
 bindForm('sample', async () => {
     const startedAt = Date.now();
     const startedAtPerformanceMS = performance.now();
