@@ -77,6 +77,9 @@ func (h *serverDataInactiveHandler) onCommand(
 		l.Infof("Publisher accepted")
 
 		h.sh.ChangeState(streamStateServerPublish)
+		if handler, ok := h.sh.stream.userHandler().(interface{ OnPublishStarted(*StreamContext) }); ok {
+			handler.OnPublishStarted(streamCtx)
+		}
 
 		return nil
 

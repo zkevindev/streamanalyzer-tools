@@ -1,12 +1,18 @@
 'use strict';
 const api = '/api/simulators/rtmp';
 const el = id => document.getElementById(id);
-const stages = {tls: 'TLS', handshake: 'RTMP 握手', app_connect: '应用连接', play: '播放协商', receive: '媒体接收'};
+const stages = {tls: 'TLS', handshake: 'RTMP 握手', app_connect: '应用连接', play: '播放协商', receive: '媒体接收', publish: '发布成功', publisher_media: '收到发布媒体', publisher_keyframe: '关键帧可转发', publisher_disconnected: '推流端断开'};
 let source;
 let busy = false;
 let generation = 0;
 
+function updateFields() {
+  el('keyframe-field').hidden = el('fault').value !== 'publish_relay';
+  el('keyframe-delay').disabled = el('keyframe-field').hidden;
+}
+
 function render() {
+  updateFields();
   const active = source?.active;
   el('config').disabled = el('start').disabled = busy || !source || active;
   el('stop').disabled = busy || !active;
@@ -19,6 +25,26 @@ function render() {
   el('plays').textContent = source.plays;
   el('hits').textContent = source.fault_hits;
   el('open').hidden = !active;
+  const ingest = source.ingest;
+  el('ingest').hidden = !ingest;
+  if (!ingest) return;
+  el('ingest-server').textContent = (source.url || '').replace(/\/test$/, '');
+  el('ingest-status').textContent = (ingest.publishing ? '正在接收推流' : '等待推流') + ' · ' + ingest.viewers + ' 路拉流';
+  el('publication-list').replaceChildren(...(ingest.sessions || []).slice().reverse().map(session => {
+    const row = document.createElement('li');
+    const start = new Date(session.published_at);
+    const time = document.createElement('time');
+    time.textContent = start.toLocaleTimeString('zh-CN');
+    const facts = document.createElement('span');
+    const elapsed = (at, label) => at ? label + ' ' + (Date.parse(at) - start.getTime()) + ' ms' : '';
+    facts.textContent = ['第 ' + session.number + ' 次发布',
+      elapsed(session.first_media_at, '首媒体'), elapsed(session.first_keyframe_at, '首个上游关键帧'),
+      elapsed(session.relay_keyframe_at, '首个可转发关键帧'),
+      session.withheld_keyframes && '延迟期间跳过关键帧 ' + session.withheld_keyframes + ' 个',
+      elapsed(session.disconnected_at, '断开')].filter(Boolean).join(' · ');
+    row.append(time, facts);
+    return row;
+  }));
 }
 
 async function request(path = '', value) {
@@ -59,9 +85,11 @@ async function poll() {
   }
   setTimeout(poll, 1000);
 }
+el('fault').addEventListener('change', updateFields);
 el('form').addEventListener('submit', event => {
   event.preventDefault();
-  void change('/start', {fault: el('fault').value, port: Number(el('port').value)});
+  void change('/start', {fault: el('fault').value, port: Number(el('port').value),
+    delay_keyframe_ms: el('fault').value === 'publish_relay' ? Number(el('keyframe-delay').value) : 0});
 });
 el('stop').addEventListener('click', () => void change('/stop'));
 void poll();
