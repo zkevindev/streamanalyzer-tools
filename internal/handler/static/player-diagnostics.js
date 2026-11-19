@@ -539,7 +539,8 @@
             const video = this.video;
             const Hls = globalThis.Hls;
             const recovery = this.options.hlsRecovery && Hls?.isSupported();
-            if (!recovery && (video.canPlayType('application/vnd.apple.mpegurl') || video.canPlayType('application/x-mpegURL'))) {
+            const abr = this.options.hlsABR && Hls?.isSupported();
+            if (!recovery && !abr && (video.canPlayType('application/vnd.apple.mpegurl') || video.canPlayType('application/x-mpegURL'))) {
                 this.engine = 'native-hls';
                 this.releaseMedia = () => {
                     video.pause();
@@ -571,6 +572,14 @@
             }
             const player = new Hls(config);
             this.releaseMedia = () => player.destroy();
+            if (abr) {
+                player.on(Hls.Events.MANIFEST_PARSED, () => {
+                    this.options.onQualities?.(player.levels, level => { player.currentLevel = level; });
+                });
+                player.on(Hls.Events.LEVEL_SWITCHED, (_event, data) => {
+                    this.options.onQualityPlaying?.(player.levels[data.level]);
+                });
+            }
             player.on(Hls.Events.ERROR, (_event, data) => {
                 if (!data.fatal) return;
                 const code = data.type === Hls.ErrorTypes.NETWORK_ERROR ? 'network_error' : 'media_error';
