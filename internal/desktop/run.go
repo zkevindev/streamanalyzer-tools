@@ -1,6 +1,7 @@
 package desktop
 
 import (
+	"crypto/rand"
 	"flag"
 	"fmt"
 	"log"
@@ -9,14 +10,23 @@ import (
 	"runtime"
 
 	"github.com/wailsapp/wails/v3/pkg/application"
+	"github.com/wailsapp/wails/v3/pkg/updater"
 )
 
 func Run() {
+	updater.HandleHelperMode()
 	dataDir := flag.String("data-dir", "", "data directory (defaults to the system application data directory)")
 	flag.Parse()
 
+	executable, executableErr := os.Executable()
+	customDir := *dataDir
+	if customDir == "" && executableErr == nil {
+		if path, err := relaunchFile(executable); err == nil {
+			customDir = resumeUpdateDirectory(path, desktopVersion)
+		}
+	}
 	desktop := NewApp()
-	dir, err := dataDirectory(*dataDir)
+	dir, err := dataDirectory(customDir)
 	if err == nil {
 		err = desktop.Startup(dir)
 	}
@@ -27,6 +37,17 @@ func Run() {
 
 	var window *application.WebviewWindow
 	var app *application.App
+	explicitDir := ""
+	if customDir != "" {
+		explicitDir = dir
+	}
+	desktop.updateToken = rand.Text()
+	desktop.updates = newDesktopUpdates(desktop.ctx, desktopVersion, newDesktopReleaseProvider(), func() { app.Quit() }, func(version string) (func(), error) {
+		if executableErr != nil {
+			return nil, executableErr
+		}
+		return preserveUpdateLaunch(executable, explicitDir, version)
+	})
 	app = application.New(application.Options{
 		Name: "Stream Analyzer",
 		Mac: application.MacOptions{

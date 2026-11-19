@@ -7,6 +7,7 @@ import (
 	"html"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"streamanalyzer/internal/appserver"
@@ -19,6 +20,8 @@ type App struct {
 	startupError       string
 	modelSettings      *modelSettings
 	modelSettingsToken string
+	updates            *desktopUpdates
+	updateToken        string
 }
 
 func NewApp() *App {
@@ -45,6 +48,9 @@ func (a *App) Startup(dataDirectory string) error {
 }
 
 func (a *App) Shutdown() {
+	if a.updates != nil {
+		a.updates.close()
+	}
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
 	_ = a.server.Shutdown(shutdownCtx)
@@ -57,6 +63,15 @@ type Shell struct {
 }
 
 func (s Shell) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/desktop-update.js" {
+		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+		_, _ = w.Write([]byte(updateScript))
+		return
+	}
+	if r.URL.Path == "/desktop-update" || strings.HasPrefix(r.URL.Path, "/desktop-update/") {
+		s.serveUpdates(w, r)
+		return
+	}
 	if r.URL.Path == "/model-settings" || r.URL.Path == "/model-settings/test" {
 		s.serveModelSettings(w, r)
 		return
@@ -70,7 +85,7 @@ func (s Shell) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(errorHTML(s.App.startupError)))
 		return
 	}
-	_, _ = w.Write([]byte(shellHTML(s.App.server.URL(), s.App.modelSettingsToken)))
+	_, _ = w.Write([]byte(shellHTML(s.App.server.URL(), s.App.modelSettingsToken, s.App.updateToken)))
 }
 
 func errorHTML(message string) string {

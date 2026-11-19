@@ -387,6 +387,12 @@ wails3 build
 
 仓库包含 `.github/workflows/desktop-build.yml`，使用各平台的原生 GitHub Actions runner 构建桌面程序，避免 Wails/WebView 跨平台交叉编译问题。每次推送到 `main`、推送 `v*` 版本标签时都会自动运行，也可在 GitHub 的 **Actions → Build desktop apps → Run workflow** 手动运行。
 
+#### 桌面端在线升级
+
+正式版桌面端会在启动时及运行期间定期查询本仓库的 GitHub Releases。也可点击窗口顶部的「检查更新」。更高的稳定版本发布且对应平台的安装包带有 GitHub SHA-256 时，窗口显示新版本和更新说明。点击「下载更新」可查看进度，包通过校验后可选择「安装并重启」，再确认应用更新。正常重启会结束进行中的模拟会话和采样。升级使用当前应用的安装位置，须有该目录的写入权限。
+
+正式包的应用版本取自 `vMAJOR.MINOR.PATCH` 标签。标签触发构建，GitHub Release 在各平台产物上传后公开发布。macOS 使用整包 ZIP 应用在线更新，同时提供 DMG 给首次安装的用户。Windows 和 Linux 使用已有的可执行文件。日常分支构建显示为开发构建。此前的正式版需要先手动安装一次支持在线升级的版本。
+
 构建完成后，在对应 workflow run 的 **Artifacts** 中下载：
 
 - `streamanalyzer-windows-amd64`：Windows `streamanalyzer.exe`
