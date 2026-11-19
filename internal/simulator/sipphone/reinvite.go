@@ -99,7 +99,7 @@ func (a *agent) reinvite(req *sip.Request, tx sip.ServerTransaction) {
 			return
 		case <-c.done:
 			return
-		case <-a.ctx.Done():
+		case <-a.flow.ctx.Done():
 			return
 		case <-tx.Done():
 			return

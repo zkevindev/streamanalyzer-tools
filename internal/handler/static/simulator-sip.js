@@ -5,7 +5,7 @@ const el = id => document.getElementById(id);
 const target = el('sip-target');
 const audio = el('audio-player');
 const registration = {
-  idle: '未注册', registering: '正在注册', registered: '已注册', retrying: '正在重新注册',
+  idle: '未注册', registering: '正在注册', registered: '已注册', retrying: '正在重新注册', reconnecting: '正在恢复信令连接',
   stopping: '正在停止', stopped: '已注销', failed: '注册失败',
 };
 const callState = {
@@ -60,7 +60,7 @@ function render(next) {
   if (status.active) el('preset').value = status.preset || '';
   const state = el('registration-state');
   state.textContent = registration[status.state] || status.state;
-  state.dataset.status = { registered: 'done', failed: 'failed', retrying: 'partial', registering: 'running' }[status.state] || '';
+  state.dataset.status = { registered: 'done', failed: 'failed', retrying: 'partial', reconnecting: 'partial', registering: 'running' }[status.state] || '';
   el('sip-addresses').hidden = !status.local_address;
   el('signal-local').textContent = status.local_address || '';
   el('signal-peer').textContent = status.registrar || '';
@@ -68,6 +68,16 @@ function render(next) {
   const labels = {connection:'建立信令连接', tls_handshake:'TLS 握手', register:'SIP 注册', digest:'SIP Digest 鉴权', registered:'已完成注册'};
   setError('sip-stage', status.signal_stage ? [status.transport?.toUpperCase(), labels[status.signal_stage], status.signal_failure].filter(Boolean).join(' · ') : '');
 
+  const reconnect = status.reconnect;
+  if (reconnect) {
+    const times = [['断开', reconnect.disconnected_at], ['旧 RTP 释放', reconnect.old_media_released_at], ['重新注册', reconnect.registered_at]];
+    setError('sip-reconnect', ['重连尝试 ' + reconnect.attempts + ' 次 · 恢复 ' + reconnect.recovered + ' 次',
+      reconnect.old_call_id && '旧 Call-ID ' + reconnect.old_call_id,
+      ...times.filter(([, at]) => at).map(([label, at]) => label + ' ' + new Date(at).toLocaleTimeString('zh-CN', {fractionalSecondDigits: 3}))]
+      .filter(Boolean).join(' · '));
+  } else {
+    setError('sip-reconnect', '');
+  }
   const call = status.call;
   el('call-state').textContent = call ? callState[call.state] || call.state : '空闲';
   el('call-state').dataset.status = call?.state === 'incall' ? 'done' : call?.active ? 'running' : '';

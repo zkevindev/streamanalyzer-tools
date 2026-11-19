@@ -85,6 +85,9 @@ func (a *agent) finishCall(c *phoneCall, err error) {
 	if err != nil {
 		c.status.State, c.status.Error = "failed", err.Error()
 	}
+	if stats := a.status.Reconnect; stats != nil && stats.OldCallID != "" && stats.OldCallID == c.status.ID {
+		stats.OldMediaReleased = time.Now()
+	}
 	close(c.done)
 }
 
@@ -132,14 +135,14 @@ func (a *agent) dial(target string) error {
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.ctx.Err() != nil || a.status.State != "registered" || a.call != nil && a.call.status.Active {
+	if a.status.State != "registered" || a.flow.ctx.Err() != nil || a.call != nil && a.call.status.Active {
 		return ErrConflict
 	}
 	c, err := a.newCall("outbound", recipient.String(), "dialing")
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(a.ctx, ringTimeout)
+	ctx, cancel := context.WithTimeout(a.flow.ctx, ringTimeout)
 	c.cancelInvite = cancel
 	a.call = c
 	a.workers.Go(func() {
@@ -290,24 +293,37 @@ func (a *agent) outgoing(ctx context.Context, c *phoneCall, recipient sip.Uri) e
 	return a.connected(c, dialog.Context(), media, dialog.Bye, timer)
 }
 
-func (a *agent) routes(server *sipgo.Server) {
-	server.OnInvite(a.incoming)
-	server.OnAck(a.ack)
-	server.OnBye(a.bye)
-	server.OnRequest(prackMethod, a.prack)
-	server.OnRequest(sip.UPDATE, a.updateSession)
-	server.OnOptions(func(req *sip.Request, tx sip.ServerTransaction) {
+func (a *agent) routes(server *sipgo.Server, flow *registrationFlow) {
+	guard := func(handler sipgo.RequestHandler) sipgo.RequestHandler {
+		return func(req *sip.Request, tx sip.ServerTransaction) {
+			a.mu.Lock()
+			if flow.ctx.Err() != nil {
+				a.mu.Unlock()
+				return
+			}
+			a.workers.Add(1)
+			a.mu.Unlock()
+			defer a.workers.Done()
+			handler(req, tx)
+		}
+	}
+	server.OnInvite(guard(a.incoming))
+	server.OnAck(guard(a.ack))
+	server.OnBye(guard(a.bye))
+	server.OnRequest(prackMethod, guard(a.prack))
+	server.OnRequest(sip.UPDATE, guard(a.updateSession))
+	server.OnOptions(guard(func(req *sip.Request, tx sip.ServerTransaction) {
 		res := sip.NewResponseFromRequest(req, 200, "OK", nil)
 		res.AppendHeader(sip.NewHeader("Allow", "OPTIONS, INVITE, ACK, CANCEL, BYE, PRACK, UPDATE"))
 		_ = tx.Respond(res)
-	})
-	server.OnNoRoute(func(req *sip.Request, tx sip.ServerTransaction) {
+	}))
+	server.OnNoRoute(guard(func(req *sip.Request, tx sip.ServerTransaction) {
 		if req.Method == sip.CANCEL {
 			respond(req, tx, 481, "Call/Transaction Does Not Exist")
 			return
 		}
 		respond(req, tx, 501, "Not Implemented")
-	})
+	}))
 }
 
 func respond(req *sip.Request, tx sip.ServerTransaction, code int, reason string) {
@@ -338,8 +354,8 @@ func (a *agent) incoming(req *sip.Request, tx sip.ServerTransaction) {
 	}
 	// Allow an INVITE that arrives in the same network burst as REGISTER 200.
 	select {
-	case <-a.registered:
-	case <-a.ctx.Done():
+	case <-a.flow.registered:
+	case <-a.flow.ctx.Done():
 	case <-tx.Done():
 	case <-time.After(300 * time.Millisecond):
 	}
@@ -350,7 +366,7 @@ func (a *agent) incoming(req *sip.Request, tx sip.ServerTransaction) {
 	}
 	defer dialog.Close()
 	a.mu.Lock()
-	if a.ctx.Err() != nil || a.status.State != "registered" && a.status.State != "retrying" {
+	if a.status.State != "registered" || a.flow.ctx.Err() != nil && a.status.State != "retrying" {
 		a.mu.Unlock()
 		respond(req, tx, 480, "Temporarily Unavailable")
 		return
@@ -372,9 +388,7 @@ func (a *agent) incoming(req *sip.Request, tx sip.ServerTransaction) {
 	c.peerInviteSeq = req.CSeq().SeqNo
 	c.status.Codec, c.status.MediaRemote = media.codec.name, media.remote.String()
 	a.call = c
-	a.workers.Add(1)
 	a.mu.Unlock()
-	defer a.workers.Done()
 
 	answer := makeAnswer(c.audio.advertised, c.sdpID, offer, selected, media)
 	a.finishCall(c, a.ring(c, tx, dialog, answer, media, timer))
@@ -411,7 +425,7 @@ func (a *agent) ring(c *phoneCall, tx sip.ServerTransaction, dialog *sipgo.Dialo
 		a.mu.Lock()
 		c.status.EarlyMedia = true
 		a.mu.Unlock()
-		stopEarly = c.audio.run(a.ctx, media, true)
+		stopEarly = c.audio.run(a.flow.ctx, media, true)
 		defer stopEarly()
 	}
 	timer := time.NewTimer(ringTimeout)
@@ -424,7 +438,7 @@ func (a *agent) ring(c *phoneCall, tx sip.ServerTransaction, dialog *sipgo.Dialo
 	case <-c.hangup:
 		respond(dialog.InviteRequest, tx, 603, "Decline")
 		return nil
-	case <-a.ctx.Done():
+	case <-a.flow.ctx.Done():
 		respond(dialog.InviteRequest, tx, 480, "Temporarily Unavailable")
 		return nil
 	case <-timer.C:
@@ -457,7 +471,7 @@ func (a *agent) ring(c *phoneCall, tx sip.ServerTransaction, dialog *sipgo.Dialo
 				return
 			case <-tx.Done():
 				return
-			case <-a.ctx.Done():
+			case <-a.flow.ctx.Done():
 				tx.Terminate()
 				return
 			case <-timeout.C:
@@ -475,7 +489,7 @@ func (a *agent) ring(c *phoneCall, tx sip.ServerTransaction, dialog *sipgo.Dialo
 	close(stop)
 	<-done
 	if err != nil || dialog.LoadState() != sip.DialogStateConfirmed {
-		if dialog.Context().Err() != nil || a.ctx.Err() != nil {
+		if dialog.Context().Err() != nil || a.flow.ctx.Err() != nil {
 			return nil
 		}
 		return errors.New("接听未完成，未收到有效 SIP ACK")
@@ -561,8 +575,8 @@ func (a *agent) connected(c *phoneCall, dialog context.Context, media audioParam
 	}
 	a.mu.Unlock()
 
-	stopAudio := c.audio.run(a.ctx, media, false)
-	presetCtx, cancelPreset := context.WithCancel(a.ctx)
+	stopAudio := c.audio.run(a.flow.ctx, media, false)
+	presetCtx, cancelPreset := context.WithCancel(a.flow.ctx)
 	defer cancelPreset()
 	var presetWorker sync.WaitGroup
 	if preset {
@@ -624,9 +638,12 @@ func (a *agent) connected(c *phoneCall, dialog context.Context, media audioParam
 			a.refreshSession(c, dialog, offer)
 		case <-dialog.Done():
 			return nil
-		case <-a.ctx.Done():
+		case <-a.flow.ctx.Done():
 			stopAudio()
-			return a.sendBye(bye)
+			if a.ctx.Err() != nil {
+				return a.sendBye(bye)
+			}
+			return nil
 		case <-c.hangup:
 			stopAudio()
 			return a.sendBye(bye)
@@ -642,7 +659,7 @@ func (a *agent) connected(c *phoneCall, dialog context.Context, media audioParam
 			a.setCallMedia(c, change.media)
 			c.pendingMedia = nil
 			a.mu.Unlock()
-			stopAudio = c.audio.run(a.ctx, change.media, false)
+			stopAudio = c.audio.run(a.flow.ctx, change.media, false)
 		}
 	}
 }

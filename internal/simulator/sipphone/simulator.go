@@ -136,19 +136,29 @@ func (c *Config) validate() error {
 	return c.validatePreset()
 }
 
+type ReconnectStatus struct {
+	Attempts         uint64    `json:"attempts"`
+	Recovered        uint64    `json:"recovered"`
+	DisconnectedAt   time.Time `json:"disconnected_at"`
+	RegisteredAt     time.Time `json:"registered_at,omitzero"`
+	OldCallID        string    `json:"old_call_id,omitempty"`
+	OldMediaReleased time.Time `json:"old_media_released_at,omitzero"`
+}
+
 type Status struct {
-	Transport     string      `json:"transport,omitempty"`
-	SignalStage   string      `json:"signal_stage,omitempty"`
-	SignalFailure string      `json:"signal_failure,omitempty"`
-	Preset        string      `json:"preset,omitempty"`
-	Active        bool        `json:"active"`
-	State         string      `json:"state"`
-	User          string      `json:"user,omitempty"`
-	Registrar     string      `json:"registrar,omitempty"`
-	LocalAddress  string      `json:"local_address,omitempty"`
-	Error         string      `json:"error,omitempty"`
-	Call          *CallStatus `json:"call,omitempty"`
-	Events        []Event     `json:"events,omitempty"`
+	Reconnect     *ReconnectStatus `json:"reconnect,omitempty"`
+	Transport     string           `json:"transport,omitempty"`
+	SignalStage   string           `json:"signal_stage,omitempty"`
+	SignalFailure string           `json:"signal_failure,omitempty"`
+	Preset        string           `json:"preset,omitempty"`
+	Active        bool             `json:"active"`
+	State         string           `json:"state"`
+	User          string           `json:"user,omitempty"`
+	Registrar     string           `json:"registrar,omitempty"`
+	LocalAddress  string           `json:"local_address,omitempty"`
+	Error         string           `json:"error,omitempty"`
+	Call          *CallStatus      `json:"call,omitempty"`
+	Events        []Event          `json:"events,omitempty"`
 }
 
 type Event struct {
@@ -176,7 +186,7 @@ func (m *Manager) Start(cfg Config) (Status, error) {
 		return Status{}, fmt.Errorf("%w，设备已启动", ErrConflict)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	a := &agent{cfg: cfg, ctx: ctx, cancel: cancel, done: make(chan struct{}), registered: make(chan struct{}),
+	a := &agent{cfg: cfg, ctx: ctx, cancel: cancel, done: make(chan struct{}),
 		status: Status{Transport: cfg.Transport, Active: true, State: "registering", Preset: cfg.Preset, User: cfg.User, Registrar: net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))}}
 	m.agent = a
 	go a.run()
@@ -276,15 +286,15 @@ func (m *Manager) ReceivedAudio() ([]byte, error) {
 }
 
 type agent struct {
-	cfg        Config
-	ctx        context.Context
-	cancel     context.CancelFunc
-	done       chan struct{}
-	registered chan struct{} // The first successful REGISTER.
-	workers    sync.WaitGroup
-	mu         sync.Mutex
-	status     Status
-	call       *phoneCall
+	cfg     Config
+	ctx     context.Context
+	cancel  context.CancelFunc
+	done    chan struct{}
+	flow    *registrationFlow
+	workers sync.WaitGroup
+	mu      sync.Mutex
+	status  Status
+	call    *phoneCall
 
 	client    *sipgo.Client
 	dialogs   sipgo.DialogUA
@@ -319,6 +329,10 @@ func (a *agent) snapshot() Status {
 	defer a.mu.Unlock()
 	status := a.status
 	status.Events = slices.Clone(status.Events)
+	if status.Reconnect != nil {
+		observation := *status.Reconnect
+		status.Reconnect = &observation
+	}
 	if a.call != nil {
 		call := a.call.status
 		call.SendRTP = a.call.audio.sent.snapshot()

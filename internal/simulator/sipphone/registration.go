@@ -17,6 +17,11 @@ import (
 
 const requestedExpiry = 3600
 
+type registrationFlow struct {
+	ctx        context.Context
+	registered chan struct{}
+}
+
 func (a *agent) serve() error {
 	lookup, cancel := context.WithTimeout(a.ctx, 5*time.Second)
 	addresses, err := net.DefaultResolver.LookupNetIP(lookup, "ip4", a.cfg.Host)
@@ -33,10 +38,42 @@ func (a *agent) serve() error {
 	if !a.registrar.IsValid() {
 		return errors.New("SIP 服务器需要单播 IPv4 地址")
 	}
+	var connected bool
+	delay := 250 * time.Millisecond
+	for {
+		var established bool
+		established, err = a.serveRegistration()
+		if a.ctx.Err() != nil || a.cfg.Transport == "udp" || (!connected && !established) {
+			return err
+		}
+		if established {
+			delay = 250 * time.Millisecond
+		}
+		connected = true
+		a.state("reconnecting", err)
+		timer := time.NewTimer(delay)
+		select {
+		case <-timer.C:
+			a.mu.Lock()
+			a.status.Reconnect.Attempts++
+			a.mu.Unlock()
+		case <-a.ctx.Done():
+			timer.Stop()
+			return nil
+		}
+		delay = min(delay*2, 3*time.Second)
+	}
+}
+
+func (a *agent) serveRegistration() (established bool, err error) {
+	flowCtx, stopFlow := context.WithCancel(a.ctx)
+	defer stopFlow()
+	flow := &registrationFlow{ctx: flowCtx, registered: make(chan struct{})}
+	a.flow = flow
 	local, _ := netip.ParseAddr(a.cfg.LocalIP)
 	wire, err := a.openSignal(local)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer wire.close()
 	options := []sipgo.UserAgentOption{sipgo.WithUserAgent("Stream Analyzer SIP"), sipgo.WithUserAgentHostname(a.cfg.Domain)}
@@ -45,16 +82,16 @@ func (a *agent) serve() error {
 	}
 	ua, err := sipgo.NewUA(options...)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer ua.Close()
 	server, err := sipgo.NewServer(ua)
 	if err != nil {
-		return err
+		return false, err
 	}
 	a.client, err = sipgo.NewClient(ua, sipgo.WithClientAddr(a.local.String()), sipgo.WithClientConnectionAddr(a.local.String()), sipgo.WithClientNAT())
 	if err != nil {
-		return err
+		return false, err
 	}
 	contact := sip.Uri{Scheme: "sip", User: a.cfg.User, Host: a.local.Addr().String(), Port: int(a.local.Port())}
 	if a.cfg.Transport != "udp" {
@@ -63,7 +100,8 @@ func (a *agent) serve() error {
 	a.dialogs = sipgo.DialogUA{Client: a.client, RewriteContact: a.cfg.Transport != "udp", ContactHDR: sip.ContactHeader{Address: contact}}
 	a.registerID = sip.CallIDHeader(sip.GenerateTagN(24))
 	a.registerTag = sip.GenerateTagN(16)
-	a.routes(server)
+	a.registerSeq = 0
+	a.routes(server, flow)
 
 	served := make(chan struct{})
 	var serveErr error
@@ -72,9 +110,13 @@ func (a *agent) serve() error {
 		close(served)
 	}()
 	defer func() {
-		a.cancel()
-		// A dial or INVITE accepted before cancellation may be adding its worker.
+		// Handlers and Dial add workers under the same lock and reject after
+		// cancellation, so none can begin work on this flow after the barrier.
 		a.mu.Lock()
+		if established && a.ctx.Err() == nil && a.cfg.Transport != "udp" {
+			a.markDisconnectedLocked()
+		}
+		stopFlow()
 		a.mu.Unlock()
 		_ = wire.close()
 		ua.Close()
@@ -84,29 +126,30 @@ func (a *agent) serve() error {
 	select {
 	case <-wire.ready:
 	case <-a.ctx.Done():
-		return a.ctx.Err()
+		return false, a.ctx.Err()
 	case <-served:
-		return fmt.Errorf("SIP 信令流初始化失败：%w", serveErr)
+		return false, fmt.Errorf("SIP 信令流初始化失败：%w", serveErr)
 	}
 
 	a.mu.Lock()
 	a.status.LocalAddress, a.status.Registrar = a.local.String(), a.registrar.String()
 	a.mu.Unlock()
 	a.signalPhase("register", "")
-	expiry, err := a.register(a.ctx, requestedExpiry)
+	expiry, err := a.register(flow.ctx, requestedExpiry)
 	if err != nil {
-		return err
+		return false, err
 	}
 	a.signalPhase("registered", "")
-	a.state("registered", nil)
-	close(a.registered)
+	established = true
+	a.registrationSucceeded()
+	close(flow.registered)
 	delay := time.Duration(expiry) * time.Second * 4 / 5
 	for {
 		timer := time.NewTimer(delay)
 		select {
 		case <-timer.C:
 			a.signalPhase("register", "")
-			refreshed, err := a.register(a.ctx, expiry)
+			refreshed, err := a.register(flow.ctx, expiry)
 			if err != nil {
 				a.state("retrying", err)
 				delay = 5 * time.Second
@@ -119,12 +162,38 @@ func (a *agent) serve() error {
 		case <-a.ctx.Done():
 			timer.Stop()
 			a.unregister()
-			return nil
+			return true, nil
 		case <-served:
 			timer.Stop()
 			a.signalPhase("connection", "closed")
-			return fmt.Errorf("SIP 信令流已结束：%w", serveErr)
+			return true, fmt.Errorf("SIP 信令流已结束：%w", serveErr)
 		}
+	}
+}
+
+func (a *agent) markDisconnectedLocked() {
+	a.status.State = "reconnecting"
+	if a.status.Reconnect == nil {
+		a.status.Reconnect = &ReconnectStatus{}
+	}
+	stats := a.status.Reconnect
+	stats.DisconnectedAt, stats.RegisteredAt = time.Now(), time.Time{}
+	stats.OldCallID, stats.OldMediaReleased = "", time.Time{}
+	if a.call != nil && a.call.status.Active {
+		stats.OldCallID = a.call.status.ID
+	}
+}
+
+func (a *agent) registrationSucceeded() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.ctx.Err() != nil {
+		return
+	}
+	a.status.State, a.status.Error = "registered", ""
+	if stats := a.status.Reconnect; stats != nil {
+		stats.Recovered++
+		stats.RegisteredAt = time.Now()
 	}
 }
 
