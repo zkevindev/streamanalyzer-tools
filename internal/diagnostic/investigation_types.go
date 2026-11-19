@@ -52,12 +52,43 @@ type DerivedArtifact struct {
 }
 
 type InvestigationMedia struct {
-	Status    string            `json:"status"` // ready, partial, unavailable, failed
-	Reason    string            `json:"reason,omitempty"`
-	Alignment string            `json:"alignment,omitempty"`
-	StartMS   *int64            `json:"start_ms,omitempty"`
-	EndMS     *int64            `json:"end_ms,omitempty"`
-	Assets    []DerivedArtifact `json:"assets"`
+	Status    string             `json:"status"` // ready, partial, unavailable, failed
+	Reason    string             `json:"reason,omitempty"`
+	Alignment string             `json:"alignment,omitempty"`
+	StartMS   *int64             `json:"start_ms,omitempty"`
+	EndMS     *int64             `json:"end_ms,omitempty"`
+	Assets    []DerivedArtifact  `json:"assets"`
+	RTSP      *RTSPMediaEvidence `json:"rtsp,omitempty"`
+}
+
+// RTSPMediaEvidence records the deterministic offline reconstruction recipe.
+// It binds source identities and a saved player sample, not decoded pixels or
+// source A/V synchronisation. The two origins use the receiver RTP clock;
+// AnchorCurrentMS + PreviewOriginMS - MediaOriginMS locates the sample in the
+// reconstruction-relative media timeline.
+type RTSPMediaEvidence struct {
+	Version               int      `json:"version"`
+	SourceArtifact        Artifact `json:"source_artifact"`
+	TimelineArtifact      Artifact `json:"timeline_artifact"`
+	PlayerArtifact        Artifact `json:"player_artifact"`
+	PlayerRevision        int      `json:"player_revision"`
+	VideoTrackID          int      `json:"video_track_id,omitempty"`
+	AudioTrackID          int      `json:"audio_track_id,omitempty"`
+	VideoCodec            string   `json:"video_codec,omitempty"`
+	AudioCodec            string   `json:"audio_codec,omitempty"`
+	AudioTransform        string   `json:"audio_transform,omitempty"` // native_remux or g711_to_pcm before final AAC encoding.
+	AnchorSampleOffsetMS  int64    `json:"anchor_sample_offset_ms"`   // Saved sample's capture-relative offset.
+	AnchorCurrentMS       int64    `json:"anchor_current_ms"`         // Saved browser media currentTime, in ms.
+	MediaOriginMS         int64    `json:"media_origin_ms"`           // Reconstruction seek origin: earliest presentation PTS / format.start_time.
+	PreviewOriginMS       int64    `json:"preview_origin_ms"`         // Live preview's earliest media DTS, before browser normalisation.
+	DurationMS            int64    `json:"duration_ms"`               // Deterministic reconstruction extent, in ms.
+	PacketCount           int      `json:"packet_count"`              // Selected RTP packets examined, not decoded frames.
+	VideoAccessUnits      int      `json:"video_access_units"`        // Complete video AUs written into the reconstruction.
+	AudioAccessUnits      int      `json:"audio_access_units"`        // Complete audio AUs, or G.711 PCM blocks, written into it.
+	DroppedPackets        int      `json:"dropped_packets"`           // Selected RTP packets not used by the reconstruction.
+	IncompleteAccessUnits int      `json:"incomplete_access_units"`   // Partial media AUs discarded rather than repaired.
+	Keyframes             []Event  `json:"keyframes"`                 // At most 16 actual random-access AUs; raw ref identifies their completion RTP packet.
+	RemuxArtifact         Artifact `json:"remux_artifact"`            // Hash/bytes of deterministic temporary fMP4, not an exported raw stream.
 }
 
 type StallInvestigation struct {

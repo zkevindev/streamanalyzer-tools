@@ -233,7 +233,7 @@ let currentReport;
 const investigationStates = { queued: '等待补查', running: '补查中', complete: '补查完成', partial: '保留部分结果', failed: '补查失败', canceled: '补查已停止' };
 const investigationMediaStates = { ready: '片段与截图已提取', partial: '媒体产物部分可用', unavailable: '媒体产物不可用', failed: '媒体提取失败' };
 const investigationModelStates = { pending: '正在结合时序证据生成建议…', complete: '已生成建议', unconfigured: '尚未配置大模型，可在模型设置中配置后生成建议。', failed: '模型建议生成失败，可重试。', changed: '模型配置已变化，可使用当前模型重新生成建议。' };
-const investigationAlignments = { media_clock: '播放器媒体时间对齐', player_clock: '播放器媒体时间对齐', player_clock_estimate: '根据播放器媒体时间估算', arrival_estimate: '按接收时序估算', independent_capture: '独立采样连接参考', independent_capture_reference: '独立连接采样参考' };
+const investigationAlignments = { receiver_rtp_estimate: '接收端 RTP 时钟与播放器媒体时间估算', media_clock: '播放器媒体时间对齐', player_clock: '播放器媒体时间对齐', player_clock_estimate: '根据播放器媒体时间估算', arrival_estimate: '按接收时序估算', independent_capture: '独立采样连接参考', independent_capture_reference: '独立连接采样参考' };
 
 function playerSnapshotBody(recording) {
     // Keep the first 10 seconds at native resolution and use about one sample per second after that.
@@ -1127,12 +1127,52 @@ function investigationAssetURL(item, asset) {
     return apiRoot + runPath(currentID) + '/stall-assets/' + encodeURIComponent(item.id) + '/' + match[2];
 }
 
+const rtspMediaBoundaryNote = '离线重建仅使用已采集的原始 RTP，不会重新连接源站。按保存的播放器媒体时间与接收端 RTP 时钟估算位置，不是源端 UTC 或精确呈帧对齐，也未按收包到达时间直接定位画面。';
+const rtspMediaContentNote = '片段与截图用于核对同期源流内容，不能重现或证明本机画面冻结；原收流等待和播放器停顿请对照时序证据。';
+
+function renderRTSPMediaEvidence(media) {
+    const evidence = media.rtsp;
+    if (!evidence) return null;
+    const block = element('section', '', 'rtsp-media-evidence');
+    block.append(element('h5', 'RTSP 离线媒体重建'), element('p', rtspMediaBoundaryNote, 'timing-note muted'), element('p', rtspMediaContentNote, 'timing-note muted'));
+    const metrics = element('dl', '', 'metrics rtsp-media-metrics');
+    const selectedTrack = (id, codec) => id ? `#${id} · ${codec || '编码未记录'}` : '未选择';
+    for (const [label, value] of [
+        ['源视频轨道', selectedTrack(evidence.video_track_id, evidence.video_codec)],
+        ['源音频轨道', selectedTrack(evidence.audio_track_id, evidence.audio_codec)],
+        ['重建音频处理', evidence.audio_transform === 'g711_to_pcm' ? 'G.711 解码为 PCM' : evidence.audio_transform === 'native_remux' ? '原生转封装' : '未选择'],
+        ['播放器记录修订', evidence.player_revision == null ? '未记录' : `#${evidence.player_revision}`],
+        ['锚点采样偏移', videoObservedTime(evidence.anchor_sample_offset_ms)], ['锚点播放器媒体时间', videoObservedTime(evidence.anchor_current_ms)],
+        ['预览解码时钟起点', videoObservedTime(evidence.preview_origin_ms)], ['重组媒体起点', videoObservedTime(evidence.media_origin_ms)],
+        ['重建媒体范围', videoObservedTime(evidence.duration_ms)], ['检查 RTP 包', videoObservedCount(evidence.packet_count)],
+        ['重建视频访问单元', videoObservedCount(evidence.video_access_units)], ['重建音频单元 / PCM 块', videoObservedCount(evidence.audio_access_units)],
+        ['未用于重建的 RTP 包', videoObservedCount(evidence.dropped_packets)], ['丢弃不完整访问单元', videoObservedCount(evidence.incomplete_access_units)],
+    ]) {
+        const row = element('div', ''); row.append(element('dt', label), element('dd', value)); metrics.append(row);
+    }
+    block.append(metrics, element('p', '锚点重建位置 = 播放器媒体时间 + 预览解码时钟起点 − 重组媒体起点。两项分别对应预览归一化前的 DTS 与重建输入的呈现时间起点；派生 MP4 使用 H.264 / AAC，重建计数不是浏览器解码或呈帧计数。', 'timing-note muted'));
+    const frames = evidence.keyframes || [];
+    if (frames.length) {
+        block.append(element('h5', '离线重建随机接入点'), renderTable(['归零前 DTS', '归零前 PTS', 'RTP 到达偏移', '轨道', '原始条目', '偏移（字节）'], frames.slice(0, 16).map((frame) => [time(frame.dts_ms), time(frame.pts_ms), time(frame.arrival_ms), frame.track == null ? '未记录' : `#${frame.track}`, frame.artifact || '未记录', frame.offset ?? '未记录'])), element('p', '原始引用标识访问单元完成时的 RTP 包，不表示该单包包含完整画面。DTS / PTS 为归零前重建时间，减去重组媒体起点后可与片段定位比较。最多展示 16 个随机接入点。', 'timing-note muted'));
+    } else block.append(element('p', '未保留可用的离线重建随机接入点记录。', 'timing-note muted'));
+    const identities = element('details', '', 'rtsp-media-identities');
+    identities.append(element('summary', '重建依据与文件指纹（SHA-256）'));
+    identities.append(renderTable(['依据', '大小', 'SHA-256'], [
+        ['原始 RTSP 归档', evidence.source_artifact], ['接收时间线', evidence.timeline_artifact], ['播放器记录', evidence.player_artifact], ['临时重建 fMP4', evidence.remux_artifact],
+    ].map(([label, artifact]) => [label, artifact?.bytes == null ? '未记录' : bytes(artifact.bytes), artifact?.sha256 || '未记录'])));
+    identities.append(element('p', '临时重建 fMP4 指纹用于复核重建结果，不替代原始 dump，也不作为额外原始流归档。', 'timing-note muted'));
+    block.append(identities);
+    return block;
+}
+
 function renderInvestigationMedia(item) {
     const block = element('section', '', 'stall-media');
     const media = item.media || {};
     block.append(element('h5', '异常附近的源流片段与截图'), element('p', investigationMediaStates[media.status] || '等待提取源流媒体。', 'timing-note muted'));
     if (media.reason) block.append(element('p', media.reason, 'timing-note muted'));
-    if (media.alignment) block.append(element('p', `媒体定位方式 ${investigationAlignments[media.alignment] || media.alignment}${media.start_ms != null ? ` · 源流媒体时间 ${time(media.start_ms)}–${time(media.end_ms)}` : ''}`, 'timing-note muted'));
+    if (media.alignment) block.append(element('p', `媒体定位方式 ${investigationAlignments[media.alignment] || media.alignment}${media.start_ms != null ? ` · ${media.rtsp ? '重建媒体时间' : '源流媒体时间'} ${time(media.start_ms)}–${time(media.end_ms)}` : ''}`, 'timing-note muted'));
+    const rtspEvidence = renderRTSPMediaEvidence(media);
+    if (rtspEvidence) block.append(rtspEvidence);
     block.append(element('p', '片段与截图来自采样源流，用于复核媒体内容；原拉流等待和播放器停顿保留在时序证据中。', 'timing-note muted'));
     if (investigationIntervalKind(item) === 'presentation_gap') block.append(element('p', '同期源流片段和截图供内容对照，不能重现或证明本机画面冻结。', 'timing-note muted'));
     const images = element('div', '', 'stall-screenshots');
@@ -1157,7 +1197,7 @@ function renderInvestigationMedia(item) {
             image.src = url;
             image.alt = label;
             image.loading = 'lazy';
-            const caption = element('figcaption', `${label}${asset.media_time_ms != null ? ` · 源流媒体时间 ${time(asset.media_time_ms)}` : ''}`);
+            const caption = element('figcaption', `${label}${asset.media_time_ms != null ? ` · ${media.rtsp ? '重建媒体时间' : '源流媒体时间'} ${time(asset.media_time_ms)}` : ''}`);
             caption.append(document.createTextNode(' · '), link);
             figure.append(image, caption);
             images.append(figure);
@@ -1218,7 +1258,7 @@ function renderStallAssessment(item) {
 
 function renderInvestigationModel(item) {
     const block = element('section', '', 'stall-model');
-    block.append(element('h5', '模型建议（时序证据）'), element('p', '模型依据关联的接收间隔、缓冲与关键帧记录提出待验证建议，源流片段和截图供复核。', 'timing-note muted'));
+    block.append(element('h5', item.media?.rtsp ? '模型建议（时序与重建证据）' : '模型建议（时序证据）'), element('p', item.media?.rtsp ? '模型基于时序与媒体重建记录提出待验证建议；未向模型发送截图像素，截图供人工对照。' : '模型依据关联的接收间隔、缓冲与关键帧记录提出待验证建议，源流片段和截图供复核。', 'timing-note muted'));
     if (item.explanation) {
         block.append(element('p', `解读来源 ${modelLabel(item.explanation)}`, 'model-source muted'), element('p', item.explanation.summary));
         const list = element('ul', '');

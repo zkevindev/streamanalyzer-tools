@@ -36,6 +36,8 @@ type investigationMediaInput struct {
 	alignment string
 	anchorMS  int64
 	note      string
+	rtsp      *RTSPMediaEvidence
+	partial   bool
 }
 
 type investigationMediaProbe struct {
@@ -57,8 +59,10 @@ func extractStallMedia(parent context.Context, dir string, report Report, item S
 		return investigationMediaInterrupted(result, ctx)
 	}
 	if isRTSPProtocol(report.Manifest.Protocol) {
-		result.Reason = "本版 RTSP 原始 RTP 证据未生成可精确定位的离线媒体文件；已关联接收间隔与播放器缓冲，未按到达时间猜测截图或片段位置。"
-		return result
+		if _, err := investigationRTSPAnchor(report, item); err != nil {
+			result.Reason = "原始 RTP 媒体补查不可用：" + err.Error()
+			return result
+		}
 	}
 	ffmpeg, err := investigationMediaTool("ffmpeg", "")
 	if err != nil {
@@ -82,9 +86,13 @@ func extractStallMedia(parent context.Context, dir string, report Report, item S
 			return investigationMediaInterrupted(result, ctx)
 		}
 		result.Reason = err.Error()
+		if isRTSPProtocol(report.Manifest.Protocol) {
+			result.Reason = "原始 RTP 媒体补查不可用：" + result.Reason
+		}
 		return result
 	}
 	result.Alignment = input.alignment
+	result.RTSP = input.rtsp
 	probe, err := investigationMediaInspect(ctx, ffprobe, input.path)
 	if err != nil || !probe.hasVideo && !probe.hasAudio {
 		if ctx.Err() != nil {
@@ -93,7 +101,11 @@ func extractStallMedia(parent context.Context, dir string, report Report, item S
 		result.Reason = "采样媒体无法解码，可能是封装不完整、编码不受支持或采样范围内没有媒体。"
 		return result
 	}
-	startMS, endMS := investigationMediaWindow(input.anchorMS, item.Stall.DurationMS, probe.durationMS)
+	availableMS := probe.durationMS
+	if input.rtsp != nil {
+		availableMS = min(availableMS, input.rtsp.DurationMS)
+	}
+	startMS, endMS := investigationMediaWindow(input.anchorMS, item.Stall.DurationMS, availableMS)
 	if endMS-startMS < 100 {
 		result.Reason = "播放器时间点不在已采集的可解码媒体范围内，未提取不相关片段。"
 		return result
@@ -108,7 +120,15 @@ func extractStallMedia(parent context.Context, dir string, report Report, item S
 		"-t", investigationMediaSeconds(endMS-startMS), "-map", "0:v:0?", "-map", "0:a:0?",
 		"-vf", "scale=w='min(1280,iw)':h='min(720,ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,format=yuv420p",
 		"-c:v", "libx264", "-preset", "veryfast", "-crf", "28", "-maxrate", "1500k", "-bufsize", "3000k", "-threads", "1",
-		"-c:a", "aac", "-b:a", "96k", "-avoid_negative_ts", "make_zero", "-movflags", "+faststart", "-fs", strconv.Itoa(maxDerivedClipBytes), "-y", clip)
+		"-c:a", "aac", "-b:a", "96k")
+	if input.rtsp != nil {
+		// Keep surviving source frame times across RTP loss. MOV edit lists
+		// represent encoder delay without shifting the presentation origin.
+		args = append(args, "-fps_mode:v", "vfr", "-avoid_negative_ts", "disabled")
+	} else {
+		args = append(args, "-avoid_negative_ts", "make_zero")
+	}
+	args = append(args, "-movflags", "+faststart", "-fs", strconv.Itoa(maxDerivedClipBytes), "-y", clip)
 	if err := investigationMediaRun(ctx, ffmpeg, args, nil); err != nil {
 		if ctx.Err() != nil {
 			return investigationMediaInterrupted(result, ctx)
@@ -122,6 +142,9 @@ func extractStallMedia(parent context.Context, dir string, report Report, item S
 		return result
 	}
 	actualEndMS := startMS + min(endMS-startMS, clipProbe.durationMS)
+	if input.rtsp != nil {
+		actualEndMS = min(actualEndMS, input.rtsp.DurationMS)
+	}
 	result.StartMS, result.EndMS = &startMS, &actualEndMS
 	duration := clipProbe.durationMS
 	asset, err := investigationMediaArtifact(clip, "stalls/"+item.ID+"/clip.mp4", "clip", startMS, &duration)
@@ -134,21 +157,34 @@ func extractStallMedia(parent context.Context, dir string, report Report, item S
 	if !probe.hasVideo {
 		result.Status, result.Reason = "partial", "采样媒体只有音频，已保留音频片段，无法生成源流画面截图。"
 	} else {
-		positions := []int64{min(int64(50), duration/4), min(max(int64(0), input.anchorMS-startMS), max(int64(0), duration-100)), max(int64(0), duration-100)}
-		for index, name := range []string{"before.jpg", "during.jpg", "after.jpg"} {
+		imageExtentMS := duration
+		if input.rtsp != nil {
+			imageExtentMS = min(imageExtentMS, actualEndMS-startMS)
+		}
+		positions := []int64{min(int64(50), imageExtentMS/4), min(max(int64(0), input.anchorMS-startMS), max(int64(0), imageExtentMS-100)), max(int64(0), imageExtentMS-100)}
+		if input.rtsp != nil {
+			positions, err = investigationRTSPFramePositions(ctx, ffprobe, clip, positions, imageExtentMS)
+			if err != nil || len(positions) != 3 {
+				positions = nil
+				result.Status, result.Reason = "partial", "片段已提取，无法确认派生视频的实际解码帧位置，未生成猜测位置的截图。"
+			}
+		}
+		names := []string{"before.jpg", "during.jpg", "after.jpg"}
+		for index, position := range positions {
+			name := names[index]
 			if ctx.Err() != nil {
 				result.Status, result.Reason = "partial", "片段已提取，截图任务未完成。"
 				break
 			}
 			path := filepath.Join(assetsDir, name)
-			args := append(investigationMediaInputArgs(clip), "-ss", investigationMediaSeconds(positions[index]), "-i", clip,
+			args := append(investigationMediaInputArgs(clip), "-ss", investigationMediaSeconds(position), "-i", clip,
 				"-frames:v", "1", "-an", "-c:v", "mjpeg", "-q:v", "5", "-threads", "1", "-fs", strconv.Itoa(maxDerivedImageBytes), "-y", path)
 			if err := investigationMediaRun(ctx, ffmpeg, args, nil); err != nil {
 				_ = os.Remove(path)
 				result.Status, result.Reason = "partial", "片段已提取，部分源流截图无法解码。"
 				continue
 			}
-			image, err := investigationMediaArtifact(path, "stalls/"+item.ID+"/"+name, "screenshot", startMS+positions[index], nil)
+			image, err := investigationMediaArtifact(path, "stalls/"+item.ID+"/"+name, "screenshot", startMS+position, nil)
 			if err != nil {
 				_ = os.Remove(path)
 				result.Status, result.Reason = "partial", "片段已提取，部分截图超出大小限制或无法读取。"
@@ -156,6 +192,9 @@ func extractStallMedia(parent context.Context, dir string, report Report, item S
 			}
 			result.Assets = append(result.Assets, image)
 		}
+	}
+	if input.partial && result.Status == "ready" {
+		result.Status = "partial"
 	}
 	if input.note != "" {
 		if result.Reason != "" {
@@ -350,6 +389,9 @@ func investigationMediaArtifact(path, name, kind string, at int64, duration *int
 }
 
 func investigationMediaPrepare(ctx context.Context, dir, stage string, report Report, item StallInvestigation) (investigationMediaInput, error) {
+	if isRTSPProtocol(report.Manifest.Protocol) {
+		return investigationMediaRTSP(ctx, dir, stage, report, item)
+	}
 	input := investigationMediaInput{alignment: "player_clock_estimate", note: "片段位置按本机播放器媒体时钟估算，截图来自采样源流。"}
 	var sample *PlayerBufferSample
 	if report.Player != nil && report.Player.Source == "same_capture" {

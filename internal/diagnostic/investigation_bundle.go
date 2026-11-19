@@ -123,7 +123,7 @@ func importedStallEvidence(dir string, report *Report, entries map[string]*zip.F
 	var ledger investigationLedger
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
-	if decoder.Decode(&ledger) != nil || decoder.Decode(new(any)) != io.EOF || ledger.Version != 1 || len(ledger.Items) == 0 || len(ledger.Items) > maxStallInvestigations {
+	if decoder.Decode(&ledger) != nil || decoder.Decode(new(any)) != io.EOF || (ledger.Version != 1 && ledger.Version != 2) || len(ledger.Items) == 0 || len(ledger.Items) > maxStallInvestigations || !validRTSPStallLedgerShape(data, ledger) {
 		return fmt.Errorf("%w: 卡顿补查记录无效", ErrInvalid)
 	}
 	seenIDs, seenStalls, seenAssets := map[string]bool{}, map[string]bool{}, map[string]bool{}
@@ -153,7 +153,7 @@ func importedStallEvidence(dir string, report *Report, entries map[string]*zip.F
 			return ErrInvalid
 		}
 		switch item.Media.Alignment {
-		case "", "player_clock_estimate", "arrival_estimate", "independent_capture_reference":
+		case "", "player_clock_estimate", "arrival_estimate", "independent_capture_reference", "receiver_rtp_estimate":
 		default:
 			return ErrInvalid
 		}
@@ -191,6 +191,13 @@ func importedStallEvidence(dir string, report *Report, entries map[string]*zip.F
 		}
 		if item.ModelState == "complete" && item.Explanation == nil {
 			return ErrInvalid
+		}
+		if item.Media.RTSP != nil {
+			if err := validateRTSPMediaEvidence(dir, *report, item); err != nil {
+				return err
+			}
+		} else if item.Media.Alignment == "receiver_rtp_estimate" || isRTSPProtocol(report.Manifest.Protocol) && len(item.Media.Assets) > 0 {
+			return fmt.Errorf("%w: RTSP 派生媒体缺少原始 RTP 重组证据", ErrInvalid)
 		}
 		for _, asset := range item.Media.Assets {
 			if !validateStallAsset(asset, item.ID) || seenAssets[asset.Name] || entries[asset.Name] == nil {

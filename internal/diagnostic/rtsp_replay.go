@@ -58,7 +58,7 @@ func walkRTSPMediaEvents(dir string, manifest Manifest, visit func(Event)) error
 type rtspWireExport struct {
 	senderReport func(media int, data []byte, arrival int64) error
 	describe     func(*description.Session) error
-	packet       func(media int, data []byte, arrival int64) error
+	packet       func(media int, data []byte, event Event) error
 }
 
 func replayRTSPWithEvents(dir string, manifest Manifest, visit func(Event)) (Report, error) {
@@ -135,8 +135,13 @@ func readRTSPWire(dir string, manifest Manifest, visit func(Event), export *rtsp
 		session, tracks = nil, []RTSPTrackMetrics{}
 	}
 	if export != nil {
-		if err := export.describe(session); err != nil {
-			return Report{}, err
+		if session == nil {
+			return Report{}, ErrInvalid
+		}
+		if export.describe != nil {
+			if err := export.describe(session); err != nil {
+				return Report{}, err
+			}
 		}
 	}
 	if metadata.Version < rtspLegacyPreviewArchiveVersion && metadata.Preview != nil || metadata.Version >= rtspLegacyPreviewArchiveVersion && (!validRTSPPreview(metadata.Preview, tracks) || metadata.Preview.State == "not_requested") || !validRTSPPreviewArchiveVersion(metadata, metadataData) {
@@ -268,10 +273,13 @@ func readRTSPWire(dir string, manifest Manifest, visit func(Event), export *rtsp
 			}
 			walk := visit
 			var exportErr error
-			if export != nil {
+			if export != nil && export.packet != nil {
 				walk = func(event Event) {
+					if visit != nil {
+						visit(event)
+					}
 					if event.Codec != "unknown" {
-						exportErr = export.packet(channel.MediaID, value.Payload, at)
+						exportErr = export.packet(channel.MediaID, value.Payload, event)
 					}
 				}
 			}

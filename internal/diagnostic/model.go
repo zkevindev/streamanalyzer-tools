@@ -66,6 +66,7 @@ const explanationPrompt = "你是流媒体排障助手。请用中文，仅返�
 	"播放请求 hops 是逐跳数字证据，ttfb_ms 为跳内相对耗时，其余时刻为采样偏移；未观测阶段不按零处理。dropped_hops 表示未采集，model_omitted_hops/stages 表示本次模型摘要省略。" +
 	"interval_kind 为 presentation_gap 时选中的是呈帧回调间隔，不是缓冲卡顿。presentation 基于先前回调的媒体时间间隔估算，只记录已闭合的回调间隔，不能确认画面冻结；与已有缓冲卡顿重合不重复增加卡顿次数。" +
 	"rtsp 的首音视频仅表示 RTP 包到达，不是解码首帧；序号缺失不是网络丢包证明。rtsp.preview 是同次采样在本机转封装的结果，访问单元数不是解码或呈帧数，receiver_rtp 是接收端共同时间基准，不是源端音画同步证明。预览失败须与原生控制/接收失败区分，不能将本机队列或转封装故障归因于网络。" +
+	"rtsp_media 是从保存的 RTP 离线重组的数字溯源，receiver_rtp_estimate 只按已保存的播放器媒体时钟估算位置；Keyframes 的原始偏移指访问单元完成包，不能当作完整访问单元字节。片段、截图反映源媒体内容，不重演网络等待，也不证明浏览器当时呈现了该画面。assets 仅为本地产物元数据，image_pixels_provided 为 false 时仍未提供任何像素。" +
 	"rtsp.preview.audio_codec 是源端编码，audio_output_codec 是预览输出；g711_to_aac 是本机有损转码，原始 PCMA/PCMU RTP 保留。g711 的补静音按 RTP 时间缺口生成，不能当作源端发送的静音；输入/补静音/迟到丢弃样本按输入采样率，输出与编码预延迟/填充样本按输出采样率计算，样本数均按每声道统计。startup_ms 从开始处理首个输入包起计；tool_check_ms、startup_ms、drain_ms 是本机处理耗时，不属于网络阶段。缺少编码器或转码失败不能证明上游收流失败。" +
 	"没有足够证据时，给出简洁摘要并返回空 hypotheses。"
 
@@ -229,6 +230,8 @@ type modelStallInvestigation struct {
 	MediaAlignment        string                   `json:"media_alignment,omitempty"`
 	ClipCount             int                      `json:"clip_count"`
 	ScreenshotCount       int                      `json:"screenshot_count"`
+	RTSPMedia             *RTSPMediaEvidence       `json:"rtsp_media,omitempty"`
+	Assets                []DerivedArtifact        `json:"assets,omitempty"`
 	ImagePixelsProvided   bool                     `json:"image_pixels_provided"`
 	Assessment            *StallAssessment         `json:"assessment,omitempty"`
 }
@@ -321,7 +324,7 @@ func modelInput(report Report) ([]byte, error) {
 			WindowStartMS: item.Correlation.WindowStartMS, WindowEndMS: item.Correlation.WindowEndMS,
 			Gaps: item.Correlation.Gaps, BufferSamples: item.Correlation.BufferSamples, Keyframes: item.Correlation.Keyframes,
 			Requests: modelRequestTimings(item.Correlation.Requests), Notes: item.Correlation.Notes,
-			MediaStatus: item.Media.Status, MediaAlignment: item.Media.Alignment, Assessment: item.Assessment,
+			MediaStatus: item.Media.Status, MediaAlignment: item.Media.Alignment, Assessment: item.Assessment, RTSPMedia: modelRTSPMedia(item.Media.RTSP),
 			PlayerRequests: modelPlaybackRequests(item.Correlation.PlayerRequests, phaseBudget), PlayerNetworkRecorded: item.Correlation.PlayerNetworkRecorded,
 			Scheduling: modelScheduling(item.Correlation.Scheduling), Presentation: modelPresentation(item.Correlation.Presentation)}
 		for _, asset := range item.Media.Assets {
@@ -329,6 +332,9 @@ func modelInput(report Report) ([]byte, error) {
 				entry.ClipCount++
 			} else if asset.Kind == "screenshot" {
 				entry.ScreenshotCount++
+			}
+			if validateStallAsset(asset, item.ID) {
+				entry.Assets = append(entry.Assets, asset)
 			}
 		}
 		input.StallInvestigations = append(input.StallInvestigations, entry)
