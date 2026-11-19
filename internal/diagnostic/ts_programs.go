@@ -2,6 +2,7 @@ package diagnostic
 
 import (
 	"cmp"
+	"fmt"
 	"slices"
 )
 
@@ -18,11 +19,12 @@ type TSProgramSummary struct {
 }
 
 type TSProgramStreamSummary struct {
-	PID                uint16 `json:"pid"`
-	Packets            int    `json:"packets"`
-	ContinuityErrors   int    `json:"continuity_errors"`
-	AfterSwitchPackets *int   `json:"after_switch_packets,omitempty"`
-	AfterSwitchErrors  *int   `json:"after_switch_errors,omitempty"`
+	Clock              *TSProgramClockSummary `json:"clock,omitempty"`
+	PID                uint16                 `json:"pid"`
+	Packets            int                    `json:"packets"`
+	ContinuityErrors   int                    `json:"continuity_errors"`
+	AfterSwitchPackets *int                   `json:"after_switch_packets,omitempty"`
+	AfterSwitchErrors  *int                   `json:"after_switch_errors,omitempty"`
 }
 
 func (a *tsAnalyzer) recordProgramBaselines() {
@@ -43,6 +45,10 @@ func (a *tsAnalyzer) summarizeTSPrograms() {
 		for _, stream := range state.mapping.Streams {
 			current := a.pids[stream.PID]
 			entry := TSProgramStreamSummary{PID: stream.PID}
+			if clock := a.programClocks[tsClockKey{program: number, pid: stream.PID}]; clock != nil && clock.pcrPID == state.mapping.PCRPID {
+				entry.Clock = clock.summary()
+
+			}
 			if current != nil {
 				entry.Packets, entry.ContinuityErrors = current.metrics.Packets, current.metrics.ContinuityErrors
 			}
@@ -56,4 +62,13 @@ func (a *tsAnalyzer) summarizeTSPrograms() {
 		metrics.Programs = append(metrics.Programs, program)
 	}
 	slices.SortFunc(metrics.Programs, func(a, b TSProgramSummary) int { return cmp.Compare(a.Number, b.Number) })
+	for _, program := range metrics.Programs {
+		for _, stream := range program.Streams {
+			if stream.Clock != nil && (stream.Clock.DriftMS <= -95 || stream.Clock.DriftMS >= 95) {
+				clock := a.programClocks[tsClockKey{program: program.Number, pid: stream.PID}]
+				a.note("ts_program_clock_drift", "warn", fmt.Sprintf("节目 %d 的 PID %d 相对 PCR 的 PTS 偏移变化 %d ms",
+					program.Number, stream.PID, stream.Clock.DriftMS), clock.first, clock.last)
+			}
+		}
+	}
 }

@@ -84,7 +84,7 @@ func TestMediaSimulatorDatagramFaults(t *testing.T) {
 		protocol, fault string
 		multicast       bool
 	}{
-		{"rtp-ts", "rtp_drop", false}, {"rtp-ts", "rtp_reorder", false}, {"rtp-ts", "rtp_duplicate", false}, {"rtp-ts", "pmt_pid_switch", false}, {"rtp-ts", "program_outage", false}, {"udp-ts", "continuity", true},
+		{"rtp-ts", "rtp_drop", false}, {"rtp-ts", "rtp_reorder", false}, {"rtp-ts", "rtp_duplicate", false}, {"rtp-ts", "pmt_pid_switch", false}, {"rtp-ts", "program_outage", false}, {"rtp-ts", "program_clock_drift", false}, {"udp-ts", "continuity", true},
 	} {
 		t.Run(tc.fault, func(t *testing.T) {
 			t.Parallel()
@@ -113,7 +113,7 @@ func TestMediaSimulatorDatagramFaults(t *testing.T) {
 			config, _ := json.Marshal(cfg)
 			source := decodeDiagnostic[mediasource.Status](t, diagnosticRequest(t, server, "POST", api+"/start", http.StatusCreated, config))
 			seconds := 4
-			if tc.fault == "pmt_pid_switch" || tc.fault == "program_outage" {
+			if tc.fault == "pmt_pid_switch" || tc.fault == "program_outage" || tc.fault == "program_clock_drift" {
 				seconds = 5
 			}
 			request, _ := json.Marshal(diagnostic.SampleRequest{Protocol: tc.protocol, URL: source.URL, Seconds: seconds})
@@ -163,6 +163,21 @@ func TestMediaSimulatorDatagramFaults(t *testing.T) {
 				afterJSON, _ := json.Marshal(offline.Report.MPEGTS.ProgramMaps)
 				if string(beforeJSON) != string(afterJSON) {
 					t.Fatalf("offline replay lost program map evidence: %s vs %s", beforeJSON, afterJSON)
+				}
+			case "program_clock_drift":
+				if m.RTPMissing != 0 || m.ContinuityErrors != 0 || m.PSIErrors != 0 || len(m.Programs) != 2 || len(m.ProgramMaps) != 0 {
+					t.Fatalf("unexpected clock fixture report: %+v", m)
+				}
+				main, reference := m.Programs[0].Streams[0].Clock, m.Programs[1].Streams[0].Clock
+				if main == nil || reference == nil || main.DriftMS > -90 || reference.DriftMS < -25 || reference.DriftMS > 25 {
+					t.Fatalf("wrong trend: program 1 %+v program 2 %+v", main, reference)
+				}
+				path := "/api/diagnostics/runs/" + run.ID
+				bundle := diagnosticRequest(t, server, "GET", path+"/evidence.zip", http.StatusOK, nil)
+				replay := decodeDiagnostic[diagnostic.Run](t, diagnosticRequest(t, server, "POST", "/api/diagnostics/import", http.StatusCreated, bundle))
+				offline := waitDiagnostic(t, server, "/api/diagnostics/runs/"+replay.ID)
+				if !reflect.DeepEqual(m.Programs, offline.Report.MPEGTS.Programs) {
+					t.Fatal("clock drift changed after reimport")
 				}
 			case "program_outage":
 				if m.RTPMissing != 0 || m.ContinuityErrors != 0 || m.PSIErrors != 0 || len(m.Programs) != 2 || len(m.ProgramMaps) != 1 {

@@ -116,6 +116,7 @@ func (a *tsAnalyzer) observePAT(section []byte, event Event) {
 	version := section[5] >> 1 & 31
 	if !a.patSeen || id != a.patID {
 		clear(a.programs)
+		clear(a.programClocks)
 		clear(a.pendingPMTPackets)
 		a.programSwitchBaseline = nil
 	}

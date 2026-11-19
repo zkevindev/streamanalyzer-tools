@@ -13,12 +13,12 @@ const (
 	replacementPMT   = 4100
 )
 
-func planTwoPrograms(raw []byte) ([]chunk, error) {
-	switchPMT, err := tsMapSwitch(raw)
+func fixtureOutage(raw []byte) (switchPAT, switchPMT, resume int, err error) {
+	switchPMT, err = tsMapSwitch(raw)
 	if err != nil {
-		return nil, err
+		return 0, 0, 0, err
 	}
-	switchPAT, resume := -1, -1
+	switchPAT, resume = -1, -1
 	for i := 0; i < len(raw); i += tsPacketBytes {
 		p := raw[i : i+tsPacketBytes]
 		pid := fixturePacketPID(p)
@@ -31,8 +31,21 @@ func planTwoPrograms(raw []byte) ([]chunk, error) {
 		}
 	}
 	if switchPAT < 0 || resume < 0 {
-		return nil, errors.New("双节目测试流缺少 PAT 或恢复关键帧")
+		return 0, 0, 0, errors.New("双节目测试流缺少 PAT 或恢复关键帧")
 	}
+	return switchPAT, switchPMT, resume, nil
+}
+
+func planTwoPrograms(raw []byte, drift bool) ([]chunk, error) {
+	switchPAT, switchPMT, resume := len(raw), len(raw), len(raw)
+	if !drift {
+		var err error
+		switchPAT, switchPMT, resume, err = fixtureOutage(raw)
+		if err != nil {
+			return nil, err
+		}
+	}
+	faultAt := 2 * switchPMT
 	null := bytes.Repeat([]byte{0xff}, tsPacketBytes)
 	copy(null, []byte{0x47, 0x1f, 0xff, 0x10})
 	out := make([]byte, 0, 2*len(raw))
@@ -71,11 +84,20 @@ func planTwoPrograms(raw []byte) ([]chunk, error) {
 				}
 			}
 		}
+		if drift && pid == 256 && i*8 > 2*tsRate && first[3]&0x20 != 0 && first[4] >= 7 && first[5]&0x10 != 0 {
+			// The PCR advances an extra 40 ms per elapsed fixture second.
+			shiftFixturePCR(first, uint64((i*8-2*tsRate)*3600/tsRate))
+			if faultAt == 2*len(raw) {
+				faultAt = 2 * i
+			}
+		}
 		out = append(out, first...)
 		out = append(out, second...)
 	}
+	if faultAt >= len(out) {
+		return nil, errors.New("双节目测试流缺少可调整的 PCR")
+	}
 	var plan []chunk
-	faultAt := 2 * switchPMT
 	for offset := 0; offset < len(out); offset += 7 * tsPacketBytes {
 		end := min(offset+7*tsPacketBytes, len(out))
 		plan = append(plan, chunk{at: time.Duration(offset*8) * time.Second / (2 * tsRate), data: out[offset:end], fault: offset <= faultAt && faultAt < end})

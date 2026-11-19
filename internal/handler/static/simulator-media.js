@@ -4,7 +4,7 @@ const api = '/api/simulators/media';
 const el = id => document.getElementById(id);
 const names = {
   normal: '正常', long_gop: '12 秒关键帧间隔', dts_backwards: '视频 DTS 回退',
-  continuity: '视频 PID 连续计数缺口', pcr_jump: 'PCR 时钟跳变', pmt_pid_switch: 'PMT 换版与音视频 PID 切换', program_outage: '多节目复用中单节目断流',
+  continuity: '视频 PID 连续计数缺口', pcr_jump: 'PCR 时钟跳变', pmt_pid_switch: 'PMT 换版与音视频 PID 切换', program_outage: '多节目复用中单节目断流', program_clock_drift: '单节目 PCR 相对 PTS 漂移',
   rtp_drop: 'RTP 丢包', rtp_reorder: 'RTP 乱序', rtp_duplicate: 'RTP 重复',
 };
 const protocols = {'http-flv': 'HTTP-FLV', 'http-ts': 'HTTP MPEG-TS', 'udp-ts': 'UDP MPEG-TS', 'rtp-ts': 'RTP MPEG-TS'};
@@ -17,7 +17,7 @@ const isDatagram = protocol => ['udp-ts', 'rtp-ts'].includes(protocol);
 function fillFaults() {
   const protocol = el('protocol').value;
   const options = el('protocol').value === 'http-flv'
-    ? ['normal', 'long_gop', 'dts_backwards'] : ['normal', 'continuity', 'pcr_jump', 'pmt_pid_switch', 'program_outage'];
+    ? ['normal', 'long_gop', 'dts_backwards'] : ['normal', 'continuity', 'pcr_jump', 'pmt_pid_switch', 'program_outage', 'program_clock_drift'];
   if (protocol === 'rtp-ts') options.push('rtp_drop', 'rtp_reorder', 'rtp_duplicate');
   el('datagram-config').hidden = !isDatagram(protocol);
   el('transport-hint').textContent = isDatagram(protocol) ? '先在排障工作台开始采样，再回此页发送一轮。组播可以填写网卡。' : '每次 GET 从头按原节奏发送，可用同一地址重复采样。';
