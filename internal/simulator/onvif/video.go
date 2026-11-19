@@ -20,6 +20,7 @@ import (
 type videoTrack struct {
 	profile *profileVideo
 	stream  *gortsplib.ServerStream
+	silent  *gortsplib.ServerStream
 	media   *description.Media
 	encoder *rtph264.Encoder
 }
@@ -28,7 +29,8 @@ type videoServer struct {
 	server         *gortsplib.Server
 	tracks         map[string]*videoTrack
 	ready          chan struct{}
-	plays          *atomic.Uint64
+	udpPlays       atomic.Uint64
+	tcpPlays       atomic.Uint64
 	user, password string
 }
 
@@ -49,16 +51,24 @@ func (v *videoServer) OnDescribe(ctx *gortsplib.ServerHandlerOnDescribeCtx) (*ba
 }
 
 func (v *videoServer) OnSetup(ctx *gortsplib.ServerHandlerOnSetupCtx) (*base.Response, *gortsplib.ServerStream, error) {
-	return v.describe(ctx.Conn, ctx.Request, ctx.Path)
+	res, stream, err := v.describe(ctx.Conn, ctx.Request, ctx.Path)
+	if stream != nil && ctx.Transport.Protocol == gortsplib.ProtocolUDP && v.tracks[ctx.Path].silent != nil {
+		stream = v.tracks[ctx.Path].silent
+	}
+	return res, stream, err
 }
 
-func (v *videoServer) OnPlay(_ *gortsplib.ServerHandlerOnPlayCtx) (*base.Response, error) {
-	v.plays.Add(1)
+func (v *videoServer) OnPlay(ctx *gortsplib.ServerHandlerOnPlayCtx) (*base.Response, error) {
+	if ctx.Session.Transport().Protocol == gortsplib.ProtocolTCP {
+		v.tcpPlays.Add(1)
+	} else {
+		v.udpPlays.Add(1)
+	}
 	return &base.Response{StatusCode: base.StatusOK}, nil
 }
 
-func startVideo(ip net.IP, cfg Config, profiles []*profileVideo, plays *atomic.Uint64) (*videoServer, error) {
-	v := &videoServer{ready: make(chan struct{}), plays: plays, tracks: make(map[string]*videoTrack),
+func startVideo(ip net.IP, cfg Config, profiles []*profileVideo) (*videoServer, error) {
+	v := &videoServer{ready: make(chan struct{}), tracks: make(map[string]*videoTrack),
 		user: cfg.RTSPUsername, password: cfg.RTSPPassword}
 	for _, profile := range profiles {
 		encoder, err := profile.avc.CreateEncoder()
@@ -105,6 +115,15 @@ func startVideo(ip net.IP, cfg Config, profiles []*profileVideo, plays *atomic.U
 			return nil, err
 		}
 		track.stream = stream
+		if cfg.SilentUDP {
+			silent := &gortsplib.ServerStream{Server: v.server, Desc: &description.Session{Medias: []*description.Media{track.media}}}
+			if err := silent.Initialize(); err != nil {
+				close(v.ready)
+				v.close()
+				return nil, err
+			}
+			track.silent = silent
+		}
 	}
 	close(v.ready)
 	return v, nil
@@ -165,6 +184,9 @@ func (v *videoServer) close() {
 	for _, track := range v.tracks {
 		if track.stream != nil {
 			track.stream.Close()
+		}
+		if track.silent != nil {
+			track.silent.Close()
 		}
 	}
 }

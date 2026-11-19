@@ -60,6 +60,16 @@
               </div>
               <p class="muted field-hint">每路可选一个 64 MiB 以内的视频。留空使用测试画面。填写用户名和密码后，两路 RTSP 都启用 Digest。</p>
             </details>
+            <details class="sim-advanced">
+              <summary>鉴权、时钟和媒体故障</summary>
+              <div class="sim-fields">
+                <div><label for="soap-user">SOAP 用户名</label><input id="soap-user" name="soap_username" maxlength="128"></div>
+                <div><label for="soap-password">SOAP 密码</label><input id="soap-password" name="soap_password" type="password" maxlength="256" autocomplete="new-password"></div>
+                <div><label for="clock-offset">设备时钟偏差（秒）</label><input id="clock-offset" name="clock_offset_seconds" type="number" min="-3600" max="3600" value="0"></div>
+              </div>
+              <label class="sim-check"><input id="silent-udp" type="checkbox"> RTSP UDP 握手成功但不发送 RTP</label>
+              <p class="muted field-hint">填入 SOAP 用户名和密码后，媒体查询要求 UsernameToken PasswordDigest。客户端可读取设备时钟后重试。</p>
+            </details>
             <p class="muted field-hint" id="network-hint">用局域网客户端发现时，选择与客户端同网段的网卡。</p>
             <p class="muted field-hint" id="port-hint">端口填 0 时自动分配。WS-Discovery 使用 UDP 3702。</p>
           </fieldset>
@@ -86,7 +96,9 @@
             <div><dt>媒体服务</dt><dd id="media-url"></dd></div>
             <div><dt>PTZ 服务</dt><dd id="ptz-url"></dd></div>
             <div><dt>JPEG 快照</dt><dd><a id="main-snapshot" target="_blank" rel="noopener noreferrer">主码流</a> · <a id="sub-snapshot" target="_blank" rel="noopener noreferrer">子码流</a></dd></div>
+            <div><dt>SOAP 鉴权</dt><dd id="soap-auth"></dd></div>
             <div><dt>RTSP 鉴权</dt><dd id="rtsp-auth"></dd></div>
+            <div><dt>RTSP 传输观测</dt><dd id="transport-observation"></dd></div>
             <div><dt>主码流 <span id="main-profile-detail"></span></dt><dd id="rtsp-url"></dd></div>
             <div><dt>子码流 <span id="sub-profile-detail"></span></dt><dd id="rtsp-sub-url"></dd></div>
           </dl>

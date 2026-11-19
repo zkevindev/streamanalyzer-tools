@@ -5,7 +5,6 @@ import (
 	"net/url"
 	"slices"
 	"strings"
-	"time"
 )
 
 const (
@@ -24,7 +23,7 @@ func (c *camera) scopes() []string {
 func (c *camera) deviceReply(op operation) (string, *soapFault) {
 	switch op.XMLName.Local {
 	case "GetServices":
-		return serviceEntry(deviceNS, c.status.DeviceURL, deviceCapabilities, op.IncludeCapability) +
+		return serviceEntry(deviceNS, c.status.DeviceURL, c.deviceCapabilities(), op.IncludeCapability) +
 			serviceEntry(mediaNS, c.status.MediaURL, mediaCapabilities, op.IncludeCapability) +
 			serviceEntry(ptzNS, c.status.PTZURL, ptzCapabilities, op.IncludeCapability), nil
 	case "GetCapabilities":
@@ -52,17 +51,24 @@ func (c *camera) deviceReply(op operation) (string, *soapFault) {
 		}
 		return body.String(), nil
 	case "GetSystemDateAndTime":
-		now := time.Now().UTC()
+		now := c.clock()
 		clock := fmt.Sprintf("<tt:Time><tt:Hour>%d</tt:Hour><tt:Minute>%d</tt:Minute><tt:Second>%d</tt:Second></tt:Time>"+
 			"<tt:Date><tt:Year>%d</tt:Year><tt:Month>%d</tt:Month><tt:Day>%d</tt:Day></tt:Date>",
 			now.Hour(), now.Minute(), now.Second(), now.Year(), now.Month(), now.Day())
 		return "<tds:SystemDateAndTime><tt:DateTimeType>Manual</tt:DateTimeType><tt:DaylightSavings>false</tt:DaylightSavings>" +
 			"<tt:TimeZone><tt:TZ>UTC0</tt:TZ></tt:TimeZone><tt:UTCDateTime>" + clock + "</tt:UTCDateTime><tt:LocalDateTime>" + clock + "</tt:LocalDateTime></tds:SystemDateAndTime>", nil
 	case "GetServiceCapabilities":
-		return deviceCapabilities, nil
+		return c.deviceCapabilities(), nil
 	default:
 		return "", unsupportedAction()
 	}
+}
+
+func (c *camera) deviceCapabilities() string {
+	if c.status.SOAPDigest {
+		return strings.Replace(deviceCapabilities, "<tds:Security/>", `<tds:Security UsernameToken="true"/>`, 1)
+	}
+	return deviceCapabilities
 }
 
 func serviceEntry(namespace, address, capabilities string, include bool) string {

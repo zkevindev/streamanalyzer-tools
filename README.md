@@ -124,6 +124,7 @@ JSON 报告及 SQLite 任务索引位于数据目录下的 `diagnostics/`。基�
 - ONVIF Device 服务提供设备信息、Scope、服务和能力查询。Media 服务提供 Profile、视频源、编码配置、`GetStreamUri` 和 `GetSnapshotUri`。
 - PTZ 服务按 Profile 提供绝对、相对和连续移动、停止、位置查询与预置位管理。JPEG 用对应视频的首帧模拟转向与缩放，工作台可打开快照查看效果。RTSP 继续播放原视频。
 - RTSP 主码流为 320 × 180、15 fps，子码流为 160 × 90、10 fps。两路各有 Profile 和 RTSP URI，可分别选择内置测试画面或 64 MiB 以内的本地视频。需要 FFmpeg 时，程序将本地视频转为相应的 H.264 画面并循环发送。填入用户名和密码即可对两路 RTSP 启用 Digest。支持 RTP/UDP 和 RTSP/TCP 交织。
+- 「鉴权、时钟和媒体故障」可要求 SOAP UsernameToken PasswordDigest、调整设备时钟，或令 RTSP UDP 的 SETUP/PLAY 成功但没有 RTP，供客户端验证 TCP 回退。页面分别计数 SOAP 鉴权失败、时钟偏差失败及 UDP/TCP PLAY。
 
 #### 通用 SIP
 
