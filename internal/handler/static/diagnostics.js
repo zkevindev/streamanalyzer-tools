@@ -46,6 +46,26 @@ const rtspBoundaryNote = '首音视频时间表示对应 RTP 包到达本接收�
 const rtspSequenceNote = '序号缺口和缺失包是接收点估计，使用有限回填窗口，不能直接等同于 TCP 网络丢包。序号跳变/重置属于候选，时间戳回退也可能来自 B 帧或乱序，需结合源端编码、流切换和 RTP 记录验证。';
 const rtspPreviewNote = '原生 RTSP/RTP 采样不依赖浏览器预览。当前版本不提供浏览器 RTSP 预览，播放器首屏、缓冲和呈帧指标未采集。';
 
+function rtspTransportLabel(transport) {
+    return transport === 'udp' ? 'UDP 单播 RTP/RTCP' : transport === 'tcp_interleaved' ? 'TCP 交织 RTP/RTCP' : transport || '未记录';
+}
+
+function rtspEvidenceArtifact(name) {
+    return name === 'udp-datagrams.bin' ? name : 'server-wire.bin';
+}
+
+function updateRTSPTransport() {
+    const protocol = node('protocol').value;
+    const native = Boolean(protocols[protocol]?.nativeRTSP);
+    const select = node('rtsp-transport');
+    node('rtsp-transport-options').hidden = !native;
+    select.disabled = !native;
+    select.querySelector('option[value="udp"]').disabled = protocol === 'rtsps';
+    if (protocol === 'rtsps') select.value = 'tcp';
+    if (native) node('url-hint').textContent = '填写摄像头或 NVR 的播放地址，支持 URL 用户信息认证。' +
+        (protocol === 'rtsps' ? 'RTSPS 使用 TLS/TCP 并校验服务端证书。' : select.value === 'udp' ? '媒体使用 UDP 单播，控制连接仍使用 TCP；不会自动切换到 TCP 媒体传输。' : '媒体使用 TCP 交织 RTP/RTCP。') + '报告仅显示协议和主机。';
+}
+
 function rtspFailureLabel(code) {
     return code ? (rtspFailureLabels[code] ? `${rtspFailureLabels[code]} [${code}]` : code) : '未记录';
 }
@@ -66,7 +86,7 @@ function renderRTSPReport(report) {
     const metrics = report.rtsp;
     node('rtsp-capability').textContent = rtspPreviewNote;
     node('rtsp-boundary').textContent = rtspBoundaryNote;
-    node('rtsp-sequence-note').textContent = rtspSequenceNote;
+    node('rtsp-sequence-note').textContent = metrics?.transport === 'udp' ? '序号缺口和缺失包是接收点估计，使用有限回填窗口；源端漏发、链路丢包和迟到包都可能影响结果，需对照源端及中间网络证据。' : rtspSequenceNote;
     if (!metrics) {
         renderMetrics('rtsp-metrics', []);
         for (const id of ['rtsp-request-table', 'rtsp-declared-tracks', 'rtsp-received-tracks', 'rtsp-sequence-table']) node(id).replaceChildren();
@@ -75,11 +95,12 @@ function renderRTSPReport(report) {
     }
     const stages = report.manifest.observation.stages || [];
     renderMetrics('rtsp-metrics', [
-        ['传输', metrics.transport === 'tcp_interleaved' ? 'TCP 交织 RTP/RTCP' : metrics.transport || '未记录'],
+        ['传输', rtspTransportLabel(metrics.transport)],
         ['应用字节边界', metrics.secure ? 'TLS 解密后的 RTSP/RTP' : 'RTSP/RTP 应用字节'],
         ['会话连接数', metrics.connections ?? '未观测'], ['DNS 阶段', rtspPhaseDuration(stages, 'dns')], ['TCP 阶段', rtspPhaseDuration(stages, 'connect')],
         ['TLS 阶段', metrics.secure ? rtspPhaseDuration(stages, 'tls') : '不适用（RTSP）'],
         ['RTP 包', metrics.rtp_packets ?? '未观测'], ['RTCP 包', metrics.rtcp_packets ?? '未观测'], ['RTP 字节', metrics.rtp_bytes == null ? '未观测' : bytes(metrics.rtp_bytes)],
+        ...(metrics.transport === 'udp' ? [['收到 UDP 数据报', metrics.udp_datagrams ?? 0], ['UDP 字节', bytes(metrics.udp_bytes ?? 0)], ['符合协商来源', metrics.accepted_datagrams ?? 0], ['来源过滤', metrics.filtered_datagrams ?? 0], ['超过媒体库缓冲的数据报', metrics.udp_oversize_datagrams ?? 0], ['首个 RTCP 到达', time(metrics.first_rtcp_ms)]] : []),
         ['首个 RTP 到达', videoObservedTime(metrics.first_rtp_ms)], ['首个视频 RTP 到达', videoObservedTime(metrics.first_video_rtp_ms)], ['首个音频 RTP 到达', videoObservedTime(metrics.first_audio_rtp_ms)],
         ['格式异常包', metrics.malformed_packets ?? '未观测'], ['未知通道包', metrics.unknown_channel_packets ?? '未观测'], ['未知载荷类型包', metrics.unknown_payload_packets ?? '未观测'], ['尾部不完整字节', metrics.trailing_bytes ?? '未观测'],
     ]);
@@ -416,7 +437,7 @@ function renderEvidence(protocol, events) {
     }
     if (protocols[protocol]?.nativeRTSP) {
         return renderTable(['对象', '轨道', 'SDP 编码', 'RTP 序号', '到达偏移 (ms)', '原始条目', '偏移（字节）', '长度（字节）'], events.map((event) => [
-            event.kind === 'rtp_packet' ? 'RTP 包' : 'RTSP 应用字节', event.track > 0 ? `#${event.track}` : '未记录', event.codec || '未声明', event.rtp_sequence == null ? '未观测' : String(event.rtp_sequence), event.arrival_ms, 'server-wire.bin', event.offset, event.size,
+            event.kind === 'rtp_packet' ? 'RTP 包' : '协议字节', event.track > 0 ? `#${event.track}` : '未记录', event.codec || '未声明', event.rtp_sequence == null ? '未观测' : String(event.rtp_sequence), event.arrival_ms, rtspEvidenceArtifact(event.artifact), event.offset, event.size,
         ]));
     }
     if (protocol === 'hls') {
@@ -1490,7 +1511,10 @@ node('protocol').addEventListener('change', () => {
     playback.disabled = Boolean(selected.nativeRTSP);
     if (selected.nativeRTSP) playback.checked = false;
     node('playback-capability-note').hidden = !selected.nativeRTSP;
+    updateRTSPTransport();
 });
+node('rtsp-transport').addEventListener('change', updateRTSPTransport);
+updateRTSPTransport();
 const launchOptions = new URLSearchParams(location.search);
 const simulatedHLS = launchOptions.get('hls_simulator');
 let simulatorURL = '';
@@ -1533,7 +1557,7 @@ bindForm('sample', async () => {
     const hlsABR = localSimulator && launchOptions.get('hls_abr') === '1';
     const run = await api('/runs', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ protocol: node('protocol').value, url, seconds, playback }),
+        body: JSON.stringify({ protocol: node('protocol').value, transport: protocols[node('protocol').value]?.nativeRTSP ? node('rtsp-transport').value : undefined, url, seconds, playback }),
     });
     stopPlayback(activePlayer);
     startPlayback(run, startedAt, startedAtPerformanceMS, seconds, hlsRecovery, hlsABR);

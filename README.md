@@ -14,7 +14,7 @@
 | --- | --- |
 | HTTP-FLV | `stream.flv`，采样期间读取的 HTTP 响应体 |
 | RTMP / RTMPS | `stream.rtmp`，从服务端握手开始的原始接收字节。RTMPS 保存 TLS 解密后的 RTMP 协议数据 |
-| RTSP / RTSPS | `stream.rtsp.zip`，包含服务端应用字节 `server-wire.bin`、DESCRIBE SDP 原文 `session.sdp` 及受控数字元数据 `session.json`；RTSPS 在 TLS 解密后记录 |
+| RTSP / RTSPS | `stream.rtsp.zip`，包含服务端应用字节 `server-wire.bin`、DESCRIBE SDP 原文 `session.sdp` 及会话元数据 `session.json`；UDP 模式另含完整数据报 `udp-datagrams.bin` 和边界、到达时间、来源记录 `udp-index.ndjson`；RTSPS 在 TLS 解密后记录 |
 | HLS | `stream.hls.zip`，原始 m3u8 快照、初始化段和 MPEG-TS、fMP4 或独立音频分片 |
 | HTTP MPEG-TS | `stream.ts`，采样期间读取的原始 HTTP 响应体 |
 | UDP MPEG-TS | `stream.udp`，按接收顺序拼接的完整 UDP 载荷，时间线记录每个数据报的边界 |
@@ -22,7 +22,9 @@
 
 UDP 与 RTP 使用 IPv4 接收地址，例如 `udp://0.0.0.0:5000` 或 `rtp://127.0.0.1:5000`，发送端向该设备及端口发包。组播示例为 `udp://239.1.1.1:5000?interface=en0`，`interface` 填写本机网卡名，省略时由系统选择网卡。RTP 当前检查静态载荷类型 33 的 MPEG-TS 数据。HTTP MPEG-TS 同时支持 HTTP 和 HTTPS。
 
-摄像头和 NVR 可直接填写 RTSP/RTSPS 播放地址，支持 URL 用户信息认证。首版使用 TCP 交织 RTP/RTCP；RTSPS 正常校验服务端证书。报告分别展示 DESCRIBE、SETUP、PLAY 等控制请求状态与耗时、DNS/TCP/TLS 阶段、SDP 声明轨道和实际 RTP 接收统计。首音视频时间指对应 RTP 包到达接收点，不是解码首帧。序号缺口和缺失包是接收点估计，不能直接等同于 TCP 网络丢包。达到请求、轨道或包分析上限时会明确标注。
+摄像头和 NVR 可直接填写 RTSP/RTSPS 播放地址，支持 URL 用户信息认证。RTSP 可显式选择 TCP 交织或 UDP 单播 RTP/RTCP，默认 TCP，不会在 UDP 失败时自动切换传输；RTSPS 当前使用正常验证证书的 TLS/TCP。报告分别展示 DESCRIBE、SETUP、PLAY 等控制请求状态与耗时、DNS/TCP/TLS 阶段、SDP 声明轨道和实际 RTP 接收统计。UDP 额外展示收到、符合协商来源、被过滤及超过媒体库缓冲的数据报数量，并给出控制成功但没有媒体到达时的排查提示。首音视频时间指对应 RTP 包到达接收点，不是解码首帧。序号缺口和缺失包是接收点估计，需要与源端发送及网络证据对照。达到请求、轨道或包分析上限时会明确标注。
+
+API 中可用 `{"protocol":"rtsp","transport":"udp","url":"rtsp://camera.example/stream","seconds":30}` 选择 UDP；省略 `transport` 仍使用 TCP。旧 TCP 证据包继续离线复盘。UDP 原始包保留符合及不符合协商来源的数据报；报告和模型不包含原始 IP/端口，轨道统计只计算符合来源与端口协商的包。
 
 RTSP/RTSPS 原生采样不依赖浏览器，首版禁用播放器预览和播放器体验采集。HTML/JSON 与模型只使用受控方法、状态、编码标签及数字证据，不展示 RTSP 地址路径、用户信息、认证头或 SDP 原文；来源只显示协议和主机。原始 ZIP 按上述边界保存服务端字节和 SDP，证据包导入后可离线重算，无需重新连接摄像头。
 

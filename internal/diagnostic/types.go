@@ -53,10 +53,11 @@ var (
 )
 
 type SampleRequest struct {
-	URL      string `json:"url"`
-	Seconds  int    `json:"seconds"`
-	Protocol string `json:"protocol,omitempty"`
-	Playback bool   `json:"playback,omitempty"`
+	URL       string `json:"url"`
+	Seconds   int    `json:"seconds"`
+	Protocol  string `json:"protocol,omitempty"`
+	Transport string `json:"transport,omitempty"`
+	Playback  bool   `json:"playback,omitempty"`
 }
 
 type Run struct {

@@ -40,7 +40,7 @@
                         <select id="protocol">
                             <option value="http-flv">HTTP-FLV</option>
                             <option value="rtmp">RTMP / RTMPS</option>
-                            <option value="rtsp">RTSP · TCP</option>
+                            <option value="rtsp">RTSP · TCP / UDP</option>
                             <option value="rtsps">RTSPS · TLS/TCP</option>
                             <option value="hls">HLS</option>
                             <option value="http-ts">HTTP MPEG-TS</option>
@@ -55,6 +55,13 @@
                     </div>
                 </div>
                 <div class="sample-options">
+                    <div id="rtsp-transport-options" hidden>
+                        <label for="rtsp-transport">RTSP 媒体传输</label>
+                        <select id="rtsp-transport" aria-describedby="url-hint">
+                            <option value="tcp">TCP 交织 RTP/RTCP</option>
+                            <option value="udp">UDP 单播 RTP/RTCP</option>
+                        </select>
+                    </div>
                     <div>
                         <label for="seconds">时长（秒）</label>
                         <input id="seconds" type="number" min="1" max="300" value="60" required>
