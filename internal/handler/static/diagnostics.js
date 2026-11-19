@@ -679,6 +679,7 @@ function renderTransport(protocol, ts) {
         ['连续计数错误', ts.continuity_errors], ['传输错误标记 (TEI)', ts.transport_errors],
         ['重复 TS 包', ts.duplicates], ['格式错误 TS 包', ts.malformed_packets],
         ['同步丢失', bytes(ts.sync_loss_bytes ?? 0)],
+        ['首个 TS 包', time(ts.first_packet_ms)], ['首个有效 PAT', time(ts.first_pat_ms)],
         ['PAT / PMT 段数', `${ts.pat_sections ?? 0} / ${ts.pmt_sections ?? 0}`], ['PCR PID 数', ts.pcr_pids],
         ['PSI 解析错误', ts.psi_errors ?? 0],
     ];
@@ -693,9 +694,9 @@ function renderTransport(protocol, ts) {
     const programs = ts.programs || [];
     node('ts-programs').hidden = programs.length === 0;
     node('ts-program-table').replaceChildren(...(programs.length ? [renderTable(
-        ['节目 / PMT PID', '媒体 PID', '收到 TS 包', '连续计数错误', '首次切换后收到 TS 包', '首次切换后连续计数错误', 'PTS−PCR 首尾偏移'],
+        ['节目 / PMT PID', '首个有效 PMT', '媒体 PID', '收到 TS 包', '连续计数错误', '首次切换后收到 TS 包', '首次切换后连续计数错误', 'PTS−PCR 首尾偏移'],
         programs.flatMap(program => program.streams.map(stream => [program.number + ' / ' + hexLabel(program.pmt_pid, 4),
-            hexLabel(stream.pid, 4), stream.packets, stream.continuity_errors, stream.after_switch_packets ?? '—',
+            time(program.first_pmt_ms), hexLabel(stream.pid, 4), stream.packets, stream.continuity_errors, stream.after_switch_packets ?? '—',
             stream.after_switch_errors ?? '—', stream.clock ? stream.clock.first_lead_ms + ' → ' + stream.clock.last_lead_ms +
               ' ms（' + (stream.clock.drift_ms > 0 ? '+' : '') + stream.clock.drift_ms + ' ms）' : '—'])),
     )] : []));
@@ -716,9 +717,9 @@ function renderTransport(protocol, ts) {
         return;
     }
     node('pid-summary').textContent = ts.pid_count > pids.length ? `PID 明细（显示 ${pids.length} / ${ts.pid_count}）` : 'PID 明细';
-    const table = renderTable(['PID', '编码', '流类型', 'TS 包数', 'TEI', '连续计数错误', '重复包', 'PES 起始数', 'PCR / PTS / DTS 计数'],
+    const table = renderTable(['PID', '编码', '流类型', 'TS 包数', 'TEI', '连续计数错误', '重复包', 'PES 起始数', '首个已识别 PES', 'PCR / PTS / DTS 计数'],
         pids.map((pid) => [hexLabel(pid.pid, 4), pid.codec || '—', hexLabel(pid.stream_type, 2), pid.packets,
-            pid.transport_errors, pid.continuity_errors, pid.duplicates, pid.pes_starts,
+            pid.transport_errors, pid.continuity_errors, pid.duplicates, pid.pes_starts, time(pid.first_mapped_pes_ms),
             `${pid.pcr_count ?? 0} / ${pid.pts_count ?? 0} / ${pid.dts_count ?? 0}`]));
     table.tabIndex = 0;
     table.setAttribute('role', 'region');

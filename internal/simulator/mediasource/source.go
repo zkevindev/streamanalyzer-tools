@@ -5,6 +5,7 @@ import (
 	"embed"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"strconv"
 	"strings"
@@ -72,7 +73,19 @@ func (m *Manager) Start(cfg Config) (Status, error) {
 		cfg.Fault = "normal"
 	}
 	var filename, mime, captureURL string
+	latePSI := cfg.Fault == "late_pat" || cfg.Fault == "late_pmt"
+	if latePSI && !cfg.datagram() {
+		return Status{}, ErrInvalid
+	}
 	if cfg.datagram() {
+		if latePSI && cfg.TargetPort == 0 && net.ParseIP(cfg.TargetIP).IsMulticast() {
+			reserved, err := net.ListenUDP("udp4", &net.UDPAddr{IP: net.IPv4zero})
+			if err != nil {
+				return Status{}, fmt.Errorf("分配组播测试端口：%w", err)
+			}
+			cfg.TargetPort = reserved.LocalAddr().(*net.UDPAddr).Port
+			reserved.Close()
+		}
 		dest, _, err := cfg.destination()
 		if err != nil {
 			return Status{}, err
@@ -93,7 +106,7 @@ func (m *Manager) Start(cfg Config) (Status, error) {
 	case "http-ts", "udp-ts", "rtp-ts":
 		mime, filename = "video/mp2t", "regular.ts"
 		rtpFault := cfg.Protocol == "rtp-ts" && (cfg.Fault == "rtp_drop" || cfg.Fault == "rtp_reorder" || cfg.Fault == "rtp_duplicate")
-		if cfg.Fault != "normal" && cfg.Fault != "continuity" && cfg.Fault != "pcr_jump" && cfg.Fault != "pmt_pid_switch" && cfg.Fault != "program_outage" && cfg.Fault != "program_clock_drift" && !rtpFault {
+		if cfg.Fault != "normal" && cfg.Fault != "continuity" && cfg.Fault != "pcr_jump" && cfg.Fault != "pmt_pid_switch" && cfg.Fault != "program_outage" && cfg.Fault != "program_clock_drift" && !rtpFault && !latePSI {
 			return Status{}, ErrInvalid
 		}
 	default:

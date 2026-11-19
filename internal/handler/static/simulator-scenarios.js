@@ -5,6 +5,7 @@ const gb = '/api/simulators/gb28181';
 const platform = gb + '/platform';
 const onvif = '/api/simulators/onvif';
 const hls = '/api/simulators/hls';
+const media = '/api/simulators/media';
 const runs = '/api/diagnostics/runs';
 const ids = {
   platform_id: '34020000002000000001',
@@ -551,6 +552,68 @@ async function runHLSAudioBoundary(entry) {
   }
 }
 
+async function runTSJoin(fault, entry) {
+  const video = el('scenario-player');
+  if (!video.requestVideoFrameCallback) throw new Error('此场景需要浏览器提供逐帧呈现回调。');
+  let source;
+  let run;
+  let player;
+  let callback;
+  const evidence = entry.evidence = {fault};
+  try {
+    const loopback = (await request('/api/diagnostics/onvif/interfaces')).find(item => item.loopback && item.ip === '127.0.0.1');
+    if (!loopback) throw new Error('没有可用的 IPv4 回环网卡。');
+    source = await request(media + '/start', {protocol:'udp-ts', fault, target_ip:'239.255.103.221', interface:loopback.name});
+    await request(media + '/send', null);
+    evidence.datagrams_before_join = await waitFor(async () => {
+      const state = await request(media);
+      return state.id === source.id && state.sending && state.sent_datagrams >= 4 ? state.sent_datagrams : null;
+    }, 1000, '组播发送未就绪。');
+    const startedAt = Date.now();
+    const startedAtPerformanceMS = performance.now();
+    run = await request(runs, {protocol:'udp-ts', url:source.url, seconds:9, playback:true});
+    entry.diagnostic_id = run.id;
+    if (!run.player) throw new Error('未返回 MPEG-TS 播放配置。');
+    const path = runs + '/' + run.id;
+    video.hidden = false;
+    let firstFrame;
+    callback = video.requestVideoFrameCallback((now, frame) => {
+      firstFrame = {at_ms:Math.round(now - startedAtPerformanceMS), time:frame.mediaTime};
+    });
+    player = new PlayerDiagnostics(video, run.player, {startedAt, startedAtPerformanceMS});
+    player.start();
+    progress('已加入正在发送的组播，等待节目表和实际出画…');
+    evidence.first_frame = await waitFor(() => firstFrame, 8700, '未观察到浏览器实际呈帧。');
+    await request(path + '/player', player.finish(), run.player.token);
+    player = null;
+    await request(path + '/stop', null);
+    const report = await waitFor(async () => (await request(path)).report, 5000, '组播报告生成超时。');
+    const ts = report.mpegts;
+    const program = ts?.programs?.find(item => item.number === 1);
+    const picture = program?.streams?.map(stream => ts.pids.find(pid => pid.pid === stream.pid)).find(pid => pid?.codec === 'h264');
+    Object.assign(evidence, {
+      first_packet_ms:ts?.first_packet_ms, first_pat_ms:ts?.first_pat_ms, first_pmt_ms:program?.first_pmt_ms,
+      first_video_pes_ms:picture?.first_mapped_pes_ms, pmt_pid:program?.pmt_pid, video_pid:picture?.pid,
+      continuity_errors:ts?.continuity_errors,
+    });
+    const {first_packet_ms: packet, first_pat_ms: pat, first_pmt_ms: pmt, first_video_pes_ms: pes} = evidence;
+    entry.passed = [packet, pat, pmt, pes].every(Number.isFinite) && packet <= pat && pat <= pmt &&
+      pmt <= pes && pes < firstFrame.at_ms && ts.continuity_errors === 0 &&
+      (fault === 'late_pat' ? pat - packet > 1200 : pat - packet < 500 && pmt - pat > 1200);
+    entry.detail = entry.passed ? '首包 ' + packet + ' ms · PAT ' + pat + ' ms · PMT ' + pmt +
+      ' ms · 视频 PES ' + pes + ' ms · 浏览器首帧 ' + firstFrame.at_ms + ' ms' : '缺少延期节目表或实际首帧证据';
+  } finally {
+    if (callback != null) video.cancelVideoFrameCallback(callback);
+    if (player) await request(runs + '/' + run.id + '/player', player.finish(), run.player.token).catch(() => {});
+    if (run) {
+      const latest = await request(runs + '/' + run.id).catch(() => null);
+      if (latest?.status === 'running') await request(runs + '/' + run.id + '/stop', null).catch(() => {});
+    }
+    if (source) await stopOwned(media, 'id', source.id).catch(() => {});
+    video.hidden = true;
+  }
+}
+
 async function runHLSKeyRotation(mode, entry) {
   const video = el('scenario-player');
   const forbidden = mode === 'key_forbidden';
@@ -793,6 +856,7 @@ el('scenario-form').addEventListener('submit', async event => {
     else if (expected === 'resolution') await runRTSPResolution(entry);
     else if (expected === 'fallback') await runRTSPFallback(entry);
     else if (family === 'rtsp') await runRTSPReconnect(entry);
+    else if (family === 'ts') await runTSJoin(expected, entry);
     else if (expected === 'audio_boundary') await runHLSAudioBoundary(entry);
     else if (expected === 'key_rotation' || expected === 'key_forbidden') await runHLSKeyRotation(expected, entry);
     else if (expected === 'stale') await runHLSStale(entry);

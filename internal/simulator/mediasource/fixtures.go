@@ -54,6 +54,7 @@ func planFLV(raw []byte, fault string) ([]chunk, error) {
 
 const tsPacketBytes = 188
 const tsRate = 260000
+const latePSIWindow = 2500 * time.Millisecond
 
 func planTS(raw []byte, fault string) ([]chunk, error) {
 	if len(raw) < tsPacketBytes || len(raw)%tsPacketBytes != 0 {
@@ -61,6 +62,11 @@ func planTS(raw []byte, fault string) ([]chunk, error) {
 	}
 	if fault == "program_outage" || fault == "program_clock_drift" {
 		return planTwoPrograms(raw, fault == "program_clock_drift")
+	}
+	var delayPID uint16
+	delayTable := fault == "late_pat" || fault == "late_pmt"
+	if fault == "late_pmt" {
+		delayPID = 4096 // Program 1 PMT in the built-in fixture.
 	}
 	switchOffset := len(raw)
 	if fault == "pmt_pid_switch" {
@@ -86,6 +92,16 @@ func planTS(raw []byte, fault string) ([]chunk, error) {
 			return nil, errors.New("TS 同步字无效")
 		}
 		pid := uint16(p[1]&0x1f)<<8 | uint16(p[2])
+		if delayTable && pid == delayPID && time.Duration(offset*8)*time.Second/tsRate < latePSIWindow {
+			// Keep the datagram schedule and other PIDs intact during the
+			// acquisition window. No placeholder becomes a PSI or PES packet.
+			p[1], p[2], p[3] = 0x1f, 0xff, 0x10
+			for i := 4; i < len(p); i++ {
+				p[i] = 0xff
+			}
+			hit = hit || !injected
+			injected = true
+		}
 		if offset >= switchOffset {
 			if err := switchFixturePacket(p, pid); err != nil {
 				return nil, err

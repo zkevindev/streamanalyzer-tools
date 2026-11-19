@@ -52,7 +52,11 @@ func (a *tsAnalyzer) programMap(state *tsPID, section []byte, pcr uint16, stream
 	if !known && len(a.programs) >= tsReportPIDs {
 		return
 	}
-	a.programs[program] = tsProgramState{pmt: state.metrics.PID, mapping: next}
+	first := observed.ArrivalMS
+	if known && previous.pmt == state.metrics.PID {
+		first = previous.firstPMTMS
+	}
+	a.programs[program] = tsProgramState{firstPMTMS: first, pmt: state.metrics.PID, mapping: next}
 	if !known || previous.pmt == state.metrics.PID && previous.mapping.PCRPID == next.PCRPID && sameProgramStreams(previous.mapping.Streams, next.Streams) {
 		return
 	}

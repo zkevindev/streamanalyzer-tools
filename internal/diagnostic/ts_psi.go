@@ -112,6 +112,10 @@ func (a *tsAnalyzer) observePAT(section []byte, event Event) {
 		return
 	}
 	a.report.MPEGTS.PATSections++
+	if a.report.MPEGTS.FirstPATMS == nil {
+		at := event.ArrivalMS
+		a.report.MPEGTS.FirstPATMS = &at
+	}
 	id := binary.BigEndian.Uint16(section[3:])
 	version := section[5] >> 1 & 31
 	if !a.patSeen || id != a.patID {
