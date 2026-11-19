@@ -30,20 +30,21 @@ var (
 )
 
 type Config struct {
-	RTCPClockStepMS  int    `json:"rtcp_clock_step_ms,omitempty"`
-	RecordingFixture bool   `json:"recording_fixture,omitempty"`
-	RTSPDisconnectMS int    `json:"rtsp_disconnect_ms,omitempty"`
-	VideoGapMS       int    `json:"video_gap_ms,omitempty"`
-	SOAPUsername     string `json:"soap_username,omitempty"`
-	SOAPPassword     string `json:"soap_password,omitempty"`
-	ClockOffset      int    `json:"clock_offset_seconds,omitempty"`
-	SilentUDP        bool   `json:"silent_udp,omitempty"`
-	RTSPUsername     string `json:"rtsp_username,omitempty"`
-	RTSPPassword     string `json:"rtsp_password,omitempty"`
-	BindIP           string `json:"bind_ip"`
-	Name             string `json:"name"`
-	HTTPPort         int    `json:"http_port"`
-	RTSPPort         int    `json:"rtsp_port"`
+	RTSPResolutionSwitchMS int    `json:"rtsp_resolution_switch_ms,omitempty"`
+	RTCPClockStepMS        int    `json:"rtcp_clock_step_ms,omitempty"`
+	RecordingFixture       bool   `json:"recording_fixture,omitempty"`
+	RTSPDisconnectMS       int    `json:"rtsp_disconnect_ms,omitempty"`
+	VideoGapMS             int    `json:"video_gap_ms,omitempty"`
+	SOAPUsername           string `json:"soap_username,omitempty"`
+	SOAPPassword           string `json:"soap_password,omitempty"`
+	ClockOffset            int    `json:"clock_offset_seconds,omitempty"`
+	SilentUDP              bool   `json:"silent_udp,omitempty"`
+	RTSPUsername           string `json:"rtsp_username,omitempty"`
+	RTSPPassword           string `json:"rtsp_password,omitempty"`
+	BindIP                 string `json:"bind_ip"`
+	Name                   string `json:"name"`
+	HTTPPort               int    `json:"http_port"`
+	RTSPPort               int    `json:"rtsp_port"`
 }
 
 type Address struct {
@@ -104,6 +105,10 @@ func (c *Config) normalize() (net.IP, *net.Interface, error) {
 	if c.RTCPClockStepMS < -2000 || c.RTCPClockStepMS > 2000 || c.RTCPClockStepMS != 0 && (c.VideoGapMS != 0 || c.RTSPDisconnectMS != 0) {
 		return nil, nil, fmt.Errorf("%w，RTCP 时钟跳变需在 ±2000 ms 内并单独启用", ErrConfig)
 	}
+	if c.RTSPResolutionSwitchMS != 0 && (c.RTSPResolutionSwitchMS < 2000 || c.RTSPResolutionSwitchMS > 10000 ||
+		c.RTSPDisconnectMS != 0 || c.VideoGapMS != 0 || c.RTCPClockStepMS != 0 || c.SilentUDP) {
+		return nil, nil, fmt.Errorf("%w，分辨率切换需在 2000–10000 ms 内并单独启用", ErrConfig)
+	}
 	if c.VideoGapMS != 0 && (c.VideoGapMS < 1000 || c.VideoGapMS > 10000) {
 		return nil, nil, fmt.Errorf("%w，视频停包时长需为 1000–10000 ms", ErrConfig)
 	}
@@ -137,33 +142,34 @@ func (c *Config) normalize() (net.IP, *net.Interface, error) {
 }
 
 type Status struct {
-	RTCPClockStepMS   int                     `json:"rtcp_clock_step_ms,omitempty"`
-	Recording         *RecordingFixtureStatus `json:"recording,omitempty"`
-	RTSPOutages       []RTSPOutageStatus      `json:"rtsp_outages,omitempty"`
-	EventURL          string                  `json:"event_url,omitempty"`
-	Events            EventStatus             `json:"events"`
-	VideoGaps         []RTPGapStatus          `json:"video_gaps,omitempty"`
-	SOAPDigest        bool                    `json:"soap_digest"`
-	SOAPAuthRejected  uint64                  `json:"soap_auth_rejected"`
-	SOAPClockRejected uint64                  `json:"soap_clock_rejected"`
-	ClockOffset       int                     `json:"clock_offset_seconds"`
-	SilentUDP         bool                    `json:"silent_udp"`
-	UDPPlays          uint64                  `json:"udp_plays"`
-	TCPPlays          uint64                  `json:"tcp_plays"`
-	Profiles          []Profile               `json:"profiles,omitempty"`
-	RTSPDigest        bool                    `json:"rtsp_digest"`
-	Active            bool                    `json:"active"`
-	Name              string                  `json:"name,omitempty"`
-	Interface         string                  `json:"interface,omitempty"`
-	DiscoveryAddress  string                  `json:"discovery_address,omitempty"`
-	EndpointID        string                  `json:"endpoint_id,omitempty"`
-	DeviceURL         string                  `json:"device_url,omitempty"`
-	PTZURL            string                  `json:"ptz_url,omitempty"`
-	MediaURL          string                  `json:"media_url,omitempty"`
-	StreamURL         string                  `json:"stream_url,omitempty"`
-	DiscoveryReplies  uint64                  `json:"discovery_replies"`
-	SOAPRequests      uint64                  `json:"soap_requests"`
-	RTSPPlays         uint64                  `json:"rtsp_plays"`
+	ResolutionSwitchAt time.Time               `json:"resolution_switch_at,omitzero"`
+	RTCPClockStepMS    int                     `json:"rtcp_clock_step_ms,omitempty"`
+	Recording          *RecordingFixtureStatus `json:"recording,omitempty"`
+	RTSPOutages        []RTSPOutageStatus      `json:"rtsp_outages,omitempty"`
+	EventURL           string                  `json:"event_url,omitempty"`
+	Events             EventStatus             `json:"events"`
+	VideoGaps          []RTPGapStatus          `json:"video_gaps,omitempty"`
+	SOAPDigest         bool                    `json:"soap_digest"`
+	SOAPAuthRejected   uint64                  `json:"soap_auth_rejected"`
+	SOAPClockRejected  uint64                  `json:"soap_clock_rejected"`
+	ClockOffset        int                     `json:"clock_offset_seconds"`
+	SilentUDP          bool                    `json:"silent_udp"`
+	UDPPlays           uint64                  `json:"udp_plays"`
+	TCPPlays           uint64                  `json:"tcp_plays"`
+	Profiles           []Profile               `json:"profiles,omitempty"`
+	RTSPDigest         bool                    `json:"rtsp_digest"`
+	Active             bool                    `json:"active"`
+	Name               string                  `json:"name,omitempty"`
+	Interface          string                  `json:"interface,omitempty"`
+	DiscoveryAddress   string                  `json:"discovery_address,omitempty"`
+	EndpointID         string                  `json:"endpoint_id,omitempty"`
+	DeviceURL          string                  `json:"device_url,omitempty"`
+	PTZURL             string                  `json:"ptz_url,omitempty"`
+	MediaURL           string                  `json:"media_url,omitempty"`
+	StreamURL          string                  `json:"stream_url,omitempty"`
+	DiscoveryReplies   uint64                  `json:"discovery_replies"`
+	SOAPRequests       uint64                  `json:"soap_requests"`
+	RTSPPlays          uint64                  `json:"rtsp_plays"`
 }
 
 type camera struct {
@@ -313,6 +319,9 @@ func (c *camera) snapshot() Status {
 		track := c.video.tracks[profile.path]
 		if track.outage.duration > 0 {
 			status.RTSPOutages = append(status.RTSPOutages, track.outage.snapshot(profile.Token))
+		}
+		if at := track.switchedAt.Load(); at != 0 {
+			status.ResolutionSwitchAt = time.Unix(0, at)
 		}
 		if track.gap.duration > 0 {
 			status.VideoGaps = append(status.VideoGaps, track.gap.snapshot(profile.Token))

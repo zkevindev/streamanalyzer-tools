@@ -214,7 +214,7 @@ function frameState(video, player) {
   };
 }
 
-async function sampleRTSPTCP(source, video, first) {
+async function sampleRTSPTCP(source, video, first, ready) {
   const startedAt = Date.now();
   const startedAtPerformanceMS = performance.now();
   const run = await request(runs, {protocol: 'rtsp', url: source.stream_url, transport: 'tcp', seconds: first ? 9 : 5, playback: true});
@@ -230,7 +230,7 @@ async function sampleRTSPTCP(source, video, first) {
     player.start();
     const detail = await waitFor(async () => {
       const sample = await request(path);
-      return (sample.status !== 'running' || !first && frameAt) ? sample : null;
+      return (sample.status !== 'running' || (ready ? ready() : !first && frameAt)) ? sample : null;
     }, first ? 9000 : 6500, 'RTSP 会话观测超时。');
     await request(path + '/player', player.finish(), run.player.token);
     player = null;
@@ -239,7 +239,7 @@ async function sampleRTSPTCP(source, video, first) {
       const state = await request(path);
       return state.report ? state : null;
     }, 4000, 'RTSP 采样报告生成超时。');
-    return {id: run.id, frame_at: frameAt, first_rtp_ms: completed.report.rtsp?.first_rtp_ms,
+    return {id: run.id, ...(ready && {rtsp: completed.report.rtsp}), frame_at: frameAt, first_rtp_ms: completed.report.rtsp?.first_rtp_ms,
       end_reason: completed.report.manifest.observation.end_reason,
       requests: (completed.report.rtsp?.requests || []).map(({method, status_code}) => ({method, status_code}))};
   } finally {
@@ -301,6 +301,47 @@ async function runRTSPFallback(entry) {
       const latest = await request(udpPath).catch(() => null);
       if (latest?.status === 'running') await request(udpPath + '/stop', null).catch(() => {});
     }
+    if (source) await stopOwned(onvif, 'device_url', source.device_url).catch(() => {});
+    video.hidden = true;
+  }
+}
+
+async function runRTSPResolution(entry) {
+  const video = el('scenario-player');
+  if (!video.requestVideoFrameCallback) throw new Error('此场景需要浏览器提供逐帧呈现回调。');
+  const frames = [];
+  let source;
+  let callback;
+  const observe = (_, frame) => {
+    const last = frames.at(-1);
+    if (!last || last.width !== frame.width || last.height !== frame.height) {
+      frames.push({width: frame.width, height: frame.height, at: Date.now()});
+    }
+    callback = video.requestVideoFrameCallback(observe);
+  };
+  try {
+    source = await request(onvif + '/start', {bind_ip: '127.0.0.1', rtsp_resolution_switch_ms: 3000});
+    video.hidden = false;
+    callback = video.requestVideoFrameCallback(observe);
+    progress('等待同一 RTSP 会话呈现两种分辨率…');
+    const sample = await sampleRTSPTCP(source, video, true, () => frames.length >= 2);
+    const state = await request(onvif);
+    const track = sample.rtsp?.tracks?.find(item => item.kind === 'video');
+    const configs = sample.rtsp?.preview?.video_configurations || [];
+    const switchedAt = Date.parse(state.resolution_switch_at);
+    const expected = source.profiles.slice(0, 2);
+    entry.diagnostic_id = sample.id;
+    entry.evidence = {frames, configurations: configs, switch_at: state.resolution_switch_at, requests: sample.requests};
+    if (frames.length >= 2) entry.evidence.resume_ms = frames[1].at - switchedAt;
+    const matches = (observed, index) => observed?.width === expected[index]?.width && observed?.height === expected[index]?.height;
+    entry.passed = frames.length === 2 && configs.length === 2 &&
+      [0, 1].every(index => matches(frames[index], index) && matches(configs[index], index)) &&
+      state.rtsp_plays === 1 && track?.ssrc_changes === 0 && track.sequence_gaps === 0 &&
+      frames[0].at <= switchedAt && frames[1].at >= switchedAt;
+    entry.detail = entry.passed ? '同一会话呈现 ' + frames.map(frame => frame.width + '×' + frame.height).join(' → ') +
+      ' · 新画面耗时 ' + entry.evidence.resume_ms + ' ms' : '未观察到同一会话实际呈现两种分辨率';
+  } finally {
+    if (callback != null) video.cancelVideoFrameCallback(callback);
     if (source) await stopOwned(onvif, 'device_url', source.device_url).catch(() => {});
     video.hidden = true;
   }
@@ -541,6 +582,7 @@ el('scenario-form').addEventListener('submit', async event => {
   notice();
   try {
     if (family === 'gb') await runGB(expected, entry);
+    else if (expected === 'resolution') await runRTSPResolution(entry);
     else if (expected === 'fallback') await runRTSPFallback(entry);
     else if (family === 'rtsp') await runRTSPReconnect(entry);
     else if (expected === 'stale') await runHLSStale(entry);
