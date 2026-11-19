@@ -958,7 +958,7 @@ function renderPlayerNetworkRequests(requests, context = 'global') {
     }
     const shown = requests.slice(0, playerNetworkRowLimit);
     const table = renderTable(['请求', '类型', '资源标识', '列表序号', '方法', '开始偏移 (ms)', '上游响应头偏移 (ms)', '上游首段响应体偏移 (ms)', '代理结束 / 截至偏移 (ms)', '上游 HTTP', '上游读取字节', '结果'], shown.map((request) => [
-        `#${request.number}`, playerNetworkKinds[request.kind] || request.kind || '未标注', request.resource_id || '未标注', request.playlist_sequence ?? '—', request.method || '未标注',
+        `#${request.number}`, (playerNetworkKinds[request.kind] || request.kind || '未标注') + (request.rendition === 'audio' ? ' · 独立音轨' : ''), request.resource_id || '未标注', request.playlist_sequence ?? '—', request.method || '未标注',
         playerNetworkOffset(request.start_ms), playerNetworkOffset(request.header_ms), playerNetworkOffset(request.first_body_ms),
         `${playerNetworkOffset(request.end_ms)}${request.outcome === 'incomplete' ? '（截至）' : ''}`,
         request.http_status > 0 ? String(request.http_status) : '未观测', playerNetworkOffset(request.bytes), playerNetworkOutcomes[request.outcome] || request.outcome || '未标注',

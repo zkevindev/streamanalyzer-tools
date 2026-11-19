@@ -24,9 +24,10 @@ const (
 )
 
 type playerHLSResource struct {
-	target   *url.URL
-	playlist bool
-	kind     string
+	target    *url.URL
+	playlist  bool
+	kind      string
+	rendition string
 }
 
 type playerHLS struct {
@@ -80,7 +81,7 @@ func (h *playerHLS) serve(w http.ResponseWriter, r *http.Request, resource strin
 		http.NotFound(w, r)
 		return
 	}
-	evidence := h.network.begin(resource, entry.kind, r.Method)
+	evidence := h.network.beginRendition(resource, entry.kind, r.Method, entry.rendition)
 	outcome := "incomplete"
 	defer func() { h.network.finish(evidence, outcome) }()
 	select {
@@ -165,7 +166,7 @@ func (h *playerHLS) serve(w http.ResponseWriter, r *http.Request, resource strin
 		if resp.Request != nil {
 			base = resp.Request.URL
 		}
-		rewritten, err := h.rewrite(data, base, r.URL.Query().Get("token"))
+		rewritten, err := h.rewriteRendition(data, base, r.URL.Query().Get("token"), entry.rendition)
 		if err != nil {
 			h.network.fail(evidence, "playlist", "invalid_playlist")
 			hlsPlaybackError(w)
@@ -262,6 +263,10 @@ func playerMediaType(resource, actual string) string {
 var errPlayerPlaylist = errors.New("invalid player playlist")
 
 func (h *playerHLS) rewrite(data []byte, base *url.URL, token string) (string, error) {
+	return h.rewriteRendition(data, base, token, "")
+}
+
+func (h *playerHLS) rewriteRendition(data []byte, base *url.URL, token, rendition string) (string, error) {
 	text := strings.TrimPrefix(string(data), "\uFEFF")
 	header, _, _ := strings.Cut(text, "\n")
 	if strings.TrimSpace(header) != "#EXTM3U" {
@@ -270,18 +275,18 @@ func (h *playerHLS) rewrite(data []byte, base *url.URL, token string) (string, e
 	if strings.Contains(text, "{$") {
 		return "", errPlayerPlaylist
 	}
-	localKind := func(ref string, playlist bool, kind string) (string, error) {
+	localKind := func(ref string, playlist bool, kind, role string) (string, error) {
 		target := resolveHLS(base, ref)
 		if target == nil {
 			return "", errPlayerPlaylist
 		}
-		id := h.rememberKind(target, playlist, kind)
+		id := h.rememberRendition(target, playlist, kind, role)
 		if id == "" {
 			return "", errPlayerPlaylist
 		}
 		return id + "?token=" + url.QueryEscape(token), nil
 	}
-	localURL := func(ref string, playlist bool) (string, error) { return localKind(ref, playlist, "media") }
+	localURL := func(ref string, playlist bool) (string, error) { return localKind(ref, playlist, "media", rendition) }
 	var out strings.Builder
 	playlistURI := false
 	for line := range strings.SplitSeq(text, "\n") {
@@ -298,7 +303,11 @@ func (h *playerHLS) rewrite(data []byte, base *url.URL, token string) (string, e
 		} else if strings.HasPrefix(tag, "#EXT-X-") && attrs != "" {
 			switch tag {
 			case "#EXT-X-MEDIA", "#EXT-X-I-FRAME-STREAM-INF", "#EXT-X-IMAGE-STREAM-INF", "#EXT-X-RENDITION-REPORT":
-				attrs, err = rewritePlayerURI(attrs, func(ref string) (string, error) { return localURL(ref, true) })
+				role := ""
+				if tag == "#EXT-X-MEDIA" && playerAttribute(attrs, "TYPE") == "AUDIO" {
+					role = "audio"
+				}
+				attrs, err = rewritePlayerURI(attrs, func(ref string) (string, error) { return localKind(ref, true, "playlist", role) })
 			case "#EXT-X-MAP", "#EXT-X-KEY", "#EXT-X-SESSION-KEY", "#EXT-X-PART", "#EXT-X-PRELOAD-HINT", "#EXT-X-SESSION-DATA":
 				kind := "media"
 				if tag == "#EXT-X-MAP" {
@@ -308,7 +317,7 @@ func (h *playerHLS) rewrite(data []byte, base *url.URL, token string) (string, e
 				} else if tag == "#EXT-X-SESSION-DATA" {
 					kind = "auxiliary"
 				}
-				attrs, err = rewritePlayerURI(attrs, func(ref string) (string, error) { return localKind(ref, false, kind) })
+				attrs, err = rewritePlayerURI(attrs, func(ref string) (string, error) { return localKind(ref, false, kind, rendition) })
 			}
 			line = tag + ":" + attrs
 		}
@@ -322,6 +331,25 @@ func (h *playerHLS) rewrite(data []byte, base *url.URL, token string) (string, e
 		}
 	}
 	return out.String(), nil
+}
+
+func playerAttribute(attrs, name string) string {
+	start := 0
+	quoted := false
+	for i := 0; i <= len(attrs); i++ {
+		if i < len(attrs) && attrs[i] == '"' {
+			quoted = !quoted
+		}
+		if i < len(attrs) && (quoted || attrs[i] != ',') {
+			continue
+		}
+		key, value, ok := strings.Cut(attrs[start:i], "=")
+		if ok && strings.TrimSpace(key) == name {
+			return strings.TrimSpace(value)
+		}
+		start = i + 1
+	}
+	return ""
 }
 
 // Attribute lists use literal quotes and may include commas inside them.
@@ -364,11 +392,18 @@ func (h *playerHLS) remember(target *url.URL, playlist bool) string {
 }
 
 func (h *playerHLS) rememberKind(target *url.URL, playlist bool, kind string) string {
+	return h.rememberRendition(target, playlist, kind, "")
+}
+
+func (h *playerHLS) rememberRendition(target *url.URL, playlist bool, kind, rendition string) string {
 	key := "a:" + kind + ":" + target.String()
 	ext := strings.ToLower(path.Ext(target.Path))
 	if playlist || ext == ".m3u8" || ext == ".m3u" {
 		playlist, ext, key = true, ".m3u8", "p:"+target.String()
 		kind = "playlist"
+	}
+	if rendition != "" {
+		key = rendition + ":" + key
 	}
 	switch ext {
 	case ".m3u8", ".ts", ".m4s", ".mp4", ".aac", ".mp3", ".vtt":
@@ -384,7 +419,7 @@ func (h *playerHLS) rememberKind(target *url.URL, playlist bool, kind string) st
 		return ""
 	}
 	id := "r" + strconv.Itoa(len(h.byURL)) + ext
-	h.byID[id], h.byURL[key] = playerHLSResource{target: target, playlist: playlist, kind: kind}, id
+	h.byID[id], h.byURL[key] = playerHLSResource{target: target, playlist: playlist, kind: kind, rendition: rendition}, id
 	h.bytes += len(key)
 	return id
 }

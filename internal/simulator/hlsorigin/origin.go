@@ -57,7 +57,7 @@ type Manager struct {
 
 func (m *Manager) Start(cfg Config) (Status, error) {
 	switch cfg.Mode {
-	case "normal", "live", "abr":
+	case "normal", "live", "abr", "audio":
 		cfg.Segment, cfg.DelayMS = 0, 0
 	case "delay", "not_found":
 		if cfg.Segment < 1 || cfg.Segment > SegmentCount {
@@ -96,7 +96,7 @@ func (m *Manager) Status() Status {
 func (m *Manager) snapshot() Status {
 	result := m.status
 	result.PlaylistSamples = slices.Clone(result.PlaylistSamples)
-	if result.Mode == "live" || result.Mode == "abr" {
+	if result.Mode == "live" || result.Mode == "abr" || result.Mode == "audio" {
 		result.Frozen = m.live.frozen
 		last := m.live.sequence(time.Now())
 		result.MediaSequence = last - liveWindow + 1
@@ -111,7 +111,7 @@ func (m *Manager) snapshot() Status {
 
 func (m *Manager) stopLocked() Status {
 	if m.status.Active {
-		if (m.status.Mode == "live" || m.status.Mode == "abr") && !m.live.frozen {
+		if (m.status.Mode == "live" || m.status.Mode == "abr" || m.status.Mode == "audio") && !m.live.frozen {
 			m.live.last = m.live.sequence(time.Now())
 			m.live.frozen = true
 		}
@@ -141,8 +141,8 @@ func (m *Manager) Serve(w http.ResponseWriter, r *http.Request, id, name string)
 		http.NotFound(w, r)
 		return
 	}
-	if m.status.Mode == "abr" {
-		m.serveABR(w, r, name)
+	if m.status.Mode == "abr" || m.status.Mode == "audio" {
+		m.serveFragmented(w, r, name)
 		return
 	}
 	playlist := name == "playlist.m3u8"
