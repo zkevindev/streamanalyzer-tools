@@ -348,13 +348,14 @@ func readManifest(entry *zip.File) (Manifest, error) {
 		return manifest, fmt.Errorf("%w: 清单无效", ErrInvalid)
 	}
 	legacyFLV := manifest.Protocol == ProtocolHTTPFLV && manifest.Version == legacyFLVSchemaVersion
-	if dumpName(manifest.Protocol) == "" || (manifest.Version != multiProtocolSchemaVersion && manifest.Version != playerSchemaVersion && manifest.Version != investigationSchemaVersion && manifest.Version != playerNetworkSchemaVersion && !legacyFLV) ||
-		((manifest.Protocol == ProtocolRTSP || manifest.Protocol == ProtocolRTSPS) && manifest.Player != nil) ||
-		(manifest.Player != nil && manifest.Version != playerSchemaVersion && manifest.Version != investigationSchemaVersion && manifest.Version != playerNetworkSchemaVersion) ||
+	if dumpName(manifest.Protocol) == "" || (manifest.Version != multiProtocolSchemaVersion && manifest.Version != playerSchemaVersion && manifest.Version != investigationSchemaVersion && manifest.Version != playerNetworkSchemaVersion && manifest.Version != rtspPlayerSchemaVersion && !legacyFLV) ||
+		((manifest.Protocol == ProtocolRTSP || manifest.Protocol == ProtocolRTSPS) && manifest.Player != nil && manifest.Version != rtspPlayerSchemaVersion) ||
+		(manifest.Player != nil && manifest.Version != playerSchemaVersion && manifest.Version != investigationSchemaVersion && manifest.Version != playerNetworkSchemaVersion && manifest.Version != rtspPlayerSchemaVersion) ||
 		(manifest.StallEvidence != nil && (manifest.Version < investigationSchemaVersion || manifest.Player == nil)) ||
 		(manifest.Version == investigationSchemaVersion && manifest.StallEvidence == nil) ||
 		(manifest.PlayerNetwork != nil && (manifest.Version != playerNetworkSchemaVersion || manifest.Protocol != ProtocolHLS || manifest.Player == nil)) ||
-		(manifest.Version == playerNetworkSchemaVersion && manifest.PlayerNetwork == nil) {
+		(manifest.Version == playerNetworkSchemaVersion && manifest.PlayerNetwork == nil) ||
+		(manifest.Version == rtspPlayerSchemaVersion && (manifest.Protocol != ProtocolRTSP && manifest.Protocol != ProtocolRTSPS || manifest.Player == nil || manifest.PlayerNetwork != nil)) {
 		return manifest, fmt.Errorf("%w: 证据包版本或协议不受支持", ErrInvalid)
 	}
 	obs := manifest.Observation

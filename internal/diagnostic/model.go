@@ -65,6 +65,7 @@ const explanationPrompt = "你是流媒体排障助手。请用中文，仅返�
 	"scheduling 区分浏览器长任务和定时器延后，区间已按前台播放覆盖裁剪；unsupported 或缺少指标不表示零次。时间重合不能证明 CPU 占用、解码故障或画面冻结，不得插值推断阻塞期间缓冲。" +
 	"播放请求 hops 是逐跳数字证据，ttfb_ms 为跳内相对耗时，其余时刻为采样偏移；未观测阶段不按零处理。dropped_hops 表示未采集，model_omitted_hops/stages 表示本次模型摘要省略。" +
 	"interval_kind 为 presentation_gap 时选中的是呈帧回调间隔，不是缓冲卡顿。presentation 基于先前回调的媒体时间间隔估算，只记录已闭合的回调间隔，不能确认画面冻结；与已有缓冲卡顿重合不重复增加卡顿次数。" +
+	"rtsp 的首音视频仅表示 RTP 包到达，不是解码首帧；序号缺失不是网络丢包证明。rtsp.preview 是同次采样在本机转封装的结果，访问单元数不是解码或呈帧数，receiver_rtp 是接收端共同时间基准，不是源端音画同步证明。预览失败须与原生控制/接收失败区分，不能将本机队列或转封装故障归因于网络。" +
 	"没有足够证据时，给出简洁摘要并返回空 hypotheses。"
 
 type modelClient struct {

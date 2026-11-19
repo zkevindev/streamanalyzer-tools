@@ -56,6 +56,10 @@ func extractStallMedia(parent context.Context, dir string, report Report, item S
 	if ctx.Err() != nil {
 		return investigationMediaInterrupted(result, ctx)
 	}
+	if isRTSPProtocol(report.Manifest.Protocol) {
+		result.Reason = "本版 RTSP 原始 RTP 证据未生成可精确定位的离线媒体文件；已关联接收间隔与播放器缓冲，未按到达时间猜测截图或片段位置。"
+		return result
+	}
 	ffmpeg, err := investigationMediaTool("ffmpeg", "")
 	if err != nil {
 		result.Reason = "未找到 FFmpeg，请将 ffmpeg 和 ffprobe 放在程序旁或加入 PATH 后重试。"

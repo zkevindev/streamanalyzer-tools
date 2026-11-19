@@ -44,7 +44,25 @@ const rtspKindLabels = { video: '视频', audio: '音频', other: '其他' };
 const rtspFailureLabels = { timeout: '超时', canceled: '已取消', dns_error: 'DNS 失败', connection_refused: '连接被拒绝', tls_error: 'TLS 失败', network_error: '网络错误', rtsp_error: 'RTSP 错误', rtsp_status: 'RTSP 状态异常', rtsp_auth_error: 'RTSP 认证失败', rtsp_transport_error: 'RTSP 传输协商失败', rtsp_parse_error: 'RTSP 解析失败' };
 const rtspBoundaryNote = '首音视频时间表示对应 RTP 包到达本接收点，不是解码首帧。SDP 声明的轨道与编码单独列出，不代表已收到或解码媒体。';
 const rtspSequenceNote = '序号缺口和缺失包是接收点估计，使用有限回填窗口，不能直接等同于 TCP 网络丢包。序号跳变/重置属于候选，时间戳回退也可能来自 B 帧或乱序，需结合源端编码、流切换和 RTP 记录验证。';
-const rtspPreviewNote = '原生 RTSP/RTP 采样不依赖浏览器预览。当前版本不提供浏览器 RTSP 预览，播放器首屏、缓冲和呈帧指标未采集。';
+const rtspPreviewNote = '原生 RTSP/RTP 采样不依赖浏览器预览。未记录转封装能力，播放器首屏、缓冲和呈帧指标以实际保存的播放器记录为准。';
+const rtspPreviewStates = { ready: '已输出媒体', unsupported: '编码或封装暂不支持', failed: '本机转封装未完成', not_requested: '未请求预览' };
+const rtspPreviewReasons = { no_track: '未选择对应轨道', no_media: '未输出对应媒体', codec_unsupported: '首版仅支持 H.264 / AAC-LC', packetization_unsupported: 'RTP 打包方式不支持', aac_configuration_unsupported: 'AAC 配置不支持（需 AAC-LC、1024 采样、单/双声道）', queue_limit: '本机预览队列达到上限', missing_video_parameters: '缺少有效 SPS/PPS', no_random_access: '未取得可用 IDR 随机接入点', timestamp_unsupported: '媒体时间戳或 DTS 不可转换', access_unit_limit: '媒体访问单元达到上限', player_unavailable: '本机播放器已停止接收', capture_setup_failed: '原生播放准备或 PLAY 未完成' };
+const rtspPreviewClockNote = '同次采样的 RTP 在本机转封装为 FLV，不另建拉流连接。音视频使用接收端 RTP 共同时间基准，不代表已验证源端音画同步；输出访问单元数不是解码或呈帧数。浏览器解码能力仍需实际播放验证。';
+function rtspPreviewReason(code) { return code ? (rtspPreviewReasons[code] || '未识别的预览状态') : '无'; }
+function renderRTSPPreview(metrics) {
+    const target = node('rtsp-preview-metrics');
+    const preview = metrics?.preview;
+    target.replaceChildren();
+    if (!preview) { node('rtsp-capability').textContent = rtspPreviewNote; return; }
+    node('rtsp-capability').textContent = rtspPreviewClockNote;
+    const entries = [
+        ['本机转封装状态', rtspPreviewStates[preview.state] || '未记录'], ['预览原因', rtspPreviewReason(preview.reason_code)],
+        ['预览视频', preview.video_track_id ? `#${preview.video_track_id} · ${preview.video_codec}` : '未选择'], ['视频说明', rtspPreviewReason(preview.video_reason)],
+        ['预览音频', preview.audio_track_id ? `#${preview.audio_track_id} · ${preview.audio_codec}` : '未选择'], ['音频说明', preview.audio_reason === 'codec_unsupported' ? '音轨预览不支持，已静音；原始 RTP 仍保留' : rtspPreviewReason(preview.audio_reason)],
+        ['视频访问单元', preview.video_aus ?? '未观测'], ['音频访问单元', preview.audio_aus ?? '未观测'], ['转封装包错误', preview.packet_errors ?? '未观测'], ['预览队列丢弃', preview.dropped_packets ?? '未观测'],
+    ];
+    renderMetrics('rtsp-preview-metrics', entries);
+}
 
 function rtspTransportLabel(transport) {
     return transport === 'udp' ? 'UDP 单播 RTP/RTCP' : transport === 'tcp_interleaved' ? 'TCP 交织 RTP/RTCP' : transport || '未记录';
@@ -84,7 +102,7 @@ function renderRTSPReport(report) {
     node('rtsp-report').hidden = !native;
     if (!native) return;
     const metrics = report.rtsp;
-    node('rtsp-capability').textContent = rtspPreviewNote;
+    renderRTSPPreview(metrics);
     node('rtsp-boundary').textContent = rtspBoundaryNote;
     node('rtsp-sequence-note').textContent = metrics?.transport === 'udp' ? '序号缺口和缺失包是接收点估计，使用有限回填窗口；源端漏发、链路丢包和迟到包都可能影响结果，需对照源端及中间网络证据。' : rtspSequenceNote;
     if (!metrics) {
@@ -132,7 +150,7 @@ const playerStates = {
     awaiting: '等待播放器数据', recording: '采集中', complete: '采集完成',
     unsupported: '当前环境不支持该播放格式', autoplay_blocked: '自动播放受限', error: '播放失败',
 };
-const playbackErrors = { media_error: '播放器媒体解码失败', network_error: '播放器网络请求失败', no_stream: '播放器未收到媒体流' };
+const playbackErrors = { media_error: '播放器媒体解码失败', network_error: '播放器网络请求失败', no_stream: '播放器未收到媒体流', preview_unsupported: 'RTSP 本机预览编码或封装不支持', preview_failed: 'RTSP 本机转封装失败，详见原生预览原因', preview_queue_limit: 'RTSP 本机预览队列达到上限' };
 const modelProviderLabels = {
     'openai-compatible': 'OpenAI 兼容接口',
     deepseek: 'DeepSeek',
@@ -280,7 +298,6 @@ function completePlayback(player, reason) {
 }
 
 function startPlayback(run, startedAt, startedAtPerformanceMS, seconds, hlsRecovery, hlsABR) {
-    if (protocols[run.protocol]?.nativeRTSP) return;
     const grant = run.player;
     if (!grant) return;
     const player = { id: run.id, token: grant.token };
@@ -437,7 +454,7 @@ function renderEvidence(protocol, events) {
     }
     if (protocols[protocol]?.nativeRTSP) {
         return renderTable(['对象', '轨道', 'SDP 编码', 'RTP 序号', '到达偏移 (ms)', '原始条目', '偏移（字节）', '长度（字节）'], events.map((event) => [
-            event.kind === 'rtp_packet' ? 'RTP 包' : '协议字节', event.track > 0 ? `#${event.track}` : '未记录', event.codec || '未声明', event.rtp_sequence == null ? '未观测' : String(event.rtp_sequence), event.arrival_ms, rtspEvidenceArtifact(event.artifact), event.offset, event.size,
+            ['rtp_packet', 'video_rtp', 'audio_rtp'].includes(event.kind) ? 'RTP 包' : '协议字节', event.track > 0 ? `#${event.track}` : '未记录', event.codec || '未声明', event.rtp_sequence == null ? '未观测' : String(event.rtp_sequence), event.arrival_ms, rtspEvidenceArtifact(event.artifact), event.offset, event.size,
         ]));
     }
     if (protocol === 'hls') {
@@ -866,8 +883,8 @@ function renderPlayerScheduling(scheduling, stall, intervalKind = 'buffering') {
 function renderPlayerReport(player, elapsed) {
     node('player-report').hidden = !player;
     if (!player) return;
-    const lastError = (player.events || []).filter((event) => event.kind === 'error').at(-1);
-    const state = player.state === 'error' ? playbackErrors[lastError?.code] || playerStates.error : playerStates[player.state] || player.state;
+    const lastError = (player.events || []).filter((event) => event.kind === 'error' || event.kind === 'unsupported').at(-1);
+    const state = (player.state === 'error' || player.state === 'unsupported') ? playbackErrors[lastError?.code] || playerStates[player.state] : playerStates[player.state] || player.state;
     const played = player.first_playing_ms != null;
     const screen = player.first_screen_method === 'loadeddata_estimate' ? '首屏（加载首帧估算）' : '首屏';
     const stallCount = player.stall_threshold_ms > 0 ? `卡顿次数（≥ ${player.stall_threshold_ms} ms）` : '卡顿次数';
@@ -1508,8 +1525,7 @@ node('protocol').addEventListener('change', () => {
     hint.hidden = !selected.receive && !selected.nativeRTSP;
     hint.textContent = selected.nativeRTSP ? '填写摄像头或 NVR 的播放地址，支持 URL 用户信息认证。采用 TCP 交织传输；RTSPS 使用 TLS 并校验服务端证书。报告仅显示协议和主机。' : selected.receive ? `填写本机 IPv4 和端口。组播示例 ${protocol.split('-')[0]}://239.1.1.1:5000?interface=en0` : '';
     const playback = node('analyze-playback');
-    playback.disabled = Boolean(selected.nativeRTSP);
-    if (selected.nativeRTSP) playback.checked = false;
+    playback.disabled = false;
     node('playback-capability-note').hidden = !selected.nativeRTSP;
     updateRTSPTransport();
 });
@@ -1559,7 +1575,7 @@ bindForm('sample', async () => {
     const startedAt = Date.now();
     const startedAtPerformanceMS = performance.now();
     const seconds = node('seconds').valueAsNumber;
-    const playback = !protocols[node('protocol').value]?.nativeRTSP && !node('analyze-playback').disabled && node('analyze-playback').checked;
+    const playback = !node('analyze-playback').disabled && node('analyze-playback').checked;
     const url = node('url').value.trim();
     const localSimulator = Boolean(simulatorURL && simulatorURL === url);
     const hlsRecovery = localSimulator && launchOptions.get('hls_recovery') === '1';

@@ -208,6 +208,9 @@ func attachPlayerArtifact(dir string, report *Report) error {
 	if err := validatePlayerRecording(record, report.Manifest.Observation.StartedAt); err != nil {
 		return err
 	}
+	if (report.Manifest.Protocol == ProtocolRTSP || report.Manifest.Protocol == ProtocolRTSPS) && (report.RTSP == nil || report.RTSP.Preview == nil) {
+		return fmt.Errorf("%w: RTSP 播放器缺少同次采样转封装证据", ErrInvalid)
+	}
 	expectedSource := "same_capture"
 	if report.Manifest.Protocol == ProtocolHLS {
 		expectedSource = "independent_pull"
@@ -224,6 +227,9 @@ func attachPlayerArtifact(dir string, report *Report) error {
 	}
 	if report.Manifest.Version < playerSchemaVersion {
 		report.Manifest.Version = playerSchemaVersion
+	}
+	if report.Manifest.Protocol == ProtocolRTSP || report.Manifest.Protocol == ProtocolRTSPS {
+		report.Manifest.Version = max(report.Manifest.Version, rtspPlayerSchemaVersion)
 	}
 	report.Manifest.Player = &artifact
 	report.Player = analyzePlayer(record, report.Manifest.Observation)

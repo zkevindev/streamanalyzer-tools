@@ -235,7 +235,7 @@ func (s *Service) Start(req SampleRequest) (Run, error) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	var player *PlayerSession
-	if req.Playback && protocol != ProtocolRTSP && protocol != ProtocolRTSPS {
+	if req.Playback {
 		session := newPlayerSession(context.Background(), protocol, target, s.client)
 		if session.hls != nil {
 			session.hls.network.setOrigin(run.CreatedAt)

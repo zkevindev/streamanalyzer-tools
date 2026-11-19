@@ -466,7 +466,7 @@ func TestRTSPIntegrationONVIFDigest(t *testing.T) {
 	u, _ := url.Parse(status.StreamURL)
 	u.User = url.UserPassword("real-camera", "real-digest-secret")
 	service := rtspIntegrationOpen(t)
-	run, err := service.Start(SampleRequest{URL: u.String(), Protocol: "rtsp", Seconds: 1, Playback: true})
+	run, err := service.Start(SampleRequest{URL: u.String(), Protocol: "rtsp", Seconds: 1, Playback: false})
 	if err != nil {
 		t.Fatal(err)
 	}

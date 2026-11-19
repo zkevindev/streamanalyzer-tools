@@ -152,13 +152,20 @@ func correlatePlayerInterval(dir string, report Report, id, kind string, index i
 	}
 	result.Notes = append(result.Notes, notes...)
 	slices.SortStableFunc(events, func(a, b Event) int { return cmp.Compare(a.ArrivalMS, b.ArrivalMS) })
-	result.Gaps = stallReceiveGaps(events, report.Manifest.Observation.ElapsedMS, result.WindowStartMS, result.WindowEndMS)
+	if isRTSPProtocol(report.Manifest.Protocol) {
+		result.Gaps = rtspReceptionGaps(events, report.Manifest.Observation.ElapsedMS, result.WindowStartMS, result.WindowEndMS)
+	} else {
+		result.Gaps = stallReceiveGaps(events, report.Manifest.Observation.ElapsedMS, result.WindowStartMS, result.WindowEndMS)
+	}
 	for _, gap := range result.Gaps {
 		label := "视频"
 		if gap.Kind == "audio" {
 			label = "音频"
 		}
 		message := fmt.Sprintf("采样连接的%s接收间隔为 %d ms", label, gap.DurationMS)
+		if isRTSPProtocol(report.Manifest.Protocol) {
+			message = fmt.Sprintf("采样连接轨道 %d 的%s RTP 包接收间隔为 %d ms", gap.Before.Track, label, gap.DurationMS)
+		}
 		var evidence []Event
 		if gap.Before != nil {
 			evidence = append(evidence, *gap.Before)
@@ -338,6 +345,8 @@ func stallReceiveGaps(events []Event, elapsed, start, end int64) []ReceptionGap 
 
 func stallCaptureEvents(dir string, manifest Manifest) ([]Event, []string, error) {
 	switch manifest.Protocol {
+	case ProtocolRTSP, ProtocolRTSPS:
+		return rtspCorrelationEvents(dir, manifest)
 	case ProtocolHTTPFLV:
 		events, err := replay(dir, manifest)
 		return events, nil, err

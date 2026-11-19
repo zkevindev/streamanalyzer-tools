@@ -31,20 +31,21 @@ type PlayerSession struct {
 	hls       *playerHLS
 	ready     chan struct{}
 
-	mu         sync.Mutex
-	bootstrap  [][]byte
-	bootBytes  int
-	live       chan []byte
-	subscribed bool
-	ended      bool
-	dropped    bool
+	mu             sync.Mutex
+	bootstrap      [][]byte
+	bootBytes      int
+	live           chan []byte
+	subscribed     bool
+	ended          bool
+	dropped        bool
+	previewFailure string
 }
 
 func newPlayerSession(ctx context.Context, protocol string, target *url.URL, client *http.Client) *PlayerSession {
 	ctx, cancel := context.WithCancel(ctx)
 	session := &PlayerSession{ctx: ctx, cancel: cancel, ready: make(chan struct{})}
 	switch protocol {
-	case ProtocolHTTPFLV, ProtocolRTMP:
+	case ProtocolHTTPFLV, ProtocolRTMP, ProtocolRTSP, ProtocolRTSPS:
 		session.transport = "flv"
 	case ProtocolHTTPTS, ProtocolUDPTS, ProtocolRTPTS:
 		session.transport = "mpegts"
@@ -295,4 +296,19 @@ func (w playerMediaWriter) Write(data []byte) (int, error) {
 	n, err := w.writer.Write(data)
 	w.player.publish(data[:n])
 	return n, err
+}
+
+// PreviewFailure is a controlled local pipeline code, never upstream error text.
+func (p *PlayerSession) PreviewFailure() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.previewFailure
+}
+func (p *PlayerSession) failPreview(code string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.previewFailure == "" {
+		p.previewFailure = code
+	}
+	p.endMedia()
 }

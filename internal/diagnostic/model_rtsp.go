@@ -27,6 +27,11 @@ func modelRTSP(source *RTSPMetrics) *modelRTSPMetrics {
 		return nil
 	}
 	result := &modelRTSPMetrics{RTSPMetrics: *source}
+	result.Preview = nil
+	if validRTSPPreview(source.Preview, source.Tracks) {
+		copy := *source.Preview
+		result.Preview = &copy
+	}
 	result.Boundary = "native_rtsp_tcp_receive"
 	result.Transport = "tcp_interleaved"
 	if source.Transport == "udp" {

@@ -47,9 +47,25 @@ func serveDiagnosticPlayerSocket(c *gin.Context, player *diagnostic.PlayerSessio
 	closeSocket := func(code int, reason string) {
 		_ = ws.WriteControl(websocket.CloseMessage, websocket.FormatCloseMessage(code, reason), time.Now().Add(250*time.Millisecond))
 	}
+	previewClose := func() bool {
+		if reason := player.PreviewFailure(); reason != "" {
+			code := websocket.CloseInternalServerErr
+			if reason == "codec_unsupported" {
+				code = websocket.CloseUnsupportedData
+			}
+			if reason == "queue_limit" {
+				code = websocket.CloseTryAgainLater
+			}
+			closeSocket(code, "rtsp_preview:"+reason)
+			return true
+		}
+		return false
+	}
 	bootstrap, live, unsubscribe, err := player.Subscribe()
 	if err != nil {
-		closeSocket(websocket.ClosePolicyViolation, "playback stream unavailable")
+		if !previewClose() {
+			closeSocket(websocket.ClosePolicyViolation, "playback stream unavailable")
+		}
 		return
 	}
 	defer unsubscribe()
@@ -90,6 +106,9 @@ func serveDiagnosticPlayerSocket(c *gin.Context, player *diagnostic.PlayerSessio
 			return
 		case data, more := <-live:
 			if !more {
+				if previewClose() {
+					return
+				}
 				if player.StreamDropped() {
 					closeSocket(websocket.CloseTryAgainLater, "playback buffer limit")
 				} else {
