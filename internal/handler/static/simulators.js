@@ -136,6 +136,7 @@ function render(status) {
   el('device-info').hidden = !status.device_id;
   el('device-info').textContent = status.device_id ? `设备 ${status.device_id} · 通道 ${status.channel_id}` : '';
   renderSource(status);
+  renderBroadcast(status.broadcast);
   const route = [
     mediaTransports[status.media_transport],
     status.media_local && `本机 ${status.media_local}`,
@@ -221,6 +222,19 @@ el('import-evidence').addEventListener('change', async event => {
     input.disabled = false;
   }
 });
+
+function renderBroadcast(broadcast) {
+  el('broadcast-status').hidden = !broadcast;
+  el('voice-output').textContent = broadcast?.output_id || '';
+  const labels = {idle: '等待广播', negotiating: '协商中', receiving: '接收中', ended: '已结束', failed: '失败'};
+  el('voice-state').textContent = broadcast ? [
+    labels[broadcast.state], broadcast.codec, 'RTP ' + broadcast.packets.toLocaleString('zh-CN') + ' 包',
+    broadcast.packets ? 'PCM 峰值 ' + broadcast.peak_pcm.toLocaleString('zh-CN') : '',
+    broadcast.source_id ? '音源 ' + broadcast.source_id : '',
+  ].filter(Boolean).join(' · ') : '';
+  el('voice-error').textContent = broadcast?.error || '';
+  el('voice-error').hidden = !broadcast?.error;
+}
 
 function renderSource(status) {
   const source = status.media_source || {};
@@ -358,6 +372,7 @@ form.addEventListener('submit', (event) => {
   const config = Object.fromEntries(new FormData(form));
   for (const name of numberFields) config[name] = Number(config[name]);
   config.capture_rtp = el('capture-rtp').checked;
+  config.voice = el('voice-enabled').checked;
   const faults = {
     first_delay_ms: Number(el('fault-delay').value), start_ms: Number(el('fault-start').value),
     window_ms: Number(el('fault-window').value), timestamp_jump_ms: Number(el('fault-jump').value),

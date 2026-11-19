@@ -80,7 +80,7 @@ func (d *device) onSubscribe(flow *sipFlow, req *sip.Request, tx sip.ServerTrans
 			return
 		}
 		scope = query.DeviceID
-		if d.channelFor(scope) == "" {
+		if d.channelFor(scope) == "" && (d.outputID == "" || scope != d.outputID) {
 			d.respond(req, tx, 404, "Not Found")
 			return
 		}
@@ -88,7 +88,7 @@ func (d *device) onSubscribe(flow *sipFlow, req *sip.Request, tx sip.ServerTrans
 		d.respond(req, tx, 400, "Bad Request")
 		return
 	}
-	if d.channelFor(req.Recipient.User) == "" {
+	if d.channelFor(req.Recipient.User) == "" && (d.outputID == "" || req.Recipient.User != d.outputID) {
 		d.respond(req, tx, 404, "Not Found")
 		return
 	}
@@ -162,6 +162,9 @@ func (d *device) applySubscription(flow *sipFlow, req *sip.Request, res *sip.Res
 				requests = append(requests, d.catalogNotify(flow, &sub, state, d.catalogBody(sub.scope, channel, false)))
 			}
 		}
+		if prev := flow.catalog[key]; prev == nil && d.outputID != "" && sub.includes(d.cfg.DeviceID, d.outputID) {
+			requests = append(requests, d.catalogNotify(flow, &sub, state, d.catalogBody(sub.scope, d.outputID, true)))
+		}
 		if len(requests) == 0 {
 			requests = append(requests, d.catalogNotify(flow, &sub, state, d.catalogBody(sub.scope, "", true)))
 		}
@@ -212,6 +215,9 @@ func (d *device) catalogBody(scope, channel string, online bool) []byte {
 		}
 		num = 1
 		item = fmt.Sprintf("<Item><DeviceID>%s</DeviceID><Event>%s</Event><Status>%s</Status></Item>", channel, event, event)
+	}
+	if d.outputID != "" && channel == d.outputID {
+		item = strings.Replace(d.voiceOutputItem(), "</Item>", "<Event>ADD</Event></Item>", 1)
 	}
 	return fmt.Appendf(nil, `%s<Notify><CmdType>Catalog</CmdType><SN>%d</SN><DeviceID>%s</DeviceID><SumNum>%d</SumNum><DeviceList Num="%d">%s</DeviceList></Notify>`,
 		xml.Header, d.xmlSN.Add(1), scope, num, num, item)

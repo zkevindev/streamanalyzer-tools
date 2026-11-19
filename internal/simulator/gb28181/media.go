@@ -249,6 +249,9 @@ func (d *device) onAck(req *sip.Request, _ sip.ServerTransaction) {
 }
 
 func (d *device) onBye(req *sip.Request, tx sip.ServerTransaction) {
+	if d.readBroadcastBye(req, tx) {
+		return
+	}
 	d.mu.Lock()
 	session := d.dialog(req)
 	if session != nil {
@@ -266,6 +269,9 @@ func (d *device) onBye(req *sip.Request, tx sip.ServerTransaction) {
 func (d *device) closeMedia() {
 	d.mu.Lock()
 	defer d.mu.Unlock()
+	if b := d.broadcast; b != nil {
+		b.cancel()
+	}
 	for _, session := range d.media {
 		d.closeMediaLocked(session)
 	}
@@ -305,6 +311,9 @@ func (d *device) stream(session *mediaSession) {
 
 	source := "测试画面"
 	videoCodec, audioCodec := "h264", "none"
+	if d.cfg.Voice {
+		audioCodec = "g711a"
+	}
 	if d.file != nil {
 		source = "本地视频 " + d.file.info.Filename
 		videoCodec, audioCodec = d.file.info.OutputCodec, d.file.info.AudioCodec
@@ -439,28 +448,36 @@ func (d *device) stream(session *mediaSession) {
 	} else if d.file != nil {
 		err = d.file.play(ctx, send)
 	} else {
-		err = playTestPattern(ctx, send)
+		err = playTestPattern(ctx, d.cfg.Voice, send)
 	}
 	if err != nil {
 		d.failMedia(session, phase, err.Error())
 	}
 }
 
-func playTestPattern(ctx context.Context, send func(mediaUnit) error) error {
-	ticker := time.NewTicker(time.Second / testpattern.FPS)
-	defer ticker.Stop()
-	var pts int64
-	for index := 0; ; index = (index + 1) % testpattern.Len() {
+func playTestPattern(ctx context.Context, withTone bool, send func(mediaUnit) error) error {
+	send = paceMedia(ctx, 1, send)
+	var tone []byte
+	if withTone {
+		tone = talkbackTone()
+	}
+	var audioPTS, videoPTS int64
+	for index := 0; ; {
+		if len(tone) > 0 && audioPTS < videoPTS {
+			const samples = 160
+			offset := int(audioPTS/(mediaClock/50)%int64(len(tone)/samples)) * samples
+			if err := send(mediaUnit{stream: audioStreamID, data: tone[offset : offset+samples], pts: audioPTS, dts: audioPTS}); err != nil {
+				return err
+			}
+			audioPTS += mediaClock / 50
+			continue
+		}
 		data := testpattern.AccessUnit(index)
-		if err := send(mediaUnit{stream: videoStreamID, data: data, pts: pts, dts: pts, key: index == 0}); err != nil {
+		if err := send(mediaUnit{stream: videoStreamID, data: data, pts: videoPTS, dts: videoPTS, key: index == 0}); err != nil {
 			return err
 		}
-		pts += 90000 / testpattern.FPS
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-		}
+		index = (index + 1) % testpattern.Len()
+		videoPTS += mediaClock / testpattern.FPS
 	}
 }
 

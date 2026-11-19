@@ -16,6 +16,9 @@ import (
 )
 
 type device struct {
+	outputID      string
+	broadcast     *broadcastSession
+	voice         BroadcastStatus
 	offline       map[string]bool
 	flow          *sipFlow
 	cfg           Config
