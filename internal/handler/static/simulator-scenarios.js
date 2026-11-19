@@ -450,6 +450,65 @@ async function runHLS(kind, entry) {
   }
 }
 
+async function runHLSAudioBoundary(entry) {
+  let source;
+  let run;
+  let player;
+  const video = el('scenario-player');
+  const fragments = [];
+  try {
+    if (!globalThis.Hls?.isSupported()) throw new Error('此浏览器需要支持 hls.js 的媒体扩展。');
+    source = await request(hls + '/start', {mode: 'audio_boundary'});
+    run = await request(runs, {protocol: 'hls', url: new URL(source.playlist, location.origin).href, seconds: 36, playback: true});
+    if (!run.player) throw new Error('未返回播放配置。');
+    entry.diagnostic_id = run.id;
+    entry.evidence = {fragments};
+    video.hidden = false;
+    player = new PlayerDiagnostics(video, run.player, {
+      hlsRecovery: true,
+      onHLSBuffered(fragment) {
+        if (!Number.isInteger(fragment?.sn) || fragment.sn < 6 || fragments.length >= 40) return;
+        fragments.push({rendition: fragment.type === 'audio' ? 'audio' : 'video', sequence: fragment.sn, epoch: fragment.cc,
+          start_pts: Number.isFinite(fragment.startPTS) ? fragment.startPTS : null,
+          end_pts: Number.isFinite(fragment.endPTS) ? fragment.endPTS : null});
+      },
+    });
+    player.start();
+    progress('等待视频跨段，观察独立音轨晚一段切换…');
+    await waitFor(() => fragments.some(row => row.sequence >= 8 && row.rendition === 'video' && row.epoch >= 1),
+      22000, '播放器未缓冲跨段后的视频。');
+    const before = frameState(video, player);
+    await waitFor(() => {
+      const current = frameState(video, player);
+      return current.presented > before.presented && current.time > 14 ? current : null;
+    }, 11000, '跨段后未继续呈帧。');
+    const path = runs + '/' + run.id;
+    await request(path + '/player', player.finish(), run.player.token);
+    player = null;
+    await request(path + '/stop', null);
+    const report = await waitFor(async () => (await request(path)).report, 6000, '播放器证据生成超时。');
+    const requests = report.player_network?.requests || [];
+    const videoBoundary = requests.find(row => row.kind === 'playlist' && row.rendition !== 'audio' && row.playlist_boundary?.next_sequence === 7);
+    const audioBoundary = requests.find(row => row.kind === 'playlist' && row.rendition === 'audio' && row.playlist_boundary?.next_sequence === 8);
+    const audioMedia = requests.filter(row => row.kind === 'media' && row.rendition === 'audio' && row.http_status === 200 && row.outcome === 'complete');
+    const crossed = fragments.some(row => row.rendition === 'audio' && row.sequence >= 8 && row.epoch >= 1);
+    entry.evidence.requests = [videoBoundary, audioBoundary].filter(Boolean);
+    entry.evidence.stall_count = report.player?.stall_count ?? 0;
+    entry.evidence.audio_http_success = audioMedia.length;
+    entry.evidence.audio_buffer_resumed = crossed;
+    entry.passed = Boolean(videoBoundary?.http_status === 200 && audioBoundary?.http_status === 200 && audioMedia.length > 0 && crossed);
+    entry.detail = entry.passed ? '视频边界 7，独立音轨边界 8 · 后续已呈帧并缓冲音频' : '缺少 HTTP 边界对照或跨段后缓冲证据';
+  } finally {
+    if (player) await request(runs + '/' + run.id + '/player', player.finish(), run.player.token).catch(() => {});
+    if (run) {
+      const latest = await request(runs + '/' + run.id).catch(() => null);
+      if (latest?.status === 'running') await request(runs + '/' + run.id + '/stop', null).catch(() => {});
+    }
+    if (source) await stopOwned(hls, 'id', source.id).catch(() => {});
+    video.hidden = true;
+  }
+}
+
 async function runHLSStale(entry) {
   const video = el('scenario-player');
   let source;
@@ -585,6 +644,7 @@ el('scenario-form').addEventListener('submit', async event => {
     else if (expected === 'resolution') await runRTSPResolution(entry);
     else if (expected === 'fallback') await runRTSPFallback(entry);
     else if (family === 'rtsp') await runRTSPReconnect(entry);
+    else if (expected === 'audio_boundary') await runHLSAudioBoundary(entry);
     else if (expected === 'stale') await runHLSStale(entry);
     else if (expected === 'part_delay') await runLLHLS(entry);
     else await runHLS(expected, entry);

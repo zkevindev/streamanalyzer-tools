@@ -59,7 +59,7 @@ type Manager struct {
 
 func (m *Manager) Start(cfg Config) (Status, error) {
 	switch cfg.Mode {
-	case "normal", "live", "abr", "audio", "ll", "stale":
+	case "normal", "live", "abr", "audio", "ll", "stale", "audio_boundary":
 		cfg.Segment, cfg.DelayMS = 0, 0
 	case "delay", "not_found":
 		if cfg.Segment < 1 || cfg.Segment > SegmentCount {
@@ -114,7 +114,7 @@ func (m *Manager) snapshot() Status {
 		result.MediaSequence = low.NextSequence - liveWindow
 		result.LowLatency = &low
 	}
-	if result.Mode == "live" || result.Mode == "stale" || result.Mode == "abr" || result.Mode == "audio" {
+	if result.Mode == "live" || result.Mode == "stale" || result.Mode == "abr" || result.Mode == "audio" || result.Mode == "audio_boundary" {
 		result.Frozen = m.live.frozen
 		last := m.live.sequence(time.Now())
 		result.MediaSequence = last - liveWindow + 1
@@ -132,7 +132,7 @@ func (m *Manager) stopLocked() Status {
 		if m.status.LowLatency != nil {
 			m.status.LowLatency.setEdge(llPublished(m.live.started, time.Now()))
 		}
-		if (m.status.Mode == "live" || m.status.Mode == "stale" || m.status.Mode == "abr" || m.status.Mode == "audio") && !m.live.frozen {
+		if (m.status.Mode == "live" || m.status.Mode == "stale" || m.status.Mode == "abr" || m.status.Mode == "audio" || m.status.Mode == "audio_boundary") && !m.live.frozen {
 			m.live.last = m.live.sequence(time.Now())
 			m.live.frozen = true
 		}
@@ -166,7 +166,7 @@ func (m *Manager) Serve(w http.ResponseWriter, r *http.Request, id, name string)
 		m.serveLowLatency(w, r, name)
 		return
 	}
-	if m.status.Mode == "abr" || m.status.Mode == "audio" {
+	if m.status.Mode == "abr" || m.status.Mode == "audio" || m.status.Mode == "audio_boundary" {
 		m.serveFragmented(w, r, name)
 		return
 	}

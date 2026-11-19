@@ -2,7 +2,7 @@
 
 const api = '/api/simulators/hls';
 const el = id => document.getElementById(id);
-const modes = {normal: '正常点播', live: '滚动直播', stale: '直播列表回退', abr: '双码率 fMP4 直播', audio: '独立音轨分片故障', ll: '低延迟直播 / Part 延迟', delay: '分片延迟', not_found: '分片返回 404'};
+const modes = {normal: '正常点播', live: '滚动直播', stale: '直播列表回退', abr: '双码率 fMP4 直播', audio: '独立音轨分片故障', audio_boundary: '独立音轨跨段错位', ll: '低延迟直播 / Part 延迟', delay: '分片延迟', not_found: '分片返回 404'};
 let current;
 let busy = false;
 let generation = 0;

@@ -23,25 +23,26 @@ const (
 // PlayerNetworkRequest describes the local proxy's upstream observation, never
 // delivery to the browser, SourceBuffer append, or decoder consumption.
 type PlayerNetworkRequest struct {
-	CacheAgeSeconds  *uint32            `json:"cache_age_seconds,omitempty"`
-	PlaylistSequence *uint64            `json:"playlist_sequence,omitempty"`
-	Number           int                `json:"number"`
-	ResourceID       string             `json:"resource_id"`
-	Kind             string             `json:"kind"`
-	BlockingReload   bool               `json:"blocking_reload,omitempty"`
-	Rendition        string             `json:"rendition,omitempty"`
-	Method           string             `json:"method"`
-	StartMS          int64              `json:"start_ms"`
-	HeaderMS         *int64             `json:"header_ms,omitempty"`
-	FirstBodyMS      *int64             `json:"first_body_ms,omitempty"`
-	EndMS            int64              `json:"end_ms"`
-	HTTPStatus       int                `json:"http_status,omitempty"`
-	Bytes            int64              `json:"bytes"`
-	Outcome          string             `json:"outcome"`
-	Hops             []PlayerNetworkHop `json:"hops,omitempty"`
-	DroppedHops      int                `json:"dropped_hops,omitempty"`
-	FailureStage     string             `json:"failure_stage,omitempty"`
-	FailureCode      string             `json:"failure_code,omitempty"`
+	PlaylistBoundary *HLSPlaylistBoundary `json:"playlist_boundary,omitempty"`
+	CacheAgeSeconds  *uint32              `json:"cache_age_seconds,omitempty"`
+	PlaylistSequence *uint64              `json:"playlist_sequence,omitempty"`
+	Number           int                  `json:"number"`
+	ResourceID       string               `json:"resource_id"`
+	Kind             string               `json:"kind"`
+	BlockingReload   bool                 `json:"blocking_reload,omitempty"`
+	Rendition        string               `json:"rendition,omitempty"`
+	Method           string               `json:"method"`
+	StartMS          int64                `json:"start_ms"`
+	HeaderMS         *int64               `json:"header_ms,omitempty"`
+	FirstBodyMS      *int64               `json:"first_body_ms,omitempty"`
+	EndMS            int64                `json:"end_ms"`
+	HTTPStatus       int                  `json:"http_status,omitempty"`
+	Bytes            int64                `json:"bytes"`
+	Outcome          string               `json:"outcome"`
+	Hops             []PlayerNetworkHop   `json:"hops,omitempty"`
+	DroppedHops      int                  `json:"dropped_hops,omitempty"`
+	FailureStage     string               `json:"failure_stage,omitempty"`
+	FailureCode      string               `json:"failure_code,omitempty"`
 }
 
 type PlayerNetworkReport struct {
@@ -133,6 +134,22 @@ func (n *playerNetwork) playlistSequence(e *playerNetworkEntry, sequence uint64)
 	}
 }
 
+type HLSPlaylistBoundary struct {
+	Epoch        uint64  `json:"epoch"`
+	NextSequence *uint64 `json:"next_sequence,omitempty"`
+}
+
+func (n *playerNetwork) playlistBoundary(e *playerNetworkEntry, boundary HLSPlaylistBoundary) {
+	if e == nil {
+		return
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if !n.frozen && !n.stopped && e.request.PlaylistSequence != nil {
+		e.request.PlaylistBoundary = &boundary
+	}
+}
+
 func (n *playerNetwork) playlistCacheAge(e *playerNetworkEntry, age uint32) {
 	if e == nil {
 		return
@@ -179,6 +196,14 @@ func clonePlayerNetwork(value *PlayerNetworkReport) *PlayerNetworkReport {
 	copy := *value
 	copy.Requests = slices.Clone(value.Requests)
 	for i := range copy.Requests {
+		if current := copy.Requests[i].PlaylistBoundary; current != nil {
+			boundary := *current
+			if current.NextSequence != nil {
+				value := *current.NextSequence
+				boundary.NextSequence = &value
+			}
+			copy.Requests[i].PlaylistBoundary = &boundary
+		}
 		if age := copy.Requests[i].CacheAgeSeconds; age != nil {
 			value := *age
 			copy.Requests[i].CacheAgeSeconds = &value
@@ -317,6 +342,10 @@ func validatePlayerNetwork(report *PlayerNetworkReport, player *PlayerReport, pr
 			return ErrInvalid
 		}
 		if request.BlockingReload && request.Kind != "playlist" {
+			return ErrInvalid
+		}
+		if boundary := request.PlaylistBoundary; boundary != nil &&
+			(request.PlaylistSequence == nil || boundary.NextSequence != nil && *boundary.NextSequence < *request.PlaylistSequence) {
 			return ErrInvalid
 		}
 		if request.CacheAgeSeconds != nil && request.PlaylistSequence == nil {

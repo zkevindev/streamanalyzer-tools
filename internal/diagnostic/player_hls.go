@@ -178,6 +178,9 @@ func (h *playerHLS) serve(w http.ResponseWriter, r *http.Request, resource strin
 			if value, ok := strings.CutPrefix(strings.TrimSpace(line), "#EXT-X-MEDIA-SEQUENCE:"); ok {
 				if sequence, err := strconv.ParseUint(value, 10, 64); err == nil {
 					h.network.playlistSequence(evidence, sequence)
+					if boundary, ok := hlsPlaylistBoundary(rewritten, sequence); ok {
+						h.network.playlistBoundary(evidence, boundary)
+					}
 					if age, err := strconv.ParseUint(resp.Header.Get("Age"), 10, 32); err == nil {
 						h.network.playlistCacheAge(evidence, uint32(age))
 					}
@@ -429,4 +432,29 @@ func (h *playerHLS) rememberRendition(target *url.URL, playlist bool, kind, rend
 	h.byID[id], h.byURL[key] = playerHLSResource{target: target, playlist: playlist, kind: kind, rendition: rendition}, id
 	h.bytes += len(key)
 	return id
+}
+
+func hlsPlaylistBoundary(playlist string, sequence uint64) (HLSPlaylistBoundary, bool) {
+	var boundary HLSPlaylistBoundary
+	var hasEpoch, pending bool
+	initial := sequence
+	for raw := range strings.SplitSeq(playlist, "\n") {
+		line := strings.TrimSpace(raw)
+		if value, ok := strings.CutPrefix(line, "#EXT-X-DISCONTINUITY-SEQUENCE:"); ok {
+			value, err := strconv.ParseUint(strings.TrimSpace(value), 10, 64)
+			boundary.Epoch, hasEpoch = value, err == nil
+		} else if line == "#EXT-X-DISCONTINUITY" {
+			pending = true
+		} else if line != "" && !strings.HasPrefix(line, "#") {
+			if pending {
+				boundary.NextSequence = &sequence
+				return boundary, true
+			}
+			sequence++
+			if sequence < initial {
+				return HLSPlaylistBoundary{}, false
+			}
+		}
+	}
+	return boundary, hasEpoch
 }

@@ -283,7 +283,7 @@ func validatePlayerNetworkPhases(report *PlayerNetworkReport) error {
 	metadata, dropped := 0, 0
 	for _, request := range report.Requests {
 		if report.Version == 1 {
-			if request.CacheAgeSeconds != nil || request.PlaylistSequence != nil || request.Hops != nil || request.DroppedHops != 0 || request.FailureStage != "" || request.FailureCode != "" || report.DroppedHops != 0 {
+			if request.PlaylistBoundary != nil || request.CacheAgeSeconds != nil || request.PlaylistSequence != nil || request.Hops != nil || request.DroppedHops != 0 || request.FailureStage != "" || request.FailureCode != "" || report.DroppedHops != 0 {
 				return ErrInvalid
 			}
 			continue
@@ -354,7 +354,7 @@ func validLegacyPlayerNetworkJSON(data []byte, version int) bool {
 		return false
 	}
 	for _, request := range requests {
-		for _, key := range []string{"cache_age_seconds", "playlist_sequence", "hops", "dropped_hops", "failure_stage", "failure_code"} {
+		for _, key := range []string{"playlist_boundary", "cache_age_seconds", "playlist_sequence", "hops", "dropped_hops", "failure_stage", "failure_code"} {
 			if _, exists := request[key]; exists {
 				return false
 			}
