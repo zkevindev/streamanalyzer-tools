@@ -66,3 +66,5 @@ details[open] > summary .event-summary::before { content: "▾ "; }
 .sip-audio { display: flex; flex-wrap: wrap; align-items: center; gap: .65rem; margin-top: .85rem; }
 .sip-audio audio { max-width: 100%; }
 #call-form input { margin-bottom: .55rem; }
+
+.whep-preview { width: 100%; max-height: 18rem; background: #111; border-radius: .45rem; }

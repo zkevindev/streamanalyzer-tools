@@ -18,12 +18,14 @@ import (
 	"streamanalyzer/internal/simulator/mediasource"
 	"streamanalyzer/internal/simulator/onvif"
 	"streamanalyzer/internal/simulator/sipphone"
+	"streamanalyzer/internal/simulator/whep"
 	"streamanalyzer/internal/storage"
 
 	"github.com/gin-gonic/gin"
 )
 
 type simulators struct {
+	whep       whep.Manager
 	rtmp       mediasource.RTMPManager
 	media      mediasource.Manager
 	gb28181    gb28181.Manager
@@ -35,6 +37,7 @@ type simulators struct {
 }
 
 func (s *simulators) Close() {
+	s.whep.Close()
 	s.rtmp.Close()
 	s.media.Close()
 	s.discovery.Close()
@@ -84,7 +87,7 @@ func newEngine(cfg *Config, model diagnostic.Explainer, sim *simulators) (*gin.E
 	h.RegisterRoutes(r)
 	handler.RegisterDiagnosticRoutes(r, diagnostics)
 	handler.RegisterONVIFDiscoveryRoutes(r, &sim.discovery)
-	handler.RegisterSimulatorRoutes(r, &sim.gb28181, &sim.onvif, &sim.sip, &sim.hls, &sim.gbPlatform, &sim.media, &sim.rtmp)
+	handler.RegisterSimulatorRoutes(r, &sim.gb28181, &sim.onvif, &sim.sip, &sim.hls, &sim.gbPlatform, &sim.media, &sim.rtmp, &sim.whep)
 	return r, xlsxStorage, diagnostics, nil
 }
 
