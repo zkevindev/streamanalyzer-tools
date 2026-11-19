@@ -50,6 +50,10 @@ var reportPage = template.Must(template.New("report").Funcs(template.FuncMap{
 	"investigationModel":     investigationModelLabel,
 	"modelInputFallback":     modelInputFallbackLabel,
 	"modelInputVision":       modelInputUsesVision,
+	"reportModelTarget":      reportModelCitationTarget,
+	"reportModelHypotheses":  reportModelHypotheses,
+	"reportModelPriority":    reportModelPriorityLabel,
+	"reportModelHasPriority": reportModelHasPriority,
 	"videoSource":            playerVideoQualitySourceLabel,
 	"videoCount":             playerVideoObservedCount,
 	"videoMS":                playerVideoObservedTime,
@@ -82,7 +86,17 @@ var reportPage = template.Must(template.New("report").Funcs(template.FuncMap{
 	"presentationCount":      playerPresentationCountLabel,
 	"intervalName":           playerIntervalLabel,
 	"investigationTitle":     playerInvestigationIntervalTitle,
-}).Parse(`{{define "modelInputEvidence"}}
+}).Parse(`{{define "reportModelInputEvidence"}}
+<section class="report-input-evidence"><p><strong>{{if eq .Audit.Mode "vision"}}本次为整份报告图文解读 · 全部 {{len .Cases}} 个补查案例的时序，选取 {{.SelectedCases}} 个案例 {{len .Used}} 张截图{{else}}本次为整份报告文本解读 · 全部 {{len .Cases}} 个补查案例的时序{{end}}</strong></p>
+<p class="timing-note">请求设置 {{if eq .Audit.RequestedMode "text"}}仅文本{{else}}自动图文{{end}} · {{if gt .Audit.PlayerRevision 0}}播放器记录修订 #{{.Audit.PlayerRevision}}{{else}}未记录播放器观测{{end}}{{with .Audit.FallbackCode}} · {{modelInputFallback .}}{{end}}</p>
+{{if .Attempted}}<p class="timing-note">已尝试发送 {{len .Attempted}} 张截图（来自 {{.SelectedCases}} 次异常）；图文请求不支持，最终汇总基于文本。</p>{{else if eq .Audit.Mode "text"}}<p class="timing-note">本次仅发送时序文本，未发送截图像素。</p>{{end}}
+{{if or .Used .Attempted}}<p class="timing-note">每次汇总最多使用 3 张截图；按关键异常顺序优先取各案例附近截图，再补充上下文，重复画面按文件指纹去重。</p>{{if .Omitted}}<p class="timing-note">其余 {{len .Omitted}} 个案例未提供截图，时序信息仍参与汇总；未选取的案例：{{join .Omitted "、"}}。</p>{{end}}{{end}}
+{{if not .Cases}}<p class="timing-note">当前没有可用于汇总的补查案例，可先补查异常以提供截图；本次仍采用报告指标与规则证据。</p>{{end}}
+{{if .Cases}}<p class="timing-note">汇总案例：{{range .Cases}}{{if .Href}}<a href="{{.Href}}">{{.CaseID}}（{{.ImageLabel}}）</a> {{else}}{{.CaseID}}（{{.ImageLabel}}） {{end}}{{end}}</p>{{end}}
+{{if .Used}}<p class="timing-note">截图是各案例的源流内容，需结合时序和案例边界验证；不能据此重现或证明本机画面冻结。</p><p>汇总实际采用的截图</p><ul>{{range .Used}}<li>{{if .AnchorID}}<strong id="{{.AnchorID}}">{{.ID}}</strong>{{else}}<strong>{{.ID}}</strong>{{end}} · {{.CaseID}} · {{.Role}}{{with .MediaTimeMS}} · 媒体时间 {{.}} ms{{end}} · {{.Bytes}} 字节 {{if .Href}}<a href="{{.Href}}">查看本地截图</a>{{else}}本地截图引用未匹配{{end}}</li>{{end}}</ul>{{end}}
+{{if .Attempted}}<p>汇总已尝试发送的截图</p><ul>{{range .Attempted}}<li><strong>{{.ID}}</strong> · {{.CaseID}} · {{.Role}}{{with .MediaTimeMS}} · 媒体时间 {{.}} ms{{end}} · {{.Bytes}} 字节 {{if .Href}}<a href="{{.Href}}">查看本地截图</a>{{else}}本地截图引用未匹配{{end}}</li>{{end}}</ul>{{end}}
+<details><summary>汇总输入与截图指纹（SHA-256）</summary><p class="timing-note">汇总输入摘要 · {{.Audit.ReportSHA256}}</p>{{range .Used}}<p class="timing-note">{{.ID}} · {{.SHA256}}</p>{{end}}{{range .Attempted}}<p class="timing-note">{{.ID}} · {{.SHA256}}</p>{{end}}</details></section>
+{{end}}{{define "modelInputEvidence"}}
 <section class="model-input-evidence"><p><strong>{{if eq .Audit.Mode "vision"}}本次为图文解读 · {{len .Used}} 张截图与时序文本{{else}}本次为时序文本解读{{end}}</strong></p>
 <p class="timing-note">请求设置 {{if eq .Audit.RequestedMode "text"}}仅文本{{else}}自动图文{{end}} · 播放器记录修订 #{{.Audit.PlayerRevision}}{{with .Audit.FallbackCode}} · {{modelInputFallback .}}{{end}}</p>
 {{if .Attempted}}<p class="timing-note">已尝试发送 {{len .Attempted}} 张截图；图文请求不支持，最终建议基于文本。</p>{{else if eq .Audit.Mode "text"}}<p class="timing-note">本次仅发送时序文本，未发送截图像素。</p>{{end}}
@@ -462,7 +476,7 @@ thead{color:#52657e;background:#f7f9fc}
 {{range .Clips}}<p><a href="{{.Href}}">下载源流片段 · {{.Bytes}} 字节</a></p>{{end}}
 {{if .Media.Assets}}<p class="timing-note">媒体文件保存在证据包中；独立 HTML 内嵌可用截图，片段通过下载链接或解压证据包后查看。</p>{{end}}
 <h3>模型建议（{{if modelInputVision .Explanation}}截图与时序证据{{else if .Media.RTSP}}时序与重建证据{{else}}时序证据{{end}}）</h3>
-{{if .Explanation}}{{if .ModelInput}}{{template "modelInputEvidence" .ModelInput}}{{else}}<p class="timing-note">该历史结果未记录截图输入方式。</p>{{end}}{{else}}<p class="timing-note">截图是否发送以实际解读记录为准，整份报告解读仍为文本。</p>{{end}}
+{{if .Explanation}}{{if .ModelInput}}{{template "modelInputEvidence" .ModelInput}}{{else}}<p class="timing-note">该历史结果未记录截图输入方式。</p>{{end}}{{else}}<p class="timing-note">截图是否发送以实际解读记录为准。</p>{{end}}
 {{with .Explanation}}<p class="timing-note">解读来源 {{modelProvider .Provider}}{{if .Model}} · {{.Model}}{{end}}</p><p>{{.Summary}}</p>
 {{range .Hypotheses}}<h4>待验证 · {{.Claim}}</h4><p>{{range .EvidenceIDs}}<a href="#case-{{.}}">{{.}}</a> {{end}}</p><p>{{.NextCheck}}</p>{{end}}
 {{else}}<p>{{investigationModel .ModelState}}</p>{{end}}
@@ -563,13 +577,14 @@ thead{color:#52657e;background:#f7f9fc}
 </article>
 {{else}}<p>这次采样暂无规则触发。</p>{{end}}
 {{with .Explanation}}
-<h2>模型解读（整份报告文本汇总）</h2>
-<p class="timing-note">整份报告解读仅使用时序文本，截图输入仅用于选中异常的补查。</p>
+<h2>整份报告汇总{{with .ReportInputEvidence}}{{if eq .Mode "vision"}}（图文解读）{{else}}（文本解读）{{end}}{{end}}</h2>
 <article><p><small>解读来源 {{modelProvider .Provider}}{{if .Model}} · {{.Model}}{{end}}</small></p>
+{{with $.ReportModelInput}}{{template "reportModelInputEvidence" .}}{{else}}<p class="timing-note">该历史汇总未记录截图输入方式。</p>{{end}}
 <p>{{.Summary}}</p>
-{{range .Hypotheses}}<h3>待验证 · {{.Claim}}</h3>
-<p>{{range .EvidenceIDs}}<a href="#{{.}}">{{.}}</a> {{end}}</p>
-<p>{{.NextCheck}}</p>{{end}}
+{{if reportModelHasPriority .}}<p class="timing-note">优先级表示建议核查顺序，不代表已确认根因或业务严重度。</p>{{end}}
+{{if .Hypotheses}}<ol>{{range reportModelHypotheses .}}<li>{{if reportModelPriority .Priority}}<strong>{{.Priority}} · {{reportModelPriority .Priority}} · </strong>{{end}}<strong>待验证 · {{.Claim}}</strong>
+<p>{{range .EvidenceIDs}}{{$target := reportModelTarget . $.ReportModelInput}}{{if $target}}<a href="#{{$target}}">{{.}}</a> {{else}}{{.}}（未匹配本次截图输入） {{end}}{{end}}</p>
+<p>下一步：{{.NextCheck}}</p></li>{{end}}</ol>{{end}}
 </article>
 {{end}}
 <article><h2>原始流</h2>
@@ -915,22 +930,23 @@ func RenderHTMLWithAssets(w io.Writer, report Report, explanation *Explanation, 
 		}
 	}
 	return reportPage.Execute(w, struct {
-		Report         Report
-		Explanation    *Explanation
-		BackURL        string
-		Protocol       string
-		MPEGTS         bool
-		Datagram       bool
-		RTP            bool
-		HTTPRequests   []HTTPRequestTiming
-		HTTPPhases     []struct{ Name, Label string }
-		HTTPFailures   bool
-		TimingStages   []CaptureStage
-		LegacyRTMP     bool
-		PlayerChart    *playerChartData
-		Investigations []investigationHTML
+		Report           Report
+		Explanation      *Explanation
+		BackURL          string
+		Protocol         string
+		MPEGTS           bool
+		Datagram         bool
+		RTP              bool
+		HTTPRequests     []HTTPRequestTiming
+		HTTPPhases       []struct{ Name, Label string }
+		HTTPFailures     bool
+		TimingStages     []CaptureStage
+		LegacyRTMP       bool
+		PlayerChart      *playerChartData
+		Investigations   []investigationHTML
+		ReportModelInput *reportModelInputHTML
 	}{report, explanation, backURL, protocol, mpegTS, datagram, rtp, requests, httpTimingPhases, hasHTTPFailures, stages,
-		report.Manifest.Protocol == ProtocolRTMP && !hasRTMPHandshake, playerChart(report.Player, report.Manifest.Observation.ElapsedMS), investigationHTMLItems(report.StallInvestigations, backURL, assets)})
+		report.Manifest.Protocol == ProtocolRTMP && !hasRTMPHandshake, playerChart(report.Player, report.Manifest.Observation.ElapsedMS), investigationHTMLItems(report.StallInvestigations, backURL, assets), reportModelInputView(explanation, report, backURL)})
 }
 
 type investigationHTML struct {

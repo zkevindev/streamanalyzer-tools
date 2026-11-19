@@ -15,8 +15,8 @@ import (
 	"strings"
 )
 
-const maxModelImages = 3
-const maxModelImageBytes = 3 * maxDerivedImageBytes
+const maxModelImages = MaxModelImages
+const maxModelImageBytes = MaxModelImageBytes
 
 func validModelImageReference(ref ModelImageReference, index int, caseID string) bool {
 	return investigationMediaID.MatchString(caseID) && ref.CaseID == caseID && ref.ID == fmt.Sprintf("%s-I%03d", caseID, index+1) &&
@@ -31,13 +31,20 @@ func validateModelImages(images []ModelImage) error {
 	}
 	total := 0
 	seen := map[string]bool{}
-	caseID := images[0].Reference.CaseID
-	for index, image := range images {
+	seenIDs := map[string]bool{}
+	for _, image := range images {
 		ref := image.Reference
-		if !validModelImageReference(ref, index, caseID) || seen[ref.Name] || len(image.JPEG) != int(ref.Bytes) {
+		// A report may select one representative from several cases. The
+		// original case-local ID is retained even when before/after are omitted.
+		validReference := false
+		for index := range maxModelImages {
+			validReference = validReference || validModelImageReference(ref, index, ref.CaseID)
+		}
+		if !validReference || seen[ref.Name] || seenIDs[ref.ID] || len(image.JPEG) != int(ref.Bytes) {
 			return fmt.Errorf("%w: 截图身份或长度无效", ErrInvalid)
 		}
 		seen[ref.Name] = true
+		seenIDs[ref.ID] = true
 		total += len(image.JPEG)
 		if total > maxModelImageBytes {
 			return fmt.Errorf("%w: 截图总大小超限", ErrInvalid)
@@ -53,6 +60,39 @@ func validateModelImages(images []ModelImage) error {
 		decoded, err := jpeg.Decode(bytes.NewReader(image.JPEG))
 		if err != nil || decoded.Bounds().Dx() != config.Width || decoded.Bounds().Dy() != config.Height {
 			return fmt.Errorf("%w: 截图 JPEG 内容不完整", ErrInvalid)
+		}
+	}
+	return nil
+}
+
+func validateModelImagesForReport(report Report, images []ModelImage) error {
+	if err := validateModelImages(images); err != nil {
+		return err
+	}
+	// Standalone callers historically supplied numeric-only reports. Whenever
+	// case metadata is present, bind every image to its exact canonical asset.
+	if len(report.StallInvestigations) == 0 {
+		return nil
+	}
+	for _, image := range images {
+		matched := false
+		for _, item := range report.StallInvestigations {
+			if item.ID != image.Reference.CaseID {
+				continue
+			}
+			assets, err := modelImageAssets(item)
+			if err != nil {
+				return ErrInvalid
+			}
+			for index, asset := range assets {
+				ref := image.Reference
+				if validModelImageReference(ref, index, item.ID) && ref.Name == asset.Name && ref.Artifact == asset.Artifact && reflect.DeepEqual(ref.MediaTimeMS, asset.MediaTimeMS) {
+					matched = true
+				}
+			}
+		}
+		if !matched {
+			return fmt.Errorf("%w: 模型截图与案例产物不一致", ErrInvalid)
 		}
 	}
 	return nil
@@ -234,6 +274,9 @@ func validModelInputLedgerShape(data []byte, ledger investigationLedger) bool {
 	}
 	hasAudit := false
 	for index, item := range ledger.Items {
+		if present, canonical := modelEvidenceFieldPresence(raw.Items[index].Explanation, "report_input_evidence"); present || !canonical || item.Explanation != nil && item.Explanation.ReportInputEvidence != nil {
+			return false
+		}
 		present, canonical := modelEvidenceFieldPresence(raw.Items[index].Explanation, "input_evidence")
 		if !canonical {
 			return false

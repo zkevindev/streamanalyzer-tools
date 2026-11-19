@@ -189,6 +189,7 @@ type Finding struct {
 }
 
 type Report struct {
+	modelScope          string
 	Requests            []HTTPRequestTiming  `json:"requests,omitempty"`
 	RequestsTruncated   int                  `json:"requests_truncated,omitempty"`
 	RuleVersion         string               `json:"rule_version"`

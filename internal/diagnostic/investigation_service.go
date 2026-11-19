@@ -250,6 +250,7 @@ func (s *Service) explainStall(ctx context.Context, runID, caseID string) (Expla
 	s.modelMu.Unlock()
 	defer func() { cancel(); s.modelMu.Lock(); model.cancel = nil; s.modelMu.Unlock() }()
 	scoped := *detail.Report
+	scoped.modelScope = "case"
 	scoped.Findings = append([]Finding(nil), item.Correlation.Findings...)
 	if item.Assessment != nil {
 		scoped.Findings = append(scoped.Findings, item.Assessment.Findings...)

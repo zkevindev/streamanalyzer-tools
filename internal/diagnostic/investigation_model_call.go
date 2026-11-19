@@ -29,6 +29,7 @@ func (s *Service) callStallModel(ctx context.Context, dir string, model Explaine
 			return Explanation{}, report.Findings, err
 		}
 		result.InputEvidence = audit
+		result.ReportInputEvidence = nil
 		return result, report.Findings, nil
 	}
 	if audit.RequestedMode == ImageInputText {
@@ -64,6 +65,7 @@ func (s *Service) callStallModel(ctx context.Context, dir string, model Explaine
 	audit.Mode = "vision"
 	audit.Images = refs
 	result.InputEvidence = audit
+	result.ReportInputEvidence = nil
 	return result, visionReport.Findings, nil
 }
 

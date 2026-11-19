@@ -1556,12 +1556,12 @@ function renderModelStatus() {
     const button = node('explain');
     const cached = result && currentModel &&
         (result.provider || 'openai-compatible') === currentModel.provider &&
-        (!currentModel.model || result.model === currentModel.model);
+        (!currentModel.model || result.model === currentModel.model) && result.report_input_evidence?.requested_mode === (currentModel.image_input || 'auto');
     button.hidden = !currentModel || (Boolean(cached) && !desktop);
     button.textContent = result ? '用当前模型重新解读' : '生成解读';
     if (button.disabled) return;
     node('model-status').textContent = currentModel
-        ? (button.hidden ? '' : `当前模型 ${modelLabel(currentModel)}。整份报告解读仅发送脱敏文本；异常补查可按设置发送截图。`)
+        ? (button.hidden ? '' : `当前模型 ${modelLabel(currentModel)}。${currentModel.image_input === 'text' ? '汇总与补查仅发送时序文本。' : '汇总按关键异常选择最多 3 张截图与时序；图片不支持时回退文本。'}`)
         : '模型服务尚未配置。';
 }
 
@@ -1575,29 +1575,98 @@ async function refreshModelConfiguration() {
     if (!node('report').hidden) renderModelStatus();
 }
 
+function reportImageReferenceItem(reference, audit) {
+    const item = (currentReport?.stall_investigations || []).find((candidate) => candidate.id === reference.case_id);
+    if (!item || !(audit.cases || []).some((candidate) => candidate.case_id === item.id && candidate.player_revision === item.player_revision)) return null;
+    return modelImageAsset(item, reference) ? item : null;
+}
+function reportImageCitationTarget(id, result) {
+    if (!/^S\d{3}-I\d{3}$/.test(id)) return id;
+    const audit = result?.report_input_evidence;
+    if (audit?.mode !== 'vision') return null;
+    const reference = (audit.images || []).find((image) => image.id === id);
+    return reference && reportImageReferenceItem(reference, audit) ? 'summary-image-' + id : null;
+}
+function renderReportInputEvidence(result) {
+    const block = element('section', '', 'report-input-evidence model-input-evidence');
+    const audit = result.report_input_evidence;
+    if (!audit) {
+        block.append(element('p', '该历史汇总未记录截图输入方式。', 'timing-note muted report-input-legacy'));
+        return block;
+    }
+    const images = (audit.images || []).slice(0, 3), attempted = (audit.attempted_images || []).slice(0, 3);
+    const scope = audit.cases || [], selected = audit.mode === 'vision' ? images : attempted;
+    const selectedCases = new Set(selected.map((image) => image.case_id));
+    block.append(element('p', audit.mode === 'vision' ? `本次为整份报告图文解读 · 全部 ${scope.length} 个补查案例的时序，选取 ${selectedCases.size} 个案例 ${images.length} 张截图` : `本次为整份报告文本解读 · 全部 ${scope.length} 个补查案例的时序`, 'model-input-mode'));
+    const context = [`请求设置 ${audit.requested_mode === 'text' ? '仅文本' : '自动图文'}`, audit.player_revision > 0 ? `播放器记录修订 #${audit.player_revision}` : '未记录播放器观测'];
+    if (audit.fallback_code) context.push(modelInputFallbackLabels[audit.fallback_code] || '未记录可识别的回退原因');
+    block.append(element('p', context.join(' · '), 'timing-note muted'));
+    if (attempted.length) block.append(element('p', `已尝试发送 ${attempted.length} 张截图（来自 ${selectedCases.size} 次异常）；图文请求不支持，最终汇总基于文本。`, 'timing-note model-input-fallback'));
+    else if (audit.mode === 'text') block.append(element('p', '本次仅发送时序文本，未发送截图像素。', 'timing-note muted'));
+    if (selected.length) {
+        block.append(element('p', '每次汇总最多使用 3 张截图；按关键异常顺序优先取各案例附近截图，再补充上下文，重复画面按文件指纹去重。', 'timing-note muted'));
+        const omitted = scope.filter((item) => !selectedCases.has(item.case_id));
+        if (omitted.length) block.append(element('p', `其余 ${omitted.length} 个案例未提供截图，时序信息仍参与汇总；未选取的案例：${omitted.map((item) => item.case_id).join('、')}。`, 'timing-note muted report-input-omitted'));
+    }
+    if (!scope.length) block.append(element('p', '当前没有可用于汇总的补查案例，可先补查异常以提供截图；本次仍采用报告指标与规则证据。', 'timing-note muted'));
+    if (scope.length) {
+        const cases = element('p', '汇总案例：', 'timing-note muted');
+        for (const item of scope) {
+            const link = element('a', `${item.case_id}${selectedCases.has(item.case_id) ? audit.mode === 'vision' ? '（截图）' : '（曾尝试截图）' : '（时序）'} `); link.href = '#investigation-' + encodeURIComponent(item.case_id);
+            link.addEventListener('click', (event) => { event.preventDefault(); showFinding('investigation-' + item.case_id); }); cases.append(link);
+        }
+        block.append(cases);
+    }
+    if (images.length) block.append(element('p', '截图是各案例的源流内容，需结合时序和案例边界验证；不能据此重现或证明本机画面冻结。', 'timing-note muted'));
+    const fingerprints = [], anchors = new Set();
+    for (const [references, used] of [[images, true], [attempted, false]]) {
+        if (!references.length) continue;
+        block.append(element('p', used ? '汇总实际采用的截图' : '汇总已尝试发送的截图', 'timing-note'));
+        const list = element('ul', '', 'model-input-images');
+        for (const reference of references) {
+            const item = reportImageReferenceItem(reference, audit), asset = item && modelImageAsset(item, reference);
+            const row = element('li', ''), id = element('strong', reference.id || '截图编号未记录');
+            if (used && audit.mode === 'vision' && asset && !anchors.has(reference.id)) { id.id = 'summary-image-' + reference.id; anchors.add(reference.id); }
+            row.append(id, document.createTextNode(` · ${reference.case_id} · ${modelImageRole(reference.name)}${reference.media_time_ms == null ? '' : ` · 媒体时间 ${time(reference.media_time_ms)}`} · ${reference.bytes == null ? '大小未记录' : bytes(reference.bytes)} `));
+            const url = asset && investigationAssetURL(item, asset);
+            if (url) { const link = element('a', '查看本地截图'); link.href = url; row.append(link); } else row.append(element('span', '本地截图引用未匹配', 'muted'));
+            list.append(row); fingerprints.push([reference.id || '截图', reference.sha256 || '未记录']);
+        }
+        block.append(list);
+    }
+    if (fingerprints.length || audit.report_sha256) {
+        const details = element('details', '', 'model-input-identities'); details.append(element('summary', '汇总输入与截图指纹（SHA-256）'));
+        if (audit.report_sha256) details.append(element('p', `汇总输入摘要 · ${audit.report_sha256}`, 'timing-note muted'));
+        for (const [id, hash] of fingerprints) details.append(element('p', `${id} · ${hash}`, 'timing-note muted')); block.append(details);
+    }
+    return block;
+}
+const reportPriorityLabels = { P1: '优先核对', P2: '随后核对', P3: '补充核对' };
+const orderedReportHypotheses = (hypotheses) => (hypotheses || []).map((item, index) => ({ item, index })).sort((a, b) => ({ P1: 0, P2: 1, P3: 2 }[a.item.priority] ?? 3) - ({ P1: 0, P2: 1, P3: 2 }[b.item.priority] ?? 3) || a.index - b.index).map(({ item }) => item);
+
 function renderExplanation(result) {
     currentExplanation = result;
     renderModelStatus();
-    const content = node('explanation');
-    content.replaceChildren();
+    const content = node('explanation'); content.replaceChildren();
+    const heading = node('report-model-heading');
+    if (heading) heading.textContent = result?.report_input_evidence?.mode === 'vision' ? '整份报告汇总（图文解读）' : result?.report_input_evidence?.mode === 'text' ? '整份报告汇总（文本解读）' : '整份报告汇总';
     if (!result) return;
-    const hypotheses = element('ul', '');
-    for (const item of result.hypotheses || []) {
+    content.append(element('p', `解读来源 ${modelLabel(result)}`, 'model-source muted'), renderReportInputEvidence(result), element('p', result.summary));
+    const ordered = orderedReportHypotheses(result.hypotheses);
+    if (ordered.some((item) => reportPriorityLabels[item.priority])) content.append(element('p', '优先级表示建议核查顺序，不代表已确认根因或业务严重度。', 'timing-note muted'));
+    const hypotheses = element('ol', '', 'report-next-checks');
+    for (const item of ordered) {
         const row = element('li', '');
+        if (reportPriorityLabels[item.priority]) row.append(element('span', `${item.priority} · ${reportPriorityLabels[item.priority]}`, 'model-priority'));
         row.append(element('strong', `待验证 · ${item.claim} `));
-        for (const id of item.evidence_ids) {
-            const link = element('a', id + ' ');
-            link.href = '#' + id;
-            link.addEventListener('click', (event) => {
-                event.preventDefault();
-                showFinding(id);
-            });
-            row.append(link);
+        for (const id of item.evidence_ids || []) {
+            const target = reportImageCitationTarget(id, result);
+            if (!target) { row.append(element('span', `${id}（未匹配本次截图输入） `, 'muted')); continue; }
+            const link = element('a', id + ' '); link.href = '#' + encodeURIComponent(target);
+            link.addEventListener('click', (event) => { event.preventDefault(); showFinding(target); }); row.append(link);
         }
-        row.append(element('p', item.next_check));
-        hypotheses.append(row);
+        row.append(element('p', `下一步：${item.next_check}`)); hypotheses.append(row);
     }
-    content.append(element('p', `解读来源 ${modelLabel(result)}`, 'model-source muted'), element('p', result.summary));
     if (hypotheses.childElementCount) content.append(hypotheses);
 }
 

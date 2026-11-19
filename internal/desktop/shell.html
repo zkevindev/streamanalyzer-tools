@@ -86,12 +86,12 @@
           <input id="settings-model" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" required>
         </div>
         <div class="field">
-          <label for="settings-image-input">补查截图输入</label>
+          <label for="settings-image-input">截图输入（汇总与补查）</label>
           <select id="settings-image-input" aria-describedby="image-input-hint">
             <option value="auto">自动图文，不支持图片时回退文本</option>
             <option value="text">仅文本</option>
           </select>
-          <p class="hint" id="image-input-hint">自动图文会向所选模型发送异常截图与时序；整份报告解读仍为文本。测试连接只验证文本请求，图片能力在实际补查时确认。</p>
+          <p class="hint" id="image-input-hint">自动图文会向所选模型发送异常截图与时序；整份汇总最多选取 3 张截图。测试连接只验证文本请求，图片能力在实际解读时确认。</p>
         </div>
         <div class="field">
           <label for="settings-key">API Key</label>
@@ -319,7 +319,7 @@
       setStatus('正在连接模型服务…');
       try {
         const result = await postSettings('/model-settings/test', test.signal);
-        if (testingSettings === test) setStatus(`文本连接成功 · ${result.elapsed_ms} ms。图片能力在实际异常补查解读时确认。`);
+        if (testingSettings === test) setStatus(`文本连接成功 · ${result.elapsed_ms} ms。图片能力在实际解读时确认。`);
       } catch (error) {
         if (testingSettings === test) setStatus(error.message, true);
       } finally {

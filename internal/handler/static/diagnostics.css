@@ -211,3 +211,10 @@ td:not(:first-child) { font-family: var(--font-data); }
 .model-input-mode { font-weight: 650; }
 .model-input-images { padding-left: 1.35rem; overflow-wrap: anywhere; }
 .model-input-images li { margin-block: .4rem; }
+
+.report-next-checks { padding-left: 1.4rem; }
+.report-next-checks li { margin-block: .85rem; overflow-wrap: anywhere; }
+.report-next-checks p { margin-top: .35rem; }
+.model-priority { display: inline-block; padding: .1rem .4rem; margin-right: .4rem; border: 1px solid var(--border); border-radius: .25rem; font-size: .8rem; font-weight: 650; background: var(--surface-inset); }
+
+.model-input-evidence .timing-note { overflow-wrap: anywhere; }
