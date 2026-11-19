@@ -25,5 +25,7 @@
         <key>NSAllowsLocalNetworking</key>
         <true/>
     </dict>
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>用于发现局域网摄像头和 NVR，并执行 RTSP 与 ONVIF 流媒体排障。</string>
 </dict>
 </plist>
