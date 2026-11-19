@@ -1,12 +1,12 @@
 # Stream Analyzer Tools
 
-音视频流分析工具，排障工作台支持 **HTTP-FLV / RTMP / HLS / HTTP MPEG-TS / UDP MPEG-TS / RTP MPEG-TS** 采样、报告及证据包复盘。另提供实时帧分析和离线文件解析（raw / pcap / FLV / MPEG-TS / **MP4**）。离线结果会持久化到磁盘并在网页端可查看/下载。兼容 Legacy FLV 与 Enhanced RTMP/FLV（E-RTMP）头部解析。
+音视频流分析工具，排障工作台支持 **HTTP-FLV / RTMP / RTSP / RTSPS / HLS / HTTP MPEG-TS / UDP MPEG-TS / RTP MPEG-TS** 采样、报告及证据包复盘。另提供实时帧分析和离线文件解析（raw / pcap / FLV / MPEG-TS / **MP4**）。离线结果会持久化到磁盘并在网页端可查看/下载。兼容 Legacy FLV 与 Enhanced RTMP/FLV（E-RTMP）头部解析。
 
 ## 排障工作台
 
 启动 Web 服务后打开 [本机排障工作台](http://127.0.0.1:8087/diagnostics)。桌面版启动后直接打开同一个工作台。工作台和对应 API 仅接受本机连接，同一数据目录由一个服务实例使用。
 
-1. 选择 HTTP-FLV、RTMP、HLS、HTTP MPEG-TS、UDP MPEG-TS 或 RTP MPEG-TS，输入采样地址，指定 1–300 秒的采样时长，默认 60 秒。RTMP 同时接受 `rtmp://` 和 `rtmps://`。
+1. 选择 HTTP-FLV、RTMP、RTSP、RTSPS、HLS、HTTP MPEG-TS、UDP MPEG-TS 或 RTP MPEG-TS，输入采样地址，指定 1–300 秒的采样时长，默认 60 秒。RTMP 同时接受 `rtmp://` 和 `rtmps://`。RTSP 与 RTSPS 分别使用对应地址方案。
 2. 查看音频和视频编码、采样时序及异常。HTTP-FLV 和 RTMP 的报告可定位媒体帧的 PTS/DTS 及原始流字节范围。HLS 的报告可定位播放列表、初始化段和媒体分片，并展示原始请求耗时与 HTTP 状态。
 3. 下载原始流、HTML/JSON 报告或证据 ZIP。导入时校验清单中的 SHA-256，重新解析原始数据并按采样时记录的时间线运行规则。源流可以已经下线。规则报告独立于模型，原有 HTTP-FLV v1 证据包也可导入。
 
@@ -14,12 +14,17 @@
 | --- | --- |
 | HTTP-FLV | `stream.flv`，采样期间读取的 HTTP 响应体 |
 | RTMP / RTMPS | `stream.rtmp`，从服务端握手开始的原始接收字节。RTMPS 保存 TLS 解密后的 RTMP 协议数据 |
+| RTSP / RTSPS | `stream.rtsp.zip`，包含服务端应用字节 `server-wire.bin`、DESCRIBE SDP 原文 `session.sdp` 及受控数字元数据 `session.json`；RTSPS 在 TLS 解密后记录 |
 | HLS | `stream.hls.zip`，原始 m3u8 快照、初始化段和 MPEG-TS、fMP4 或独立音频分片 |
 | HTTP MPEG-TS | `stream.ts`，采样期间读取的原始 HTTP 响应体 |
 | UDP MPEG-TS | `stream.udp`，按接收顺序拼接的完整 UDP 载荷，时间线记录每个数据报的边界 |
 | RTP MPEG-TS | `stream.rtp`，保留 RTP 头部和载荷的完整数据报，时间线记录每个数据报的边界 |
 
 UDP 与 RTP 使用 IPv4 接收地址，例如 `udp://0.0.0.0:5000` 或 `rtp://127.0.0.1:5000`，发送端向该设备及端口发包。组播示例为 `udp://239.1.1.1:5000?interface=en0`，`interface` 填写本机网卡名，省略时由系统选择网卡。RTP 当前检查静态载荷类型 33 的 MPEG-TS 数据。HTTP MPEG-TS 同时支持 HTTP 和 HTTPS。
+
+摄像头和 NVR 可直接填写 RTSP/RTSPS 播放地址，支持 URL 用户信息认证。首版使用 TCP 交织 RTP/RTCP；RTSPS 正常校验服务端证书。报告分别展示 DESCRIBE、SETUP、PLAY 等控制请求状态与耗时、DNS/TCP/TLS 阶段、SDP 声明轨道和实际 RTP 接收统计。首音视频时间指对应 RTP 包到达接收点，不是解码首帧。序号缺口和缺失包是接收点估计，不能直接等同于 TCP 网络丢包。达到请求、轨道或包分析上限时会明确标注。
+
+RTSP/RTSPS 原生采样不依赖浏览器，首版禁用播放器预览和播放器体验采集。HTML/JSON 与模型只使用受控方法、状态、编码标签及数字证据，不展示 RTSP 地址路径、用户信息、认证头或 SDP 原文；来源只显示协议和主机。原始 ZIP 按上述边界保存服务端字节和 SDP，证据包导入后可离线重算，无需重新连接摄像头。
 
 传输流报告展示 TS 包长度、PID 与编码、PAT/PMT、TEI、连续计数、重复包、同步丢失以及 PCR/PES 时间戳检查。RTP 报告补充序列缺口、重复和乱序统计。序列缺口反映当前采样窗口中的接收结果。原始数据和到达时间同时保留，导入时重新运行这些检查。
 
@@ -75,7 +80,7 @@ JSON 报告及 SQLite 任务索引位于数据目录下的 `diagnostics/`。基�
 
 | 方法与路径 | 用途 |
 | --- | --- |
-| `POST /api/diagnostics/runs` | 用 `{"protocol":"hls","url":"https://live.example.com/index.m3u8","seconds":60,"playback":true}` 发起采样。协议可选 `http-flv`、`rtmp`、`hls`、`http-ts`、`udp-ts`、`rtp-ts`，省略时默认 `http-flv`。`playback` 可选，启用时响应返回本机播放器会话授权 |
+| `POST /api/diagnostics/runs` | 用 `{"protocol":"hls","url":"https://live.example.com/index.m3u8","seconds":60,"playback":true}` 发起采样。协议可选 `http-flv`、`rtmp`、`rtsp`、`rtsps`、`hls`、`http-ts`、`udp-ts`、`rtp-ts`，省略时默认 `http-flv`。`playback` 可选；RTSP/RTSPS 不创建浏览器播放器会话 |
 | `GET /api/diagnostics/runs` | 查看最近的采样和复盘记录 |
 | `GET /api/diagnostics/runs/:id` | 查询状态、规则报告和已生成的模型解读 |
 | `POST /api/diagnostics/runs/:id/stop` | 停止采样并保存已获取的数据 |

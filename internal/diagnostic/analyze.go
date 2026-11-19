@@ -200,6 +200,8 @@ func endReasonText(reason string) string {
 		return "RTMP 建连、播放或接收消息失败"
 	case "hls_error":
 		return "HLS 播放列表不可用"
+	case "rtsp_error":
+		return "RTSP 协商或媒体接收失败"
 	default:
 		return ""
 	}

@@ -231,7 +231,7 @@ func (s *Service) Start(req SampleRequest) (Run, error) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	var player *PlayerSession
-	if req.Playback {
+	if req.Playback && protocol != ProtocolRTSP && protocol != ProtocolRTSPS {
 		session := newPlayerSession(context.Background(), protocol, target, s.client)
 		if session.hls != nil {
 			session.hls.network.setOrigin(run.CreatedAt)
@@ -298,6 +298,8 @@ func (s *Service) sampleProtocol(ctx context.Context, dir string, target *url.UR
 		return sampleHLS(ctx, s.client, dir, target, seconds)
 	case ProtocolHTTPTS, ProtocolUDPTS, ProtocolRTPTS:
 		return sampleTS(ctx, s.client, dir, target, seconds, protocol)
+	case ProtocolRTSP, ProtocolRTSPS:
+		return sampleRTSP(ctx, dir, target, seconds, protocol)
 	default:
 		return Report{}, fmt.Errorf("%w: 不支持的采样协议", ErrInvalid)
 	}
@@ -616,6 +618,9 @@ func reportStatus(report Report) string {
 	}
 	if report.MPEGTS != nil {
 		samples = report.MPEGTS.Packets
+	}
+	if report.RTSP != nil {
+		samples = report.RTSP.RTPPackets
 	}
 	if samples == 0 {
 		return "failed"

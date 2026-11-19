@@ -195,7 +195,7 @@ func readBundle(dir string, source io.Reader) (Report, error) {
 	if entries[name] == nil {
 		return Report{}, fmt.Errorf("%w: 缺少协议对应的原始流", ErrInvalid)
 	}
-	for _, other := range []string{streamName, rtmpStreamName, hlsStreamName, tsStreamName, udpStreamName, rtpStreamName} {
+	for _, other := range []string{streamName, rtmpStreamName, hlsStreamName, tsStreamName, udpStreamName, rtpStreamName, rtspStreamName} {
 		if other != name && entries[other] != nil {
 			return Report{}, fmt.Errorf("%w: 证据包包含其他协议的原始流", ErrInvalid)
 		}
@@ -230,6 +230,8 @@ func readBundle(dir string, source io.Reader) (Report, error) {
 		report, err = replayHLS(dir, manifest)
 	case ProtocolHTTPTS, ProtocolUDPTS, ProtocolRTPTS:
 		report, err = replayTS(dir, manifest)
+	case ProtocolRTSP, ProtocolRTSPS:
+		report, err = replayRTSP(dir, manifest)
 	default:
 		return Report{}, fmt.Errorf("%w: 不支持的采样协议", ErrInvalid)
 	}
@@ -302,6 +304,8 @@ func dumpName(protocol string) string {
 		return udpStreamName
 	case ProtocolRTPTS:
 		return rtpStreamName
+	case ProtocolRTSP, ProtocolRTSPS:
+		return rtspStreamName
 	default:
 		return ""
 	}
@@ -311,7 +315,7 @@ func bundleEntries(files []*zip.File) (map[string]*zip.File, error) {
 	limits := map[string]uint64{
 		manifestName: maxManifestBytes, timelineName: maxTimeline,
 		streamName: maxStreamBytes, rtmpStreamName: maxStreamBytes, hlsStreamName: maxStreamBytes,
-		tsStreamName: maxStreamBytes, udpStreamName: maxStreamBytes, rtpStreamName: maxStreamBytes,
+		tsStreamName: maxStreamBytes, udpStreamName: maxStreamBytes, rtpStreamName: maxStreamBytes, rtspStreamName: maxStreamBytes,
 		reportName: 8 << 20, htmlName: 20 << 20, investigationName: maxInvestigationBytes,
 		playerName: maxPlayerBytes, playerNetworkName: maxPlayerNetworkBytes,
 	}
@@ -345,6 +349,7 @@ func readManifest(entry *zip.File) (Manifest, error) {
 	}
 	legacyFLV := manifest.Protocol == ProtocolHTTPFLV && manifest.Version == legacyFLVSchemaVersion
 	if dumpName(manifest.Protocol) == "" || (manifest.Version != multiProtocolSchemaVersion && manifest.Version != playerSchemaVersion && manifest.Version != investigationSchemaVersion && manifest.Version != playerNetworkSchemaVersion && !legacyFLV) ||
+		((manifest.Protocol == ProtocolRTSP || manifest.Protocol == ProtocolRTSPS) && manifest.Player != nil) ||
 		(manifest.Player != nil && manifest.Version != playerSchemaVersion && manifest.Version != investigationSchemaVersion && manifest.Version != playerNetworkSchemaVersion) ||
 		(manifest.StallEvidence != nil && (manifest.Version < investigationSchemaVersion || manifest.Player == nil)) ||
 		(manifest.Version == investigationSchemaVersion && manifest.StallEvidence == nil) ||

@@ -281,6 +281,7 @@ func modelInput(report Report) ([]byte, error) {
 		Metrics             Metrics                   `json:"metrics"`
 		HLS                 *HLSMetrics               `json:"hls,omitempty"`
 		MPEGTS              *MPEGTSMetrics            `json:"mpegts,omitempty"`
+		RTSP                *modelRTSPMetrics         `json:"rtsp,omitempty"`
 		FirstPayloadMS      *int64                    `json:"first_payload_ms,omitempty"`
 		Stages              []CaptureStage            `json:"stages,omitempty"`
 		Requests            []modelHTTPRequest        `json:"requests,omitempty"`
@@ -293,7 +294,7 @@ func modelInput(report Report) ([]byte, error) {
 		StallInvestigations []modelStallInvestigation `json:"stall_investigations,omitempty"`
 	}{
 		Protocol: report.Manifest.Protocol, ElapsedMS: obs.ElapsedMS, HTTPStatus: obs.HTTPStatus, TTFBMS: obs.TTFBMS,
-		EndReason: obs.EndReason, Metrics: report.Metrics, HLS: report.HLS, MPEGTS: report.MPEGTS,
+		EndReason: obs.EndReason, Metrics: report.Metrics, HLS: report.HLS, MPEGTS: report.MPEGTS, RTSP: modelRTSP(report.RTSP),
 		FirstPayloadMS: obs.FirstPayloadMS, Stages: obs.Stages, FailureStage: obs.FailureStage, FailureCode: obs.FailureCode,
 		Findings: []modelFinding{},
 	}
