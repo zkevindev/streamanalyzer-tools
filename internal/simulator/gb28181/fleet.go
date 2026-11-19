@@ -21,6 +21,7 @@ const (
 )
 
 type deviceSpec struct {
+	outputID string
 	config   Config
 	channels []string
 }
@@ -85,6 +86,16 @@ func deviceSpecs(cfg Config) ([]deviceSpec, error) {
 			spec.channels[j] = channel
 		}
 		spec.config.ChannelID = spec.channels[0]
+	}
+	if cfg.Voice {
+		for i := range specs {
+			id := specs[i].config.DeviceID
+			output, err := allocate(id[:10]+"137"+id[13:], 0)
+			if err != nil {
+				return nil, err
+			}
+			specs[i].outputID = output
+		}
 	}
 	return specs, nil
 }
@@ -202,6 +213,9 @@ func (m *Manager) available() error {
 func (m *Manager) start(specs []deviceSpec, file *localMedia) {
 	f := &fleet{done: make(chan struct{}), mediaSlots: make(chan struct{}, maxConcurrentMedia)}
 	source := SourceInfo{VideoMode: "builtin", VideoCodec: "h264", OutputCodec: "h264", AudioCodec: "none"}
+	if specs[0].config.Voice {
+		source.AudioCodec = "g711a"
+	}
 	if file != nil {
 		source = file.info
 	}
@@ -213,6 +227,7 @@ func (m *Manager) start(specs []deviceSpec, file *localMedia) {
 			state = "queued"
 		}
 		d := &device{
+			outputID: spec.outputID, voice: BroadcastStatus{OutputID: spec.outputID, State: "idle"},
 			cfg: cfg, ctx: ctx, cancel: cancel, done: make(chan struct{}), file: file, fleet: f,
 			channels: spec.channels, offline: make(map[string]bool), media: make(map[string]*mediaSession), channelStatus: make(map[string]*MediaStatus, len(spec.channels)),
 			status: Status{State: state, Platform: net.JoinHostPort(cfg.PlatformHost, strconv.Itoa(cfg.PlatformPort)),
@@ -284,6 +299,10 @@ func (m *Manager) StatusFor(deviceID, channelID string) (Status, bool) {
 			LocalAddress: d.status.LocalAddress, Error: d.status.Error, ChannelCount: len(d.channels), ActiveMedia: playing})
 		if d == selected {
 			result = d.status
+			if d.outputID != "" {
+				voice := d.voice
+				result.Broadcast = &voice
+			}
 			result.ChannelID, result.MediaStatus = channelID, *d.channelStatus[channelID]
 			result.ChannelOnline = !d.offline[channelID]
 			if d.flow != nil && d.flow.ctx.Err() == nil {

@@ -81,6 +81,8 @@
               <p class="muted field-hint" id="recording-hint">留空时，录像结束时间取设备启动时间。</p>
             </div>
             <p id="source-hint" class="muted field-hint">留空使用内置测试画面。本地文件最大 512 MiB，需要 FFmpeg 和 ffprobe。</p>
+            <label class="sim-check"><input id="voice-enabled" type="checkbox"> 启用语音广播和对讲</label>
+            <p class="muted field-hint">上报语音输出通道，通过 UDP 接收 G.711 广播。使用内置视频时，点播上行会带 440 Hz 测试音。</p>
             <details class="sim-advanced">
               <summary>批量设备与通道</summary>
               <div class="sim-fields">
@@ -149,6 +151,11 @@
             <p class="muted field-hint" id="recording-window" hidden></p>
             <p class="muted field-hint" id="media-route" hidden></p>
             <p class="muted field-hint" id="media-units" hidden></p>
+            <dl id="broadcast-status" class="onvif-addresses" hidden>
+              <div><dt>语音输出通道</dt><dd id="voice-output"></dd></div>
+              <div><dt>广播下行</dt><dd id="voice-state"></dd></div>
+            </dl>
+            <p class="sim-error" id="voice-error" role="status" hidden></p>
             <p class="sim-error" id="media-error" role="status" hidden></p>
             <p class="sim-error" id="state-error" role="status" hidden></p>
           </div>

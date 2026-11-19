@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/xml"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -69,6 +70,8 @@ type simulatorQuery struct {
 	XMLName   xml.Name
 	Command   string `xml:"CmdType"`
 	SN        uint32
+	SourceID  string
+	TargetID  string
 	DeviceID  string
 	StartTime string
 	EndTime   string
@@ -83,11 +86,15 @@ func (d *device) onMessage(flow *sipFlow, req *sip.Request, tx sip.ServerTransac
 		d.respond(req, tx, 400, "Bad Request")
 		return
 	}
+	if query.XMLName.Local == "Notify" && query.Command == "Broadcast" {
+		d.onBroadcast(flow, req, tx, query)
+		return
+	}
 	if query.XMLName.Local != "Query" {
 		d.respond(req, tx, 501, "Not Implemented")
 		return
 	}
-	if d.channelFor(query.DeviceID) == "" {
+	if d.channelFor(query.DeviceID) == "" && (d.outputID == "" || query.DeviceID != d.outputID) {
 		d.respond(req, tx, 404, "Not Found")
 		return
 	}
@@ -137,6 +144,8 @@ func (d *device) catalogReplies(query simulatorQuery) [][]byte {
 	channels := d.channels
 	if query.DeviceID != d.cfg.DeviceID {
 		channels = []string{query.DeviceID}
+	} else if d.outputID != "" {
+		channels = append(slices.Clone(d.channels), d.outputID)
 	}
 	// A single Catalog item fits the SIP UDP datagram limit. Keep the total
 	// and SN constant across replies, and let TCP carry the complete list.
@@ -150,6 +159,10 @@ func (d *device) catalogReplies(query simulatorQuery) [][]byte {
 		var body strings.Builder
 		fmt.Fprintf(&body, `<SumNum>%d</SumNum><DeviceList Num="%d">`, len(channels), len(page))
 		for _, channel := range page {
+			if channel == d.outputID {
+				body.WriteString(d.voiceOutputItem())
+				continue
+			}
 			status := "ON"
 			if d.offline[channel] {
 				status = "OFF"

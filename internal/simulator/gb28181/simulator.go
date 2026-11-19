@@ -21,6 +21,7 @@ var (
 )
 
 type Config struct {
+	Voice              bool         `json:"voice,omitempty"`
 	PlatformHost       string       `json:"platform_host"`
 	PlatformPort       int          `json:"platform_port"`
 	SIPTransport       string       `json:"sip_transport,omitempty"`
@@ -127,8 +128,9 @@ type MediaStatus struct {
 }
 
 type Status struct {
-	ChannelOnline        bool `json:"channel_online"`
-	CatalogSubscriptions int  `json:"catalog_subscriptions"`
+	Broadcast            *BroadcastStatus `json:"broadcast,omitempty"`
+	ChannelOnline        bool             `json:"channel_online"`
+	CatalogSubscriptions int              `json:"catalog_subscriptions"`
 	MediaStatus
 	State        string          `json:"state"`
 	Active       bool            `json:"active"`
