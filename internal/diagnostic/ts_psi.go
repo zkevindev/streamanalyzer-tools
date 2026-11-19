@@ -114,12 +114,13 @@ func (a *tsAnalyzer) observePAT(section []byte, event Event) {
 	a.report.MPEGTS.PATSections++
 	id := binary.BigEndian.Uint16(section[3:])
 	version := section[5] >> 1 & 31
+	if !a.patSeen || id != a.patID {
+		clear(a.programs)
+		clear(a.pendingPMTPackets)
+		a.programSwitchBaseline = nil
+	}
 	if !a.patSeen || id != a.patID || version != a.patVersion {
 		clear(a.pmt)
-		for _, state := range a.pids {
-			state.lastMap = nil
-		}
-		clear(a.pendingPMTPackets)
 		a.patID, a.patVersion, a.patSeen = id, version, true
 	}
 	for i := 8; i+4 <= end; i += 4 {

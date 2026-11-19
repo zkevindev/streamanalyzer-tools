@@ -93,7 +93,7 @@ func (m *Manager) Start(cfg Config) (Status, error) {
 	case "http-ts", "udp-ts", "rtp-ts":
 		mime, filename = "video/mp2t", "regular.ts"
 		rtpFault := cfg.Protocol == "rtp-ts" && (cfg.Fault == "rtp_drop" || cfg.Fault == "rtp_reorder" || cfg.Fault == "rtp_duplicate")
-		if cfg.Fault != "normal" && cfg.Fault != "continuity" && cfg.Fault != "pcr_jump" && cfg.Fault != "pmt_pid_switch" && !rtpFault {
+		if cfg.Fault != "normal" && cfg.Fault != "continuity" && cfg.Fault != "pcr_jump" && cfg.Fault != "pmt_pid_switch" && cfg.Fault != "program_outage" && !rtpFault {
 			return Status{}, ErrInvalid
 		}
 	default:

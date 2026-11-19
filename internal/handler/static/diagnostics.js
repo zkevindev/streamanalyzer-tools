@@ -686,13 +686,21 @@ function renderTransport(protocol, ts) {
             ['格式错误 RTP 数据报', ts.rtp_invalid ?? 0]);
     }
     renderMetrics('transport-metrics', values);
+    const programs = ts.programs || [];
+    node('ts-programs').hidden = programs.length === 0;
+    node('ts-program-table').replaceChildren(...(programs.length ? [renderTable(
+        ['节目 / PMT PID', '媒体 PID', '收到 TS 包', '连续计数错误', '首次切换后收到 TS 包', '首次切换后连续计数错误'],
+        programs.flatMap(program => program.streams.map(stream => [program.number + ' / ' + hexLabel(program.pmt_pid, 4),
+            hexLabel(stream.pid, 4), stream.packets, stream.continuity_errors, stream.after_switch_packets ?? '—',
+            stream.after_switch_errors ?? '—'])),
+    )] : []));
     const maps = ts.program_map_changes || [];
     node('ts-map-changes').hidden = maps.length === 0;
     const mapping = (state, times) => state.streams.map(stream => hexLabel(stream.pid, 4) +
         (!times ? '' : stream.first_packet_ms == null ? ' · 未观测' : ' · ' + time(stream.first_packet_ms))).join(' / ') || '—';
     node('ts-map-table').replaceChildren(...(maps.length ? [renderTable(
         ['节目 / PMT PID', '切换偏移', '版本', 'PCR PID', '原媒体 PID', '新媒体 PID / 首包'],
-        maps.map(change => [change.program + ' / ' + hexLabel(change.pmt_pid, 4), time(change.at_ms),
+        maps.map(change => [change.program + ' / ' + (change.before_pmt_pid == null ? '' : hexLabel(change.before_pmt_pid, 4) + ' → ') + hexLabel(change.pmt_pid, 4), time(change.at_ms),
             change.before.version + ' → ' + change.after.version,
             hexLabel(change.before.pcr_pid, 4) + ' → ' + hexLabel(change.after.pcr_pid, 4),
             mapping(change.before, false), mapping(change.after, true)]))] : []));
