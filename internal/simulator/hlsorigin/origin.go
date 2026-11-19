@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
@@ -33,15 +34,19 @@ type Config struct {
 
 type Status struct {
 	Config
-	Active          bool       `json:"active"`
-	ID              string     `json:"id,omitempty"`
-	Playlist        string     `json:"playlist,omitempty"`
-	SegmentRequests uint64     `json:"segment_requests"`
-	FaultHits       uint64     `json:"fault_hits"`
-	LastFault       *time.Time `json:"last_fault,omitempty"`
+	Frozen          bool             `json:"frozen"`
+	MediaSequence   uint64           `json:"media_sequence,omitempty"`
+	PlaylistSamples []PlaylistSample `json:"playlist_samples,omitempty"`
+	Active          bool             `json:"active"`
+	ID              string           `json:"id,omitempty"`
+	Playlist        string           `json:"playlist,omitempty"`
+	SegmentRequests uint64           `json:"segment_requests"`
+	FaultHits       uint64           `json:"fault_hits"`
+	LastFault       *time.Time       `json:"last_fault,omitempty"`
 }
 
 type Manager struct {
+	live   liveClock
 	mu     sync.Mutex
 	status Status
 	ctx    context.Context
@@ -51,7 +56,7 @@ type Manager struct {
 
 func (m *Manager) Start(cfg Config) (Status, error) {
 	switch cfg.Mode {
-	case "normal":
+	case "normal", "live":
 		cfg.Segment, cfg.DelayMS = 0, 0
 	case "delay", "not_found":
 		if cfg.Segment < 1 || cfg.Segment > SegmentCount {
@@ -77,21 +82,36 @@ func (m *Manager) Start(cfg Config) (Status, error) {
 	id := uuid.NewString()
 	m.ctx, m.cancel = context.WithCancel(context.Background())
 	m.status = Status{Config: cfg, Active: true, ID: id, Playlist: "/api/simulators/hls/stream/" + id + "/playlist.m3u8"}
-	return m.status, nil
+	m.live = liveClock{started: time.Now(), last: liveWindow}
+	return m.snapshot(), nil
 }
 
 func (m *Manager) Status() Status {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.status
+	return m.snapshot()
+}
+
+func (m *Manager) snapshot() Status {
+	result := m.status
+	result.PlaylistSamples = slices.Clone(result.PlaylistSamples)
+	if result.Mode == "live" {
+		result.Frozen = m.live.frozen
+		result.MediaSequence = m.live.sequence(time.Now()) - liveWindow + 1
+	}
+	return result
 }
 
 func (m *Manager) stopLocked() Status {
 	if m.status.Active {
+		if m.status.Mode == "live" && !m.live.frozen {
+			m.live.last = m.live.sequence(time.Now())
+			m.live.frozen = true
+		}
 		m.cancel()
 		m.status.Active = false
 	}
-	return m.status
+	return m.snapshot()
 }
 
 func (m *Manager) Stop() Status {
@@ -108,28 +128,45 @@ func (m *Manager) Close() {
 }
 
 func (m *Manager) Serve(w http.ResponseWriter, r *http.Request, id, name string) {
-	var kind string
-	var segment int
-	if name == "playlist.m3u8" {
-		kind = "application/vnd.apple.mpegurl"
-	} else {
+	m.mu.Lock()
+	if !m.status.Active || id != m.status.ID {
+		m.mu.Unlock()
+		http.NotFound(w, r)
+		return
+	}
+	playlist := name == "playlist.m3u8"
+	kind := "application/vnd.apple.mpegurl"
+	segment := 0
+	if m.status.Mode == "live" {
+		now := time.Now()
+		last := m.live.sequence(now)
+		if playlist {
+			if r.Method == http.MethodGet {
+				m.recordPlaylist(now, last-liveWindow+1)
+			}
+			m.mu.Unlock()
+			w.Header().Set("Content-Type", kind)
+			http.ServeContent(w, r, name, time.Time{}, bytes.NewReader(livePlaylist(last)))
+			return
+		}
+		if selected, ok := liveSegment(name, last); ok {
+			name, segment = fmt.Sprintf("segment-%02d.ts", selected), selected
+		}
+	} else if !playlist {
 		for i := 1; i <= SegmentCount; i++ {
 			if name == fmt.Sprintf("segment-%02d.ts", i) {
 				segment = i
 				break
 			}
 		}
+	}
+	if !playlist {
 		if segment == 0 {
+			m.mu.Unlock()
 			http.NotFound(w, r)
 			return
 		}
 		kind = "video/mp2t"
-	}
-	m.mu.Lock()
-	if !m.status.Active || id != m.status.ID {
-		m.mu.Unlock()
-		http.NotFound(w, r)
-		return
 	}
 	cfg, ctx := m.status.Config, m.ctx
 	fault := false

@@ -23,21 +23,22 @@ const (
 // PlayerNetworkRequest describes the local proxy's upstream observation, never
 // delivery to the browser, SourceBuffer append, or decoder consumption.
 type PlayerNetworkRequest struct {
-	Number       int                `json:"number"`
-	ResourceID   string             `json:"resource_id"`
-	Kind         string             `json:"kind"`
-	Method       string             `json:"method"`
-	StartMS      int64              `json:"start_ms"`
-	HeaderMS     *int64             `json:"header_ms,omitempty"`
-	FirstBodyMS  *int64             `json:"first_body_ms,omitempty"`
-	EndMS        int64              `json:"end_ms"`
-	HTTPStatus   int                `json:"http_status,omitempty"`
-	Bytes        int64              `json:"bytes"`
-	Outcome      string             `json:"outcome"`
-	Hops         []PlayerNetworkHop `json:"hops,omitempty"`
-	DroppedHops  int                `json:"dropped_hops,omitempty"`
-	FailureStage string             `json:"failure_stage,omitempty"`
-	FailureCode  string             `json:"failure_code,omitempty"`
+	PlaylistSequence *uint64            `json:"playlist_sequence,omitempty"`
+	Number           int                `json:"number"`
+	ResourceID       string             `json:"resource_id"`
+	Kind             string             `json:"kind"`
+	Method           string             `json:"method"`
+	StartMS          int64              `json:"start_ms"`
+	HeaderMS         *int64             `json:"header_ms,omitempty"`
+	FirstBodyMS      *int64             `json:"first_body_ms,omitempty"`
+	EndMS            int64              `json:"end_ms"`
+	HTTPStatus       int                `json:"http_status,omitempty"`
+	Bytes            int64              `json:"bytes"`
+	Outcome          string             `json:"outcome"`
+	Hops             []PlayerNetworkHop `json:"hops,omitempty"`
+	DroppedHops      int                `json:"dropped_hops,omitempty"`
+	FailureStage     string             `json:"failure_stage,omitempty"`
+	FailureCode      string             `json:"failure_code,omitempty"`
 }
 
 type PlayerNetworkReport struct {
@@ -112,6 +113,17 @@ func (n *playerNetwork) header(e *playerNetworkEntry, status int) {
 	}
 	at := min(int64(maxPlayerNetworkOffsetMS), n.offset())
 	e.request.HeaderMS, e.request.HTTPStatus = &at, status
+}
+
+func (n *playerNetwork) playlistSequence(e *playerNetworkEntry, sequence uint64) {
+	if e == nil {
+		return
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if !n.frozen && !n.stopped && e.request.Kind == "playlist" && e.request.HTTPStatus == 200 && e.request.Method == "GET" {
+		e.request.PlaylistSequence = &sequence
+	}
 }
 
 func (n *playerNetwork) body(e *playerNetworkEntry, bytes int) {
@@ -276,6 +288,9 @@ func validatePlayerNetwork(report *PlayerNetworkReport, player *PlayerReport, pr
 			}
 		}
 		if (request.HeaderMS == nil) != (request.HTTPStatus == 0) || (request.FirstBodyMS != nil && (request.HeaderMS == nil || *request.FirstBodyMS < *request.HeaderMS)) || (request.Bytes > 0 && request.FirstBodyMS == nil) || (request.FirstBodyMS != nil && request.Bytes == 0) || (request.Method == "HEAD" && (request.Bytes != 0 || request.FirstBodyMS != nil)) {
+			return ErrInvalid
+		}
+		if request.PlaylistSequence != nil && (request.Kind != "playlist" || request.Method != "GET" || request.HTTPStatus != 200 || request.Bytes == 0) {
 			return ErrInvalid
 		}
 		if request.Outcome == "complete" && (request.HTTPStatus != 200 && request.HTTPStatus != 206) {

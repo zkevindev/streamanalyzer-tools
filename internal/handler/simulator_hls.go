@@ -35,6 +35,22 @@ func registerHLSRoutes(r *gin.Engine, source *hlsorigin.Manager) {
 		}
 		c.JSON(http.StatusCreated, status)
 	})
+	api.POST("/freeze", func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1024)
+		var input struct {
+			Frozen *bool `json:"frozen"`
+		}
+		if err := c.ShouldBindJSON(&input); err != nil || input.Frozen == nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "冻结参数无效"})
+			return
+		}
+		status, err := source.Freeze(*input.Frozen)
+		if err != nil {
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, status)
+	})
 	api.POST("/stop", func(c *gin.Context) { c.JSON(http.StatusOK, source.Stop()) })
 	serve := func(c *gin.Context) { source.Serve(c.Writer, c.Request, c.Param("id"), c.Param("file")) }
 	api.GET("/stream/:id/:file", serve)
