@@ -135,6 +135,21 @@ func RegisterDiagnosticRoutes(r *gin.Engine, service *diagnostic.Service) {
 	})
 	api.GET("/runs/:id/dump", diagnosticDump(service, ""))
 	api.GET("/runs/:id/stream.flv", diagnosticDump(service, "stream.flv"))
+	api.GET("/runs/:id/rtsp-replay", func(c *gin.Context) {
+		c.JSON(http.StatusOK, service.StatusRTSPReplay(c.Param("id")))
+	})
+	api.POST("/runs/:id/rtsp-replay/start", func(c *gin.Context) {
+		source, err := service.StartRTSPReplay(c.Request.Context(), c.Param("id"))
+		if err != nil {
+			diagnosticError(c, err)
+			return
+		}
+		c.JSON(http.StatusCreated, source)
+	})
+	api.POST("/runs/:id/rtsp-replay/stop", func(c *gin.Context) {
+		service.StopRTSPReplay(c.Param("id"))
+		c.JSON(http.StatusOK, service.StatusRTSPReplay(c.Param("id")))
+	})
 	api.GET("/runs/:id/replay.flv", func(c *gin.Context) {
 		if err := service.ServeFLVReplay(c.Writer, c.Request, c.Param("id")); err != nil && !errors.Is(err, context.Canceled) && c.Request.Context().Err() == nil {
 			diagnosticError(c, err)

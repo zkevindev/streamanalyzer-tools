@@ -25,9 +25,12 @@ const maxSamples = 4
 const explanationName = "explanation.json"
 
 type Service struct {
-	root   string
-	db     *sql.DB
-	client *http.Client
+	rtspReplayMu     sync.Mutex
+	rtspReplays      map[string]*rtspReplayOrigin
+	rtspReplayClosed bool
+	root             string
+	db               *sql.DB
+	client           *http.Client
 
 	modelMu sync.Mutex
 	model   *modelSelection
@@ -71,7 +74,7 @@ func Open(baseDir string, model Explainer) (*Service, error) {
 	}
 
 	s := &Service{
-		root: root, db: db, client: captureClient(),
+		root: root, db: db, client: captureClient(), rtspReplays: make(map[string]*rtspReplayOrigin),
 		active: make(map[string]context.CancelFunc), imports: make(chan struct{}, 2), flvReplaySlots: make(chan struct{}, 8),
 		players:           make(map[string]*playerSessionState),
 		investigationJobs: make(map[string]context.CancelFunc), investigationSlots: make(chan struct{}, 2),
@@ -126,6 +129,7 @@ func initRunIndex(db *sql.DB) error {
 func (s *Service) Close() error {
 	s.close.Do(func() {
 		s.StopFLVReplays()
+		s.StopRTSPReplays()
 		s.SetModel(nil)
 		s.mu.Lock()
 		s.closed = true
@@ -407,6 +411,7 @@ func (s *Service) detail(id string) (Detail, error) {
 	detail.Report = &report
 	detail.DumpName = dumpName(run.Protocol)
 	detail.FLVReplayAvailable = canReplayFLV(report.Manifest)
+	detail.RTSPReplayAvailable = canReplayRTSP(report)
 	explanation, err := readJSONFile[Explanation](dir, explanationName)
 	switch {
 	case err == nil:

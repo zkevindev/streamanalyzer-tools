@@ -1475,6 +1475,7 @@ function renderDetail(detail) {
     node('dump').textContent = protocols[protocol]?.dump || '原始流';
     node('dump').download = detail.dump_name || '';
     node('dump').hidden = detail.report.manifest.stream.bytes === 0;
+    node('rtsp-replay').hidden = node('rtsp-replay-stop').hidden = !detail.rtsp_replay_available;
     const replay = node('flv-replay');
     replay.hidden = !detail.flv_replay_available;
     replay.dataset.url = detail.flv_replay_available ? new URL(base + '/replay.flv', location.origin).href : '';
@@ -1604,6 +1605,34 @@ node('flv-replay').addEventListener('click', () => {
     node('url').select();
     message('已填入本机回放地址，可复制到其他本机播放器。每个连接从头按原采样节奏回放。');
 });
+async function changeRTSPReplay(start) {
+    const id = currentID;
+    const button = node(start ? 'rtsp-replay' : 'rtsp-replay-stop');
+    if (!id || button.disabled) return;
+    button.disabled = true;
+    try {
+        const source = await api(runPath(id) + '/rtsp-replay/' + (start ? 'start' : 'stop'), {method: 'POST'});
+        if (currentID !== id) return;
+        if (!start) {
+            message('本机 RTSP 回放源已停止。');
+            return;
+        }
+        node('protocol').value = 'rtsp';
+        node('protocol').dispatchEvent(new Event('change'));
+        node('rtsp-transport').value = 'tcp';
+        node('url').value = source.url;
+        node('seconds').value = Math.min(300, Math.max(1, Math.ceil((source.duration_ms + 1500) / 1000)));
+        node('url').focus();
+        node('url').select();
+        message('本机 RTSP 回放地址已填入采样表单。每个客户端重新建立会话并独立按原节奏收包。');
+    } catch (error) {
+        if (currentID === id) message(error.message, true);
+    } finally {
+        button.disabled = false;
+    }
+}
+node('rtsp-replay').addEventListener('click', () => { void changeRTSPReplay(true); });
+node('rtsp-replay-stop').addEventListener('click', () => { void changeRTSPReplay(false); });
 bindForm('sample', async () => {
     const startedAt = Date.now();
     const startedAtPerformanceMS = performance.now();

@@ -205,8 +205,9 @@ type Report struct {
 
 type Detail struct {
 	Run
-	FLVReplayAvailable bool         `json:"flv_replay_available,omitempty"`
-	DumpName           string       `json:"dump_name,omitempty"`
-	Report             *Report      `json:"report,omitempty"`
-	Explanation        *Explanation `json:"explanation,omitempty"`
+	RTSPReplayAvailable bool         `json:"rtsp_replay_available,omitempty"`
+	FLVReplayAvailable  bool         `json:"flv_replay_available,omitempty"`
+	DumpName            string       `json:"dump_name,omitempty"`
+	Report              *Report      `json:"report,omitempty"`
+	Explanation         *Explanation `json:"explanation,omitempty"`
 }
