@@ -28,6 +28,7 @@ function updateButtons() {
   el('simulator-fields').disabled = busy || active || !loaded;
   el('start').disabled = busy || active || !loaded || !network.value;
   el('motion').disabled = busy || !active;
+  el('recorded-motion').disabled = el('missing-motion').disabled = busy || !active;
   el('stop').disabled = busy || !active;
 }
 
@@ -59,6 +60,14 @@ function render(status) {
   ].join(' · ') : '无鉴权';
   el('transport-observation').textContent = 'UDP PLAY ' + status.udp_plays + ' 次 · TCP PLAY ' + status.tcp_plays + ' 次' +
     (status.silent_udp ? ' · UDP 无 RTP' : '');
+  const recording = status.recording;
+  el('recording-controls').hidden = !active || !recording;
+  if (recording) {
+    const date = value => new Date(value).toLocaleString('zh-CN', {timeZone: 'UTC'});
+    el('recording-window').textContent = '录像 ' + date(recording.from) + ' 至 ' + date(recording.until) + ' UTC · ' + recording.stream_url;
+    el('recording-status').textContent = '有录像告警 ' + date(recording.recorded_motion) + ' · 无录像告警 ' + date(recording.missing_motion) +
+      ' UTC · 成功点播 ' + recording.plays + ' 次 · 无录像时间范围 ' + recording.missing_range + ' 次';
+  }
   const outages = status.rtsp_outages || [];
   el('outage-observation-row').hidden = !outages.length;
   el('outage-observation').textContent = outages.map((outage, index) => (index ? '子码流' : '主码流') + ' ' +
@@ -147,6 +156,7 @@ form.addEventListener('submit', event => {
   config.rtsp_port = Number(config.rtsp_port);
   config.clock_offset_seconds = Number(config.clock_offset_seconds);
   config.silent_udp = el('silent-udp').checked;
+  config.recording_fixture = el('recording-fixture').checked;
   config.rtsp_disconnect_ms = el('rtsp-outage').checked ? 3000 : 0;
   config.video_gap_ms = el('video-gap').checked ? 5000 : 0;
   const files = [['main', el('main-video').files[0]], ['sub', el('sub-video').files[0]]].filter(([, file]) => file);
@@ -169,6 +179,8 @@ for (const [selected, other] of [['rtsp-outage', 'video-gap'], ['video-gap', 'rt
   });
 }
 el('stop').addEventListener('click', () => { void change('/stop'); });
+el('recorded-motion').addEventListener('click', () => { void change('/recording-motion', {recorded: true}); });
+el('missing-motion').addEventListener('click', () => { void change('/recording-motion', {recorded: false}); });
 el('motion').addEventListener('click', () => { void change('/motion', {active: !motionActive}); });
 void configure();
 void poll();

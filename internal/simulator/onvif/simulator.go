@@ -30,6 +30,7 @@ var (
 )
 
 type Config struct {
+	RecordingFixture bool   `json:"recording_fixture,omitempty"`
 	RTSPDisconnectMS int    `json:"rtsp_disconnect_ms,omitempty"`
 	VideoGapMS       int    `json:"video_gap_ms,omitempty"`
 	SOAPUsername     string `json:"soap_username,omitempty"`
@@ -132,34 +133,36 @@ func (c *Config) normalize() (net.IP, *net.Interface, error) {
 }
 
 type Status struct {
-	RTSPOutages       []RTSPOutageStatus `json:"rtsp_outages,omitempty"`
-	EventURL          string             `json:"event_url,omitempty"`
-	Events            EventStatus        `json:"events"`
-	VideoGaps         []RTPGapStatus     `json:"video_gaps,omitempty"`
-	SOAPDigest        bool               `json:"soap_digest"`
-	SOAPAuthRejected  uint64             `json:"soap_auth_rejected"`
-	SOAPClockRejected uint64             `json:"soap_clock_rejected"`
-	ClockOffset       int                `json:"clock_offset_seconds"`
-	SilentUDP         bool               `json:"silent_udp"`
-	UDPPlays          uint64             `json:"udp_plays"`
-	TCPPlays          uint64             `json:"tcp_plays"`
-	Profiles          []Profile          `json:"profiles,omitempty"`
-	RTSPDigest        bool               `json:"rtsp_digest"`
-	Active            bool               `json:"active"`
-	Name              string             `json:"name,omitempty"`
-	Interface         string             `json:"interface,omitempty"`
-	DiscoveryAddress  string             `json:"discovery_address,omitempty"`
-	EndpointID        string             `json:"endpoint_id,omitempty"`
-	DeviceURL         string             `json:"device_url,omitempty"`
-	PTZURL            string             `json:"ptz_url,omitempty"`
-	MediaURL          string             `json:"media_url,omitempty"`
-	StreamURL         string             `json:"stream_url,omitempty"`
-	DiscoveryReplies  uint64             `json:"discovery_replies"`
-	SOAPRequests      uint64             `json:"soap_requests"`
-	RTSPPlays         uint64             `json:"rtsp_plays"`
+	Recording         *RecordingFixtureStatus `json:"recording,omitempty"`
+	RTSPOutages       []RTSPOutageStatus      `json:"rtsp_outages,omitempty"`
+	EventURL          string                  `json:"event_url,omitempty"`
+	Events            EventStatus             `json:"events"`
+	VideoGaps         []RTPGapStatus          `json:"video_gaps,omitempty"`
+	SOAPDigest        bool                    `json:"soap_digest"`
+	SOAPAuthRejected  uint64                  `json:"soap_auth_rejected"`
+	SOAPClockRejected uint64                  `json:"soap_clock_rejected"`
+	ClockOffset       int                     `json:"clock_offset_seconds"`
+	SilentUDP         bool                    `json:"silent_udp"`
+	UDPPlays          uint64                  `json:"udp_plays"`
+	TCPPlays          uint64                  `json:"tcp_plays"`
+	Profiles          []Profile               `json:"profiles,omitempty"`
+	RTSPDigest        bool                    `json:"rtsp_digest"`
+	Active            bool                    `json:"active"`
+	Name              string                  `json:"name,omitempty"`
+	Interface         string                  `json:"interface,omitempty"`
+	DiscoveryAddress  string                  `json:"discovery_address,omitempty"`
+	EndpointID        string                  `json:"endpoint_id,omitempty"`
+	DeviceURL         string                  `json:"device_url,omitempty"`
+	PTZURL            string                  `json:"ptz_url,omitempty"`
+	MediaURL          string                  `json:"media_url,omitempty"`
+	StreamURL         string                  `json:"stream_url,omitempty"`
+	DiscoveryReplies  uint64                  `json:"discovery_replies"`
+	SOAPRequests      uint64                  `json:"soap_requests"`
+	RTSPPlays         uint64                  `json:"rtsp_plays"`
 }
 
 type camera struct {
+	recording     *recordingFixture
 	events        eventBroker
 	auth          soapAuth
 	authRejected  atomic.Uint64
@@ -231,7 +234,13 @@ func (m *Manager) StartFiles(ctx context.Context, cfg Config, files [2]LocalVide
 		return Status{}, fmt.Errorf("无法监听 WS-Discovery：%w", err)
 	}
 	c := &camera{listener: listener, discovery: discovery, profiles: profiles}
-	video, err := startVideo(ip, cfg, profiles)
+	origin := "http://" + listener.Addr().String()
+	if cfg.RecordingFixture {
+		c.recording = newRecordingFixture(cfg.ClockOffset)
+		info := &c.recording.info
+		info.RecordingURL, info.SearchURL, info.ReplayURL = origin+recordingPath, origin+searchPath, origin+replayPath
+	}
+	video, err := startVideo(ip, cfg, profiles, c.recording)
 	if err != nil {
 		discovery.close()
 		listener.Close()
@@ -243,7 +252,6 @@ func (m *Manager) StartFiles(ctx context.Context, cfg Config, files [2]LocalVide
 	}
 	discovery.instance = max(uint32(time.Now().Unix()), m.lastDiscoveryInstance+1)
 	m.lastDiscoveryInstance = discovery.instance
-	origin := "http://" + listener.Addr().String()
 	c.status = Status{
 		Active: true, SOAPDigest: cfg.SOAPUsername != "", ClockOffset: cfg.ClockOffset, SilentUDP: cfg.SilentUDP, Name: cfg.Name, Interface: nic.Name, DiscoveryAddress: discovery.group.String(),
 		EndpointID: "urn:uuid:" + uuid.NewSHA1(uuid.NameSpaceURL, []byte("streamanalyzer:onvif:"+cfg.BindIP+"/"+cfg.Name)).String(),
@@ -261,6 +269,11 @@ func (m *Manager) StartFiles(ctx context.Context, cfg Config, files [2]LocalVide
 	mux.HandleFunc(ptzPath, c.serveSOAP(ptzNS, c.ptzReply))
 	mux.HandleFunc(eventPath, c.serveSOAPRequest(eventNS, c.eventReply))
 	mux.HandleFunc(pullPath+"{subscription}", c.serveSOAPRequest(eventNS, c.eventReply))
+	if c.recording != nil {
+		mux.HandleFunc(recordingPath, c.serveSOAP(recordingNS, c.recordingReply))
+		mux.HandleFunc(searchPath, c.serveSOAP(searchNS, c.searchReply))
+		mux.HandleFunc(replayPath, c.serveSOAP(replayNS, c.replayReply))
+	}
 	mux.HandleFunc("GET "+snapshotPath+"{profile}", c.serveSnapshot)
 	c.http = &http.Server{
 		Handler: mux, ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second, IdleTimeout: 15 * time.Second,
@@ -283,6 +296,9 @@ func (m *Manager) StartFiles(ctx context.Context, cfg Config, files [2]LocalVide
 func (c *camera) snapshot() Status {
 	status := c.status
 	status.Events = c.events.snapshot()
+	if c.recording != nil {
+		status.Recording = c.recording.snapshot()
+	}
 	status.DiscoveryReplies = c.discoveryReplies.Load()
 	status.SOAPRequests = c.soapRequests.Load()
 	status.SOAPAuthRejected, status.SOAPClockRejected = c.authRejected.Load(), c.clockRejected.Load()

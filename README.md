@@ -145,6 +145,8 @@ RTSP 断线模式在每个 Profile 首次点播 3 秒后关闭已有会话，在
 
 事件服务支持 PullPoint 订阅、续订、取消和到期。NVR 订阅后，在模拟器点击「触发移动侦测」和「结束移动侦测」，可拉取 `RuleEngine/CellMotionDetector/Motion` 的两次状态变化。页面显示订阅数、拉取次数和通知数。
 
+启用「录像检索与按时间回放」可测试 ONVIF Profile G 的录像列举、搜索和回放子集。模拟器提供一段 30 秒录像和两个历史移动告警时间，其中一个落在录像区间内。客户端从 ONVIF 获取录像 RTSP 地址，用 `Range: clock=...` 请求绝对时间；命中时回放 H.264，区间外返回 457。
+
 #### 通用 SIP
 
 在「模拟器」切换到「通用 SIP」，填写 PBX 地址、分机号和鉴权信息后注册。信令使用 IPv4 UDP，支持 REGISTER Digest 鉴权、续期和注销。SIP 域和 Digest 用户名可按 PBX 配置单独填写。

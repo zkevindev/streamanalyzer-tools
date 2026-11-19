@@ -29,6 +29,7 @@ type videoTrack struct {
 }
 
 type videoServer struct {
+	recorded       *recordingRTSP
 	server         *gortsplib.Server
 	tracks         map[string]*videoTrack
 	ready          chan struct{}
@@ -41,6 +42,9 @@ func (v *videoServer) describe(conn *gortsplib.ServerConn, request *base.Request
 	<-v.ready
 	if v.user != "" && !conn.VerifyCredentials(request, v.user, v.password) {
 		return &base.Response{StatusCode: base.StatusUnauthorized}, nil, liberrors.ErrServerAuth{}
+	}
+	if v.recorded != nil && path == recordedRTSPPath {
+		return &base.Response{StatusCode: base.StatusOK}, v.recorded.description, nil
 	}
 	track := v.tracks[path]
 	if track == nil || track.stream == nil {
@@ -58,6 +62,9 @@ func (v *videoServer) OnDescribe(ctx *gortsplib.ServerHandlerOnDescribeCtx) (*ba
 
 func (v *videoServer) OnSetup(ctx *gortsplib.ServerHandlerOnSetupCtx) (*base.Response, *gortsplib.ServerStream, error) {
 	res, stream, err := v.describe(ctx.Conn, ctx.Request, ctx.Path)
+	if stream != nil && v.recorded != nil && ctx.Path == recordedRTSPPath {
+		return v.recorded.setup(v.server, ctx.Session)
+	}
 	if stream != nil && ctx.Transport.Protocol == gortsplib.ProtocolUDP && v.tracks[ctx.Path].silent != nil {
 		stream = v.tracks[ctx.Path].silent
 	}
@@ -65,12 +72,20 @@ func (v *videoServer) OnSetup(ctx *gortsplib.ServerHandlerOnSetupCtx) (*base.Res
 }
 
 func (v *videoServer) OnSessionClose(ctx *gortsplib.ServerHandlerOnSessionCloseCtx) {
+	<-v.ready
+	if v.recorded != nil {
+		v.recorded.remove(ctx.Session)
+	}
 	for _, track := range v.tracks {
 		track.outage.forget(ctx.Session)
 	}
 }
 
 func (v *videoServer) OnPlay(ctx *gortsplib.ServerHandlerOnPlayCtx) (*base.Response, error) {
+	<-v.ready
+	if v.recorded != nil && ctx.Path == recordedRTSPPath {
+		return v.recorded.play(ctx)
+	}
 	track := v.tracks[ctx.Path]
 	if track != nil && !track.outage.play(time.Now(), ctx.Session, ctx.Conn) {
 		return &base.Response{StatusCode: base.StatusServiceUnavailable}, nil
@@ -86,7 +101,7 @@ func (v *videoServer) OnPlay(ctx *gortsplib.ServerHandlerOnPlayCtx) (*base.Respo
 	return &base.Response{StatusCode: base.StatusOK}, nil
 }
 
-func startVideo(ip net.IP, cfg Config, profiles []*profileVideo) (*videoServer, error) {
+func startVideo(ip net.IP, cfg Config, profiles []*profileVideo, fixture *recordingFixture) (*videoServer, error) {
 	v := &videoServer{ready: make(chan struct{}), tracks: make(map[string]*videoTrack),
 		user: cfg.RTSPUsername, password: cfg.RTSPPassword}
 	for _, profile := range profiles {
@@ -153,6 +168,16 @@ func startVideo(ip net.IP, cfg Config, profiles []*profileVideo) (*videoServer, 
 			}
 			track.silent = silent
 		}
+	}
+	if fixture != nil {
+		fixture.info.StreamURL = "rtsp://" + v.server.RTSPAddress + recordedRTSPPath
+		archived, err := newRecordingRTSP(v.server, profiles[0], fixture)
+		if err != nil {
+			close(v.ready)
+			v.close()
+			return nil, err
+		}
+		v.recorded = archived
 	}
 	close(v.ready)
 	return v, nil
@@ -224,6 +249,9 @@ func (v *videoTrack) play(ctx context.Context) {
 
 func (v *videoServer) close() {
 	v.server.Close()
+	if v.recorded != nil {
+		v.recorded.description.Close()
+	}
 	for _, track := range v.tracks {
 		if track.stream != nil {
 			track.stream.Close()
