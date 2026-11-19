@@ -17,8 +17,10 @@ import (
 )
 
 const (
-	devicePath = "/onvif/device_service"
-	mediaPath  = "/onvif/media_service"
+	devicePath   = "/onvif/device_service"
+	mediaPath    = "/onvif/media_service"
+	ptzPath      = "/onvif/ptz_service"
+	snapshotPath = "/onvif/snapshot/"
 )
 
 var (
@@ -118,6 +120,7 @@ type Status struct {
 	DiscoveryAddress string    `json:"discovery_address,omitempty"`
 	EndpointID       string    `json:"endpoint_id,omitempty"`
 	DeviceURL        string    `json:"device_url,omitempty"`
+	PTZURL           string    `json:"ptz_url,omitempty"`
 	MediaURL         string    `json:"media_url,omitempty"`
 	StreamURL        string    `json:"stream_url,omitempty"`
 	DiscoveryReplies uint64    `json:"discovery_replies"`
@@ -126,6 +129,7 @@ type Status struct {
 }
 
 type camera struct {
+	ptzMu     sync.Mutex
 	profiles  []*profileVideo
 	status    Status
 	listener  net.Listener
@@ -206,9 +210,10 @@ func (m *Manager) StartFiles(ctx context.Context, cfg Config, files [2]LocalVide
 	c.status = Status{
 		Active: true, Name: cfg.Name, Interface: nic.Name, DiscoveryAddress: discovery.group.String(),
 		EndpointID: "urn:uuid:" + uuid.NewSHA1(uuid.NameSpaceURL, []byte("streamanalyzer:onvif:"+cfg.BindIP+"/"+cfg.Name)).String(),
-		DeviceURL:  origin + devicePath, MediaURL: origin + mediaPath, RTSPDigest: cfg.RTSPUsername != "",
+		DeviceURL:  origin + devicePath, MediaURL: origin + mediaPath, PTZURL: origin + ptzPath, RTSPDigest: cfg.RTSPUsername != "",
 	}
 	for _, profile := range profiles {
+		profile.SnapshotURL = origin + snapshotPath + profile.Token
 		profile.StreamURL = "rtsp://" + video.server.RTSPAddress + profile.path
 		c.status.Profiles = append(c.status.Profiles, profile.Profile)
 	}
@@ -216,6 +221,8 @@ func (m *Manager) StartFiles(ctx context.Context, cfg Config, files [2]LocalVide
 	mux := http.NewServeMux()
 	mux.HandleFunc(devicePath, c.serveSOAP(deviceNS, c.deviceReply))
 	mux.HandleFunc(mediaPath, c.serveSOAP(mediaNS, c.mediaReply))
+	mux.HandleFunc(ptzPath, c.serveSOAP(ptzNS, c.ptzReply))
+	mux.HandleFunc("GET "+snapshotPath+"{profile}", c.serveSnapshot)
 	c.http = &http.Server{
 		Handler: mux, ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second, IdleTimeout: 15 * time.Second,
 		MaxHeaderBytes: 16 << 10,

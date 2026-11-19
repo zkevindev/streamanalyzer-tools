@@ -40,10 +40,14 @@ function render(status) {
   el('endpoints').hidden = !active;
   el('device-url').textContent = status.device_url || '';
   el('media-url').textContent = status.media_url || '';
+  el('ptz-url').textContent = status.ptz_url || '';
+  el('snapshot-hint').hidden = !active;
   el('rtsp-auth').textContent = status.rtsp_digest ? 'Digest' : '无鉴权';
-  for (const [index, endpoint, detail] of [[0, 'rtsp-url', 'main-profile-detail'], [1, 'rtsp-sub-url', 'sub-profile-detail']]) {
+  for (const [index, endpoint, detail, snapshot] of [[0, 'rtsp-url', 'main-profile-detail', 'main-snapshot'], [1, 'rtsp-sub-url', 'sub-profile-detail', 'sub-snapshot']]) {
     const profile = status.profiles?.[index];
     el(endpoint).textContent = profile?.stream_url || '';
+    if (profile?.snapshot_url) el(snapshot).href = profile.snapshot_url;
+    else el(snapshot).removeAttribute('href');
     el(detail).textContent = profile ? '· ' + (profile.filename || '测试画面') + ' · ' +
       profile.width + ' × ' + profile.height + ' / ' + profile.fps + ' fps' : '';
   }
