@@ -135,8 +135,34 @@ func (s *Service) Close() error {
 		}
 		s.mu.Unlock()
 		s.workers.Wait()
+		s.persistence.Lock()
+		for id, state := range s.players {
+			if state.session.hls == nil {
+				continue
+			}
+			dir := s.runDir(id)
+			report, err := readJSONFile[Report](dir, reportName)
+			if err != nil || report.Player == nil {
+				continue
+			}
+			record, err := readPlayerRecording(dir)
+			previousNetwork := playerNetworkRevision(report)
+			if err == nil {
+				err = persistPlayerNetwork(dir, &report, state.session.hls.network.snapshot(record.Revision, record.Complete), state.created)
+			}
+			if err == nil && previousNetwork != playerNetworkRevision(report) {
+				if removeErr := os.Remove(filepath.Join(dir, explanationName)); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+					err = removeErr
+				}
+			}
+			if err == nil {
+				err = persistReport(dir, report)
+			}
+			s.closeErr = errors.Join(s.closeErr, err)
+		}
+		s.persistence.Unlock()
 		s.client.CloseIdleConnections()
-		s.closeErr = s.db.Close()
+		s.closeErr = errors.Join(s.closeErr, s.db.Close())
 	})
 	return s.closeErr
 }
@@ -207,6 +233,9 @@ func (s *Service) Start(req SampleRequest) (Run, error) {
 	var player *PlayerSession
 	if req.Playback {
 		session := newPlayerSession(context.Background(), protocol, target, s.client)
+		if session.hls != nil {
+			session.hls.network.setOrigin(run.CreatedAt)
+		}
 		player = session
 		s.prunePlayersLocked()
 		state := &playerSessionState{session: session, token: rand.Text(), created: run.CreatedAt}
@@ -426,7 +455,7 @@ func (s *Service) explain(ctx context.Context, id string, refresh bool) (Explana
 	if err != nil {
 		return Explanation{}, err
 	}
-	if playerRevision(current.Player) != playerRevision(detail.Report.Player) || investigationRevision(current) != investigationRevision(*detail.Report) {
+	if playerRevision(current.Player) != playerRevision(detail.Report.Player) || investigationRevision(current) != investigationRevision(*detail.Report) || playerNetworkRevision(current) != playerNetworkRevision(*detail.Report) {
 		return Explanation{}, ErrReportChanged
 	}
 	if err := writeJSONFile(dir, explanationName, explanation); err != nil {
@@ -455,6 +484,10 @@ func (s *Service) WriteBundle(id string, w io.Writer) error {
 	if err == nil && detail.Report.Manifest.StallEvidence != nil {
 		ledger, err = readStallLedger(dir, *detail.Report.Manifest.StallEvidence)
 	}
+	var network []byte
+	if err == nil && detail.Report.Manifest.PlayerNetwork != nil {
+		network, err = readPlayerNetworkArtifact(dir, *detail.Report.Manifest.PlayerNetwork)
+	}
 	// Snapshot the bounded recording before its revision can be cleaned up.
 	// A slow download must not hold up other recordings or capture reports.
 	s.persistence.RUnlock()
@@ -462,9 +495,9 @@ func (s *Service) WriteBundle(id string, w io.Writer) error {
 		return err
 	}
 	if player != nil {
-		return writeBundleSnapshot(w, dir, *detail.Report, bytes.NewReader(player), ledger)
+		return writeBundleSnapshot(w, dir, *detail.Report, bytes.NewReader(player), ledger, network)
 	}
-	return writeBundleSnapshot(w, dir, *detail.Report, nil, ledger)
+	return writeBundleSnapshot(w, dir, *detail.Report, nil, ledger, network)
 }
 
 func (s *Service) OpenDump(id string) (*os.File, error) {

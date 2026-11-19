@@ -172,7 +172,11 @@ func importedStallEvidence(dir string, report *Report, entries map[string]*zip.F
 			if len(item.Correlation.Findings) == 0 {
 				return fmt.Errorf("%w: 排查分层缺少关联证据", ErrInvalid)
 			}
-			expected, _ := json.Marshal(assessStall(item))
+			assessment, err := recomputeStallAssessment(item, item.Assessment.Version)
+			if err != nil {
+				return err
+			}
+			expected, _ := json.Marshal(assessment)
 			provided, _ := json.Marshal(item.Assessment)
 			if !bytes.Equal(expected, provided) {
 				return fmt.Errorf("%w: 排查分层与关联证据不一致", ErrInvalid)
@@ -220,7 +224,7 @@ func importedStallEvidence(dir string, report *Report, entries map[string]*zip.F
 
 func emptyStallCorrelation(value StallCorrelation) bool {
 	return value.Source == "" && value.WindowStartMS == 0 && value.WindowEndMS == 0 && len(value.BufferSamples) == 0 && len(value.Gaps) == 0 &&
-		len(value.Keyframes) == 0 && len(value.Requests) == 0 && len(value.Findings) == 0 && len(value.Notes) == 0
+		len(value.Keyframes) == 0 && len(value.Requests) == 0 && len(value.PlayerRequests) == 0 && !value.PlayerNetworkRecorded && len(value.Findings) == 0 && len(value.Notes) == 0
 }
 
 func loadStallImages(dir string, report Report) map[string][]byte {

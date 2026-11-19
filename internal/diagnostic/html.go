@@ -50,6 +50,13 @@ var reportPage = template.Must(template.New("report").Funcs(template.FuncMap{
 	"assessmentState":        stallDirectionStateLabel,
 	"caseEvidenceKnown":      stallAssessmentEvidenceKnown,
 	"assessmentFindings":     stallAssessmentExtraFindings,
+	"networkKind":            playerNetworkKindLabel,
+	"networkOutcome":         playerNetworkOutcomeLabel,
+	"networkBoundary":        playerNetworkBoundaryLabel,
+	"networkOffset":          playerVideoObservedCount,
+	"networkEnd":             playerNetworkEndLabel,
+	"networkRows":            playerNetworkVisibleRequests,
+	"networkOmitted":         playerNetworkOmittedRequests,
 }).Parse(`{{define "codecRows"}}
 {{with .VideoCodecs}}<dt>视频编码</dt><dd>{{join . " / "}}</dd>{{end}}
 {{with .AudioCodecs}}<dt>音频编码</dt><dd>{{join . " / "}}</dd>{{end}}
@@ -82,6 +89,15 @@ var reportPage = template.Must(template.New("report").Funcs(template.FuncMap{
 {{with assessmentFindings $case}}<h4>分层判断证据</h4>{{range .}}<section id="case-{{.ID}}"><h4>{{.ID}} · {{.Message}}</h4><p class="timing-note">{{.StartMS}}–{{.EndMS}} ms</p>{{with .NextCheck}}<p>{{.}}</p>{{end}}</section>{{end}}{{end}}
 {{else}}<p class="timing-note">{{if or (eq .Status "queued") (eq .Status "running")}}补查完成后展示分层排查方向。{{else}}该记录尚未生成排查分层。重新生成建议可补充排查分层，可在工作台点击“生成排查与模型建议”。{{end}}</p>{{end}}
 </section>
+{{end}}{{define "playerNetworkNotes"}}
+<p class="timing-note">本地代理记录实际播放连接的上游请求：响应头、首段响应体和读取字节均在代理侧观测。结束偏移可能包含向播放器写出数据的时间；写出完成不代表浏览器已接收、解码或可播放。</p>
+<p class="timing-note">偏移从后端采样开始计时；未完成请求的结束列标为“截至”，表示快照时刻。缺失字段显示“未观测”，0 为已观测值。</p>
+{{end}}{{define "playerNetworkRequests"}}
+{{if .}}<div class="scroll player-network-requests" role="region" tabindex="0" aria-label="HLS 实际播放请求记录，可横向滚动"><table>
+<thead><tr><th scope="col">请求</th><th scope="col">类型</th><th scope="col">资源标识</th><th scope="col">方法</th><th scope="col">开始偏移 (ms)</th><th scope="col">上游响应头偏移 (ms)</th><th scope="col">上游首段响应体偏移 (ms)</th><th scope="col">代理结束 / 截至偏移 (ms)</th><th scope="col">上游 HTTP</th><th scope="col">上游读取字节</th><th scope="col">结果</th></tr></thead>
+<tbody>{{range networkRows .}}<tr><th scope="row">#{{.Number}}</th><td>{{networkKind .Kind}}</td><td>{{.ResourceID}}</td><td>{{.Method}}</td><td>{{.StartMS}}</td><td>{{networkOffset .HeaderMS}}</td><td>{{networkOffset .FirstBodyMS}}</td><td>{{networkEnd .}}</td><td>{{if .HTTPStatus}}{{.HTTPStatus}}{{else}}未观测{{end}}</td><td>{{.Bytes}}</td><td>{{networkOutcome .Outcome}}</td></tr>{{end}}</tbody>
+</table></div>{{with networkOmitted .}}<p class="timing-note">页面仅展示前 200 条，另有 {{.}} 条已保存记录可在报告 JSON 或证据包中查看。</p>{{end}}
+{{else}}<p class="timing-note">当前记录未包含实际播放请求。</p>{{end}}
 {{end}}<!doctype html>
 <html lang="zh-CN">
 <head>
@@ -104,6 +120,11 @@ thead{color:#52657e;background:#f7f9fc}
 .timing-note{font-size:.88rem;color:#52657e}
 .request-timing th,.request-timing td{white-space:nowrap;font-size:.85rem}
 .request-timing tbody tr:nth-child(even){background:#f7f9fc}
+.player-network-requests{max-height:26rem;border:1px solid #d5deea;border-radius:.375rem}
+.player-network-requests th,.player-network-requests td{white-space:nowrap;font-size:.8rem}
+.player-network-requests thead th{position:sticky;top:0;background:#f7f9fc}
+.player-network-requests tbody tr:nth-child(even){background:#f7f9fc}
+.player-network-requests:focus-visible{outline:2px solid #164d92;outline-offset:2px}
 .http-header-block{border:1px solid #d5deea;border-radius:.375rem;margin:.5rem 0;padding:0 .7rem}
 .http-header-block summary{cursor:pointer;min-height:2.75rem;padding:.55rem 0;font-size:.85rem;font-weight:650;overflow-wrap:anywhere;box-sizing:border-box}
 .http-header-offset{margin-left:.75rem;color:#52657e;font:400 .75rem ui-monospace,monospace;white-space:nowrap}
@@ -140,7 +161,7 @@ thead{color:#52657e;background:#f7f9fc}
 .direction-state{display:inline-block;font:.75rem system-ui,sans-serif;font-weight:650;padding:.12rem .42rem;border-radius:.25rem;color:#465b73;background:#ecf1f7}
 .stall-direction[data-state="observed"] .direction-state{color:#216247;background:#e5f3eb}
 .stall-direction[data-state="candidate"] .direction-state{color:#774705;background:#fff2d7}
-@media print{body{background:#fff}article{break-inside:avoid}.request-timing th,.request-timing td{white-space:normal}.http-header-block:not([open])>:not(summary){display:block}}
+@media print{body{background:#fff}article{break-inside:avoid}.request-timing th,.request-timing td{white-space:normal}.http-header-block:not([open])>:not(summary){display:block}.player-network-requests{max-height:none}}
 </style>
 </head>
 <body><main>
@@ -245,6 +266,14 @@ thead{color:#52657e;background:#f7f9fc}
 </table></div>{{end}}
 </article>
 {{end}}
+{{with .Report.PlayerNetwork}}
+<article id="player-network-report"><h2>HLS 实际播放请求 · 代理观测</h2>
+{{template "playerNetworkNotes" .}}
+<dl><dt>观测边界</dt><dd>{{networkBoundary .Boundary}}</dd><dt>记录状态</dt><dd>{{if .Complete}}已结束{{else}}部分请求快照{{end}}</dd><dt>已保存请求</dt><dd>{{len .Requests}}</dd><dt>上限外丢弃请求</dt><dd>{{.DroppedRequests}}</dd></dl>
+{{if .DroppedRequests}}<p class="timing-note">采集达到上限，另有 {{.DroppedRequests}} 条请求未写入本记录，不能按完整请求历史分析。</p>{{end}}
+{{template "playerNetworkRequests" .Requests}}
+</article>
+{{else}}{{if and .Report.Player (eq .Report.Manifest.Protocol "hls")}}<article id="player-network-report"><h2>HLS 实际播放请求 · 代理观测</h2>{{template "playerNetworkNotes" .}}<p class="timing-note">该记录未采集实际播放请求，重新采样可补充代理侧请求证据。</p></article>{{end}}{{end}}
 {{if .Investigations}}
 <h2>卡顿证据补查</h2>
 <p class="timing-note">时间区间以采样开始为基准。片段与截图来自采样源流，用于复核媒体内容；原拉流等待和播放器停顿保留在时序证据中。</p>
@@ -279,8 +308,9 @@ thead{color:#52657e;background:#f7f9fc}
 {{if .Correlation.Keyframes}}<div class="scroll"><table><thead><tr><th scope="col">到达偏移 (ms)</th><th scope="col">DTS (ms)</th><th scope="col">PTS (ms)</th><th scope="col">编码</th><th scope="col">原始条目 / 偏移</th></tr></thead>
 <tbody>{{range .Correlation.Keyframes}}<tr><td>{{.ArrivalMS}}</td><td>{{.DTS}}</td><td>{{.PTS}}</td><td>{{.Codec}}</td><td>{{if .Artifact}}{{.Artifact}}{{else}}{{.Offset}}{{end}}</td></tr>{{end}}</tbody></table></div>
 {{else}}<p class="timing-note">当前证据未识别到可关联的关键帧，不能据此判断关键帧是否缺失。</p>{{end}}
-{{if .Correlation.Requests}}<h3>关联 HTTP 请求</h3><div class="scroll"><table><thead><tr><th scope="col">请求</th><th scope="col">对象</th><th scope="col">HTTP</th><th scope="col">开始偏移 (ms)</th><th scope="col">响应头偏移 (ms)</th><th scope="col">TTFB (ms)</th></tr></thead>
+{{if .Correlation.Requests}}<h3>关联采样 HTTP 请求</h3><div class="scroll"><table><thead><tr><th scope="col">请求</th><th scope="col">对象</th><th scope="col">HTTP</th><th scope="col">开始偏移 (ms)</th><th scope="col">响应头偏移 (ms)</th><th scope="col">TTFB (ms)</th></tr></thead>
 <tbody>{{range .Correlation.Requests}}<tr><td>#{{.Number}}</td><td>{{requestKind .Kind}}</td><td>{{.HTTPStatus}}</td><td>{{.StartMS}}</td><td>{{.EndMS}}</td><td>{{with .TTFBMS}}{{.}}{{else}}—{{end}}</td></tr>{{end}}</tbody></table></div>{{end}}
+{{if or .Correlation.PlayerRequests (eq $.Report.Manifest.Protocol "hls")}}<section class="stall-player-requests"><h3>关联实际播放请求</h3>{{template "playerNetworkNotes" .}}{{template "playerNetworkRequests" .Correlation.PlayerRequests}}</section>{{end}}
 <h3>关联证据</h3>
 {{range .Correlation.Findings}}<section id="case-{{.ID}}"><h4>{{.ID}} · {{.Message}}</h4><p class="timing-note">{{.StartMS}}–{{.EndMS}} ms</p>{{with .NextCheck}}<p>{{.}}</p>{{end}}
 {{if .Evidence}}<div class="scroll"><table><thead><tr><th scope="col">对象</th><th scope="col">到达偏移 (ms)</th><th scope="col">DTS (ms)</th><th scope="col">PTS (ms)</th><th scope="col">原始条目 / 偏移</th></tr></thead><tbody>{{range .Evidence}}<tr><td>{{.Kind}}</td><td>{{.ArrivalMS}}</td><td>{{.DTS}}</td><td>{{.PTS}}</td><td>{{if .Artifact}}{{.Artifact}}{{else}}{{.Offset}}{{end}}</td></tr>{{end}}</tbody></table></div>{{end}}</section>{{end}}
@@ -816,6 +846,74 @@ func investigationHTMLItems(items []StallInvestigation, backURL string, assets m
 		result = append(result, view)
 	}
 	return result
+}
+
+const playerNetworkHTMLRowLimit = 200
+
+func playerNetworkKindLabel(kind string) string {
+	switch kind {
+	case "playlist":
+		return "播放列表"
+	case "media":
+		return "媒体分片"
+	case "init":
+		return "初始化段"
+	case "key":
+		return "密钥"
+	case "auxiliary":
+		return "辅助资源"
+	case "":
+		return "未标注"
+	default:
+		return kind
+	}
+}
+
+func playerNetworkOutcomeLabel(outcome string) string {
+	switch outcome {
+	case "complete":
+		return "完成"
+	case "http_error":
+		return "上游 HTTP 错误"
+	case "transport_error":
+		return "传输错误"
+	case "canceled":
+		return "已取消"
+	case "timeout":
+		return "超时"
+	case "incomplete":
+		return "未完成"
+	case "":
+		return "未标注"
+	default:
+		return outcome
+	}
+}
+
+func playerNetworkBoundaryLabel(boundary string) string {
+	if boundary == "upstream_proxy" {
+		return "本地代理上游侧"
+	}
+	if boundary == "" {
+		return "未标注"
+	}
+	return boundary
+}
+
+func playerNetworkEndLabel(request PlayerNetworkRequest) string {
+	label := strconv.FormatInt(request.EndMS, 10)
+	if request.Outcome == "incomplete" {
+		label += "（截至）"
+	}
+	return label
+}
+
+func playerNetworkVisibleRequests(requests []PlayerNetworkRequest) []PlayerNetworkRequest {
+	return requests[:min(len(requests), playerNetworkHTMLRowLimit)]
+}
+
+func playerNetworkOmittedRequests(requests []PlayerNetworkRequest) int {
+	return max(0, len(requests)-playerNetworkHTMLRowLimit)
 }
 
 func stallDirectionStateLabel(status string) string {

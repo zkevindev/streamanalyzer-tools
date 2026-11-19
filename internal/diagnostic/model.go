@@ -2,12 +2,14 @@ package diagnostic
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 )
@@ -59,6 +61,7 @@ const explanationPrompt = "你是流媒体排障助手。请用中文，仅返�
 	"卡顿排除启动等待、暂停、跳转和后台时段。source 为 independent_pull 时播放器与采样使用独立连接，不能把两条连接的时间相关性当作根因。" +
 	"stall_investigations 为选定卡顿的补查时序证据。截图和片段像素未提供给你，不得声称已看见画面、黑屏或解码结果。请引用真实证据 ID，明确观测和待验证假设。" +
 	"assessment 为基于观测的分层排查方向，不是根因判定。请遵循其限制，将候选方向写成待验证假设。" +
+	"player_network 和 player_requests 是实际 HLS 播放代理的请求证据，区别于采样连接 requests；首正文和字节数为代理上游观测，不能当作浏览器已接收、追加或解码。" +
 	"没有足够证据时，给出简洁摘要并返回空 hypotheses。"
 
 type modelClient struct {
@@ -200,22 +203,49 @@ type modelHTTPRequest struct {
 }
 
 type modelStallInvestigation struct {
-	ID                  string               `json:"id"`
-	Stall               PlayerStall          `json:"stall"`
-	Source              string               `json:"source"`
-	WindowStartMS       int64                `json:"window_start_ms"`
-	WindowEndMS         int64                `json:"window_end_ms"`
-	Gaps                []ReceptionGap       `json:"gaps"`
-	BufferSamples       []PlayerBufferSample `json:"buffer_samples"`
-	Keyframes           []Event              `json:"keyframes"`
-	Requests            []modelHTTPRequest   `json:"requests,omitempty"`
-	Notes               []string             `json:"notes"`
-	MediaStatus         string               `json:"media_status"`
-	MediaAlignment      string               `json:"media_alignment,omitempty"`
-	ClipCount           int                  `json:"clip_count"`
-	ScreenshotCount     int                  `json:"screenshot_count"`
-	ImagePixelsProvided bool                 `json:"image_pixels_provided"`
-	Assessment          *StallAssessment     `json:"assessment,omitempty"`
+	ID                    string                 `json:"id"`
+	Stall                 PlayerStall            `json:"stall"`
+	Source                string                 `json:"source"`
+	WindowStartMS         int64                  `json:"window_start_ms"`
+	WindowEndMS           int64                  `json:"window_end_ms"`
+	Gaps                  []ReceptionGap         `json:"gaps"`
+	BufferSamples         []PlayerBufferSample   `json:"buffer_samples"`
+	Keyframes             []Event                `json:"keyframes"`
+	Requests              []modelHTTPRequest     `json:"requests,omitempty"`
+	PlayerRequests        []PlayerNetworkRequest `json:"player_requests,omitempty"`
+	PlayerNetworkRecorded bool                   `json:"player_network_recorded,omitempty"`
+	Notes                 []string               `json:"notes"`
+	MediaStatus           string                 `json:"media_status"`
+	MediaAlignment        string                 `json:"media_alignment,omitempty"`
+	ClipCount             int                    `json:"clip_count"`
+	ScreenshotCount       int                    `json:"screenshot_count"`
+	ImagePixelsProvided   bool                   `json:"image_pixels_provided"`
+	Assessment            *StallAssessment       `json:"assessment,omitempty"`
+}
+
+type modelPlayerNetwork struct {
+	Boundary        string                 `json:"boundary"`
+	Complete        bool                   `json:"complete"`
+	DroppedRequests int                    `json:"dropped_requests"`
+	OmittedRequests int                    `json:"omitted_requests"`
+	Requests        []PlayerNetworkRequest `json:"requests"`
+}
+
+func modelPlayerRequests(network *PlayerNetworkReport) *modelPlayerNetwork {
+	if network == nil {
+		return nil
+	}
+	const maximum = 64
+	requests := append([]PlayerNetworkRequest(nil), network.Requests...)
+	if len(requests) > maximum {
+		slices.SortStableFunc(requests, func(a, b PlayerNetworkRequest) int {
+			return cmp.Compare(playerRequestPriority(b), playerRequestPriority(a))
+		})
+		requests = requests[:maximum]
+		slices.SortStableFunc(requests, func(a, b PlayerNetworkRequest) int { return cmp.Compare(a.Number, b.Number) })
+	}
+	return &modelPlayerNetwork{Boundary: network.Boundary, Complete: network.Complete, DroppedRequests: network.DroppedRequests,
+		OmittedRequests: len(network.Requests) - len(requests), Requests: requests}
 }
 
 func modelRequestTimings(requests []HTTPRequestTiming) []modelHTTPRequest {
@@ -250,6 +280,7 @@ func modelInput(report Report) ([]byte, error) {
 		FailureCode         string                    `json:"failure_code,omitempty"`
 		Findings            []modelFinding            `json:"findings"`
 		Player              *modelPlayer              `json:"player,omitempty"`
+		PlayerNetwork       *modelPlayerNetwork       `json:"player_network,omitempty"`
 		StallInvestigations []modelStallInvestigation `json:"stall_investigations,omitempty"`
 	}{
 		Protocol: report.Manifest.Protocol, ElapsedMS: obs.ElapsedMS, HTTPStatus: obs.HTTPStatus, TTFBMS: obs.TTFBMS,
@@ -258,6 +289,7 @@ func modelInput(report Report) ([]byte, error) {
 		Findings: []modelFinding{},
 	}
 	input.Requests = modelRequestTimings(report.Requests)
+	input.PlayerNetwork = modelPlayerRequests(report.PlayerNetwork)
 	input.RequestsTruncated = report.RequestsTruncated
 	if player := report.Player; player != nil {
 		input.Player = &modelPlayer{
@@ -277,7 +309,8 @@ func modelInput(report Report) ([]byte, error) {
 			WindowStartMS: item.Correlation.WindowStartMS, WindowEndMS: item.Correlation.WindowEndMS,
 			Gaps: item.Correlation.Gaps, BufferSamples: item.Correlation.BufferSamples, Keyframes: item.Correlation.Keyframes,
 			Requests: modelRequestTimings(item.Correlation.Requests), Notes: item.Correlation.Notes,
-			MediaStatus: item.Media.Status, MediaAlignment: item.Media.Alignment, Assessment: item.Assessment}
+			MediaStatus: item.Media.Status, MediaAlignment: item.Media.Alignment, Assessment: item.Assessment,
+			PlayerRequests: item.Correlation.PlayerRequests, PlayerNetworkRecorded: item.Correlation.PlayerNetworkRecorded}
 		for _, asset := range item.Media.Assets {
 			if asset.Kind == "clip" {
 				entry.ClipCount++

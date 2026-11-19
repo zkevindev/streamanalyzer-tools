@@ -42,6 +42,11 @@ func correlateStall(dir string, report Report, id string, stallIndex int) (Stall
 	if result.WindowEndMS < result.WindowStartMS {
 		result.WindowEndMS = result.WindowStartMS
 	}
+	if report.PlayerNetwork != nil {
+		// Playback proxy observations can continue after the independent
+		// sampler ends. Do not clip this evidence to the sampling duration.
+		result.WindowEndMS = max(result.WindowEndMS, min(max(0, report.Player.StartOffsetMS+report.Player.ElapsedMS), max(0, stall.EndMS+3000)))
+	}
 	if stall.StartMS > report.Manifest.Observation.ElapsedMS || stall.EndMS < 0 {
 		result.Notes = append(result.Notes, "所选播放器卡顿位于后端采样时段之外；本次缺少同期收流证据，仅可对照已保存的相邻媒体。")
 	}
@@ -85,6 +90,19 @@ func correlateStall(dir string, report Report, id string, stallIndex int) (Stall
 		}
 	} else {
 		result.Notes = append(result.Notes, "所选时间窗口没有播放器缓冲样本，无法补推缓冲变化。")
+	}
+
+	correlatePlayerRequests(&result, report, stall)
+	for _, request := range result.PlayerRequests {
+		if code := playerRequestFindingCode(request); code != "" {
+			label := "处理耗时较长"
+			if code == "stall_player_request_failed" {
+				label = "失败"
+			}
+			number := request.Number
+			add(code, "warn", fmt.Sprintf("实际 HLS 播放代理请求 #%d（%s）%s：状态 %d，耗时 %d ms，上游读取 %d bytes", request.Number, request.Kind, label, request.HTTPStatus, request.EndMS-request.StartMS, request.Bytes), request.StartMS, request.EndMS,
+				Event{Kind: "player_request", Artifact: "player-network.json", ArrivalMS: request.StartMS, DurationMS: request.EndMS - request.StartMS, Sequence: &number, HTTPStatus: request.HTTPStatus})
+		}
 	}
 
 	events, notes, err := stallCaptureEvents(dir, report.Manifest)

@@ -14,7 +14,7 @@ const (
 	maxStreamBytes             = 128 << 20
 	maxTimeline                = 32 << 20
 	maxTags                    = 100_000
-	MaxBundleBytes             = maxStreamBytes + maxTimeline + 160<<20
+	MaxBundleBytes             = maxStreamBytes + maxTimeline + 160<<20 + maxPlayerNetworkBytes
 )
 
 const (
@@ -133,6 +133,7 @@ type Manifest struct {
 	Timeline      Artifact    `json:"timeline"`
 	Player        *Artifact   `json:"player,omitempty"`
 	StallEvidence *Artifact   `json:"stall_evidence,omitempty"`
+	PlayerNetwork *Artifact   `json:"player_network,omitempty"`
 }
 
 // Event locates protocol evidence in the dump. RTMP and FLV events use byte
@@ -193,6 +194,7 @@ type Report struct {
 	MPEGTS              *MPEGTSMetrics       `json:"mpegts,omitempty"`
 	Findings            []Finding            `json:"findings"`
 	Player              *PlayerReport        `json:"player,omitempty"`
+	PlayerNetwork       *PlayerNetworkReport `json:"player_network,omitempty"`
 	StallInvestigations []StallInvestigation `json:"stall_investigations,omitempty"`
 }
 

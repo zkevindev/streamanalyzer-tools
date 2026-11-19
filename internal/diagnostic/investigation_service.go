@@ -233,6 +233,9 @@ func (s *Service) explainStall(ctx context.Context, runID, caseID string) (Expla
 		scoped.Findings = append(scoped.Findings, item.Assessment.Findings...)
 	}
 	scoped.StallInvestigations = []StallInvestigation{*item}
+	// The selected case already includes its actual playback requests. Keep
+	// unrelated requests from the rest of the run out of a scoped model call.
+	scoped.PlayerNetwork = nil
 	player := *scoped.Player
 	player.Stalls = []PlayerStall{item.Stall}
 	player.StallCount = 1
@@ -358,7 +361,7 @@ func persistStallReport(dir string, report *Report) error {
 		return err
 	}
 	report.Manifest.StallEvidence = &artifact
-	report.Manifest.Version = investigationSchemaVersion
+	report.Manifest.Version = max(report.Manifest.Version, investigationSchemaVersion)
 	mergeStallFindings(report)
 	if err := os.Remove(filepath.Join(dir, explanationName)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err

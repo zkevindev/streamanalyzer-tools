@@ -126,6 +126,13 @@ button:disabled { opacity: .55; cursor: wait; }
 #request-table .scroll { max-height: 24rem; border: 1px solid var(--border); border-radius: .375rem; }
 #request-table thead th { position: sticky; top: 0; background: var(--surface-inset); }
 #request-table tbody tr:nth-child(even) { background: var(--surface-inset); }
+.player-network-requests .scroll { max-height: 26rem; border: 1px solid var(--border); border-radius: .375rem; }
+.player-network-requests th, .player-network-requests td { white-space: nowrap; font-size: .78rem; }
+.player-network-requests thead th { position: sticky; top: 0; background: var(--surface-inset); }
+.player-network-requests tbody tr:nth-child(even) { background: var(--surface-inset); }
+.player-network-requests .scroll:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.player-network-requests p, #player-network-note { overflow-wrap: anywhere; }
+.stall-player-requests { margin-block: .8rem; }
 #http-headers { margin-top: 1rem; }
 .http-header-block { border: 1px solid var(--border); border-radius: .375rem; padding: 0 .7rem; margin: .5rem 0; }
 .http-header-block summary { cursor: pointer; min-height: 2.75rem; padding-block: .55rem; font-size: .825rem; font-weight: 650; overflow-wrap: anywhere; }

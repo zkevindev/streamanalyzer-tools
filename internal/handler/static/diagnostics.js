@@ -623,6 +623,60 @@ function renderPlayerReport(player, elapsed) {
     renderStallSelection(stalls);
 }
 
+const playerNetworkRowLimit = 200;
+const playerNetworkKinds = { playlist: '播放列表', media: '媒体分片', init: '初始化段', key: '密钥', auxiliary: '辅助资源' };
+const playerNetworkOutcomes = { complete: '完成', http_error: '上游 HTTP 错误', transport_error: '传输错误', canceled: '已取消', timeout: '超时', incomplete: '未完成' };
+const playerNetworkOffset = (value) => value == null ? '未观测' : String(value);
+const playerNetworkBoundaryNote = '本地代理记录实际播放连接的上游请求：响应头、首段响应体和读取字节均在代理侧观测。结束偏移可能包含向播放器写出数据的时间；写出完成不代表浏览器已接收、解码或可播放。';
+const playerNetworkTimingNote = '偏移从后端采样开始计时；未完成请求的结束列标为“截至”，表示快照时刻。缺失字段显示“未观测”，0 为已观测值。';
+
+function renderPlayerNetworkRequests(requests) {
+    const block = element('div', '', 'player-network-requests');
+    if (!requests?.length) {
+        block.append(element('p', '当前记录未包含实际播放请求。', 'timing-note muted'));
+        return block;
+    }
+    const shown = requests.slice(0, playerNetworkRowLimit);
+    const table = renderTable(['请求', '类型', '资源标识', '方法', '开始偏移 (ms)', '上游响应头偏移 (ms)', '上游首段响应体偏移 (ms)', '代理结束 / 截至偏移 (ms)', '上游 HTTP', '上游读取字节', '结果'], shown.map((request) => [
+        `#${request.number}`, playerNetworkKinds[request.kind] || request.kind || '未标注', request.resource_id || '未标注', request.method || '未标注',
+        playerNetworkOffset(request.start_ms), playerNetworkOffset(request.header_ms), playerNetworkOffset(request.first_body_ms),
+        `${playerNetworkOffset(request.end_ms)}${request.outcome === 'incomplete' ? '（截至）' : ''}`,
+        request.http_status > 0 ? String(request.http_status) : '未观测', playerNetworkOffset(request.bytes), playerNetworkOutcomes[request.outcome] || request.outcome || '未标注',
+    ]));
+    table.tabIndex = 0;
+    table.setAttribute('role', 'region');
+    table.setAttribute('aria-label', 'HLS 实际播放请求记录，可横向滚动');
+    block.append(table);
+    if (requests.length > shown.length) block.append(element('p', `页面仅展示前 ${shown.length} 条，另有 ${requests.length - shown.length} 条已保存记录可在报告 JSON 或证据包中查看。`, 'timing-note muted player-network-omitted'));
+    return block;
+}
+
+function renderPlayerNetwork(report) {
+    const network = report.player_network;
+    const visible = !!network || (report.manifest.protocol === 'hls' && !!report.player);
+    node('player-network-report').hidden = !visible;
+    if (!visible) return;
+    node('player-network-note').textContent = playerNetworkBoundaryNote;
+    node('player-network-timing-note').textContent = playerNetworkTimingNote;
+    if (!network) {
+        renderMetrics('player-network-metrics', []);
+        node('player-network-table').replaceChildren(element('p', '该记录未采集实际播放请求，重新采样可补充代理侧请求证据。', 'timing-note muted'));
+        node('player-network-dropped').textContent = '';
+        node('player-network-dropped').hidden = true;
+        return;
+    }
+    renderMetrics('player-network-metrics', [
+        ['观测边界', network.boundary === 'upstream_proxy' ? '本地代理上游侧' : network.boundary || '未标注'],
+        ['记录状态', network.complete ? '已结束' : '部分请求快照'],
+        ['已保存请求', (network.requests || []).length],
+        ['上限外丢弃请求', network.dropped_requests ?? '未观测'],
+    ]);
+    node('player-network-table').replaceChildren(renderPlayerNetworkRequests(network.requests || []));
+    const dropped = network.dropped_requests || 0;
+    node('player-network-dropped').hidden = dropped <= 0;
+    node('player-network-dropped').textContent = dropped > 0 ? `采集达到上限，另有 ${dropped} 条请求未写入本记录，不能按完整请求历史分析。` : '';
+}
+
 function renderStallSelection(stalls) {
     if (!stalls.length) {
         node('player-stalls').replaceChildren();
@@ -829,7 +883,12 @@ function renderInvestigation(item) {
     card.append(element('h5', '关键帧记录'));
     if (c.keyframes?.length) card.append(renderEvidence(currentReport.manifest.protocol, c.keyframes));
     else card.append(element('p', '当前证据未识别到可关联的关键帧，不能据此判断关键帧是否缺失。', 'timing-note muted'));
-    if (c.requests?.length) card.append(element('h5', '关联 HTTP 请求'), renderTable(['请求', '对象', 'HTTP', '开始偏移', '响应头偏移', 'TTFB'], c.requests.map((request) => [`#${request.number}`, requestKinds[request.kind] || request.kind || '媒体请求', request.http_status || '—', time(request.start_ms), time(request.end_ms), time(request.ttfb_ms)])));
+    if (c.requests?.length) card.append(element('h5', '关联采样 HTTP 请求'), renderTable(['请求', '对象', 'HTTP', '开始偏移', '响应头偏移', 'TTFB'], c.requests.map((request) => [`#${request.number}`, requestKinds[request.kind] || request.kind || '媒体请求', request.http_status || '—', time(request.start_ms), time(request.end_ms), time(request.ttfb_ms)])));
+    if (c.player_requests?.length || currentReport.manifest.protocol === 'hls') {
+        const requests = element('section', '', 'stall-player-requests');
+        requests.append(element('h5', '关联实际播放请求'), element('p', playerNetworkBoundaryNote, 'timing-note muted'), element('p', playerNetworkTimingNote, 'timing-note muted'), renderPlayerNetworkRequests(c.player_requests || []));
+        card.append(requests);
+    }
     card.append(element('h5', '关联证据'));
     for (const finding of c.findings || []) {
         const evidence = element('details', '', 'finding');
@@ -925,6 +984,7 @@ function renderReport(report) {
     renderMetrics('metrics', values);
     renderSamplingTiming(report, requests);
     renderPlayerReport(report.player, observed.elapsed_ms);
+    renderPlayerNetwork(report);
     renderStallInvestigations(report);
     renderTransport(protocol, report.mpegts);
     renderTrace(report.findings, observed.elapsed_ms);

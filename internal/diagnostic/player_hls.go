@@ -24,25 +24,28 @@ const (
 type playerHLSResource struct {
 	target   *url.URL
 	playlist bool
+	kind     string
 }
 
 type playerHLS struct {
-	client *http.Client
-	fetch  chan struct{}
-	mu     sync.Mutex
-	byID   map[string]playerHLSResource
-	byURL  map[string]string
-	bytes  int
+	client  *http.Client
+	fetch   chan struct{}
+	mu      sync.Mutex
+	byID    map[string]playerHLSResource
+	byURL   map[string]string
+	bytes   int
+	network *playerNetwork
 }
 
 func newPlayerHLS(target *url.URL, client *http.Client) *playerHLS {
-	return &playerHLS{client: client, fetch: make(chan struct{}, 8),
-		byID:  map[string]playerHLSResource{"index.m3u8": {target: target, playlist: true}},
+	return &playerHLS{client: client, fetch: make(chan struct{}, 8), network: newPlayerNetwork(),
+		byID:  map[string]playerHLSResource{"index.m3u8": {target: target, playlist: true, kind: "playlist"}},
 		byURL: map[string]string{"p:" + target.String(): "index.m3u8"}, bytes: len(target.String()),
 	}
 }
 
 func (h *playerHLS) close() {
+	h.network.stop()
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	h.byID, h.byURL = nil, nil
@@ -64,6 +67,10 @@ func (p *PlayerSession) ServeHLS(w http.ResponseWriter, r *http.Request, resourc
 }
 
 func (h *playerHLS) serve(w http.ResponseWriter, r *http.Request, resource string) {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		w.WriteHeader(http.StatusMethodNotAllowed)
+		return
+	}
 	h.mu.Lock()
 	entry, ok := h.byID[resource]
 	h.mu.Unlock()
@@ -71,6 +78,9 @@ func (h *playerHLS) serve(w http.ResponseWriter, r *http.Request, resource strin
 		http.NotFound(w, r)
 		return
 	}
+	evidence := h.network.begin(resource, entry.kind, r.Method)
+	outcome := "incomplete"
+	defer func() { h.network.finish(evidence, outcome) }()
 	select {
 	case h.fetch <- struct{}{}:
 		defer func() { <-h.fetch }()
@@ -93,11 +103,18 @@ func (h *playerHLS) serve(w http.ResponseWriter, r *http.Request, resource strin
 	}
 	resp, err := h.client.Do(upstream)
 	if err != nil {
+		if resp != nil {
+			h.network.header(evidence, resp.StatusCode)
+		}
+		outcome = playerNetworkOutcome(err, r.Context().Err())
 		hlsPlaybackError(w)
 		return
 	}
 	defer resp.Body.Close()
+	h.network.header(evidence, resp.StatusCode)
+	observed := &playerNetworkReader{ReadCloser: resp.Body, network: h.network, entry: evidence}
 	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusPartialContent {
+		outcome = "http_error"
 		if resp.StatusCode >= 400 && resp.StatusCode <= 599 {
 			http.Error(w, "HLS 源返回错误状态", resp.StatusCode)
 		} else {
@@ -107,7 +124,7 @@ func (h *playerHLS) serve(w http.ResponseWriter, r *http.Request, resource strin
 	}
 	mediaType, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 	isPlaylist := entry.playlist || strings.Contains(mediaType, "mpegurl")
-	body := bufio.NewReader(resp.Body)
+	body := bufio.NewReader(observed)
 	if !isPlaylist && r.Method != http.MethodHead {
 		prefix, _ := body.Peek(10)
 		isPlaylist = bytes.HasPrefix(bytes.TrimPrefix(prefix, []byte("\xef\xbb\xbf")), []byte("#EXTM3U"))
@@ -120,10 +137,14 @@ func (h *playerHLS) serve(w http.ResponseWriter, r *http.Request, resource strin
 		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 		if r.Method == http.MethodHead {
 			w.WriteHeader(http.StatusOK)
+			outcome = "complete"
 			return
 		}
 		data, err := io.ReadAll(io.LimitReader(body, hlsPlaylistLimit+1))
 		if err != nil || len(data) > hlsPlaylistLimit {
+			if err != nil {
+				outcome = playerNetworkOutcome(err, r.Context().Err())
+			}
 			hlsPlaybackError(w)
 			return
 		}
@@ -136,7 +157,11 @@ func (h *playerHLS) serve(w http.ResponseWriter, r *http.Request, resource strin
 			hlsPlaybackError(w)
 			return
 		}
-		_, _ = io.WriteString(w, rewritten)
+		if _, err := io.WriteString(w, rewritten); err != nil {
+			outcome = "canceled"
+		} else {
+			outcome = "complete"
+		}
 		return
 	}
 	if resp.ContentLength > hlsSegmentLimit {
@@ -152,8 +177,20 @@ func (h *playerHLS) serve(w http.ResponseWriter, r *http.Request, resource strin
 	}
 	w.WriteHeader(resp.StatusCode)
 	if r.Method != http.MethodHead {
-		_, _ = io.Copy(w, io.LimitReader(body, hlsSegmentLimit))
+		count, err := io.Copy(w, io.LimitReader(body, hlsSegmentLimit))
+		if err != nil {
+			if observed.err != nil {
+				outcome = playerNetworkOutcome(observed.err, r.Context().Err())
+			} else {
+				outcome = "canceled"
+			}
+			return
+		}
+		if count == hlsSegmentLimit && resp.ContentLength != count && !observed.eof {
+			return
+		}
 	}
+	outcome = "complete"
 }
 
 func hlsPlaybackError(w http.ResponseWriter) {
@@ -206,17 +243,18 @@ func (h *playerHLS) rewrite(data []byte, base *url.URL, token string) (string, e
 	if strings.Contains(text, "{$") {
 		return "", errPlayerPlaylist
 	}
-	localURL := func(ref string, playlist bool) (string, error) {
+	localKind := func(ref string, playlist bool, kind string) (string, error) {
 		target := resolveHLS(base, ref)
 		if target == nil {
 			return "", errPlayerPlaylist
 		}
-		id := h.remember(target, playlist)
+		id := h.rememberKind(target, playlist, kind)
 		if id == "" {
 			return "", errPlayerPlaylist
 		}
 		return id + "?token=" + url.QueryEscape(token), nil
 	}
+	localURL := func(ref string, playlist bool) (string, error) { return localKind(ref, playlist, "media") }
 	var out strings.Builder
 	playlistURI := false
 	for line := range strings.SplitSeq(text, "\n") {
@@ -235,7 +273,15 @@ func (h *playerHLS) rewrite(data []byte, base *url.URL, token string) (string, e
 			case "#EXT-X-MEDIA", "#EXT-X-I-FRAME-STREAM-INF", "#EXT-X-IMAGE-STREAM-INF", "#EXT-X-RENDITION-REPORT":
 				attrs, err = rewritePlayerURI(attrs, func(ref string) (string, error) { return localURL(ref, true) })
 			case "#EXT-X-MAP", "#EXT-X-KEY", "#EXT-X-SESSION-KEY", "#EXT-X-PART", "#EXT-X-PRELOAD-HINT", "#EXT-X-SESSION-DATA":
-				attrs, err = rewritePlayerURI(attrs, func(ref string) (string, error) { return localURL(ref, false) })
+				kind := "media"
+				if tag == "#EXT-X-MAP" {
+					kind = "init"
+				} else if tag == "#EXT-X-KEY" || tag == "#EXT-X-SESSION-KEY" {
+					kind = "key"
+				} else if tag == "#EXT-X-SESSION-DATA" {
+					kind = "auxiliary"
+				}
+				attrs, err = rewritePlayerURI(attrs, func(ref string) (string, error) { return localKind(ref, false, kind) })
 			}
 			line = tag + ":" + attrs
 		}
@@ -287,10 +333,15 @@ func rewritePlayerURI(attrs string, localURL func(string) (string, error)) (stri
 }
 
 func (h *playerHLS) remember(target *url.URL, playlist bool) string {
-	key := "a:" + target.String()
+	return h.rememberKind(target, playlist, "media")
+}
+
+func (h *playerHLS) rememberKind(target *url.URL, playlist bool, kind string) string {
+	key := "a:" + kind + ":" + target.String()
 	ext := strings.ToLower(path.Ext(target.Path))
 	if playlist || ext == ".m3u8" || ext == ".m3u" {
 		playlist, ext, key = true, ".m3u8", "p:"+target.String()
+		kind = "playlist"
 	}
 	switch ext {
 	case ".m3u8", ".ts", ".m4s", ".mp4", ".aac", ".mp3", ".vtt":
@@ -306,7 +357,7 @@ func (h *playerHLS) remember(target *url.URL, playlist bool) string {
 		return ""
 	}
 	id := "r" + strconv.Itoa(len(h.byURL)) + ext
-	h.byID[id], h.byURL[key] = playerHLSResource{target: target, playlist: playlist}, id
+	h.byID[id], h.byURL[key] = playerHLSResource{target: target, playlist: playlist, kind: kind}, id
 	h.bytes += len(key)
 	return id
 }
