@@ -163,6 +163,7 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		return nil
 	}
 	s.close.Do(func() {
+		s.diagnostics.StopFLVReplays()
 		s.closeErr = s.httpServer.Shutdown(ctx)
 		s.simulators.Close()
 		_ = s.diagnostics.Close()

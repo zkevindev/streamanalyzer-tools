@@ -3,6 +3,7 @@ package diagnostic
 import (
 	"archive/zip"
 	"bufio"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -398,6 +399,10 @@ func extractArtifact(dir string, entry *zip.File, expected Artifact) error {
 }
 
 func replay(dir string, manifest Manifest) ([]Event, error) {
+	return readFLVReplayTimeline(context.Background(), dir, manifest)
+}
+
+func readFLVReplayTimeline(ctx context.Context, dir string, manifest Manifest) ([]Event, error) {
 	stream, err := os.Open(filepath.Join(dir, streamName))
 	if err != nil {
 		return nil, err
@@ -417,6 +422,9 @@ func replay(dir string, manifest Manifest) ([]Event, error) {
 	var events []Event
 	lastArrival := int64(0)
 	for parseErr == nil && len(events) < maxTags {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
 		var event Event
 		event, parseErr = parser.next()
 		if parseErr != nil {

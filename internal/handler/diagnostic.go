@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -134,6 +135,11 @@ func RegisterDiagnosticRoutes(r *gin.Engine, service *diagnostic.Service) {
 	})
 	api.GET("/runs/:id/dump", diagnosticDump(service, ""))
 	api.GET("/runs/:id/stream.flv", diagnosticDump(service, "stream.flv"))
+	api.GET("/runs/:id/replay.flv", func(c *gin.Context) {
+		if err := service.ServeFLVReplay(c.Writer, c.Request, c.Param("id")); err != nil && !errors.Is(err, context.Canceled) && c.Request.Context().Err() == nil {
+			diagnosticError(c, err)
+		}
+	})
 	api.GET("/runs/:id/evidence.zip", func(c *gin.Context) {
 		c.Header("Content-Type", "application/zip")
 		c.Header("Content-Disposition", `attachment; filename="stream-evidence.zip"`)
