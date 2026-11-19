@@ -54,12 +54,21 @@ func (v *videoTrack) playAudio(ctx context.Context) {
 	}
 	ticker := time.NewTicker(20 * time.Millisecond)
 	defer ticker.Stop()
+	var clock senderClock
 	packet := rtp.Packet{Header: rtp.Header{Version: 2, PayloadType: 8, SSRC: rand.Uint32(), SequenceNumber: uint16(rand.Uint32()), Timestamp: rand.Uint32()}}
 	for i := 0; ; i = (i + 1) % 5 {
 		packet.Payload = tone[i*frame : (i+1)*frame]
 		// WritePacketRTP retains the serialized bytes, not this packet.
 		if err := v.stream.WritePacketRTP(v.audio, &packet); err != nil {
 			return
+		}
+		if v.clockStep != 0 {
+			now := time.Now()
+			var offset time.Duration
+			if armed := v.clockArmed.Load(); armed != 0 && now.UnixNano() >= armed {
+				offset = v.clockStep
+			}
+			clock.send(v, v.audio, &packet, 8000, now, offset, 1, frame)
 		}
 		packet.Timestamp += frame
 		packet.SequenceNumber++

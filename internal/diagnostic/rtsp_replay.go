@@ -263,6 +263,8 @@ func readRTSPWire(dir string, manifest Manifest, visit func(Event), export *rtsp
 					}
 				} else {
 					metrics.RTCPPackets += len(parsed)
+					observeRTSPClocks(metrics, states, channel.MediaID, parsed, Event{Artifact: rtspWireName, Offset: offset,
+						Size: len(value.Payload), ArrivalMS: at, Kind: "rtcp_sender_report"})
 				}
 				continue
 			}

@@ -153,6 +153,11 @@
                         <div id="rtsp-declared-tracks"></div>
                         <h4>实际 RTP 接收</h4>
                         <div id="rtsp-received-tracks"></div>
+                        <details id="rtsp-clocks" class="report-details" hidden>
+                            <summary>RTCP 发送端时钟</summary>
+                            <p>偏移以各轨道的发送报告为基准，接收间隔偏差单独统计。</p>
+                            <div id="rtsp-clock-table"></div>
+                        </details>
                         <details class="report-details">
                             <summary>RTP 序号与时间戳统计</summary>
                             <p id="rtsp-sequence-note" class="timing-note muted"></p>

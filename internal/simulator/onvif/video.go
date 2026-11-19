@@ -18,14 +18,16 @@ import (
 )
 
 type videoTrack struct {
-	profile *profileVideo
-	stream  *gortsplib.ServerStream
-	silent  *gortsplib.ServerStream
-	media   *description.Media
-	audio   *description.Media
-	gap     videoGap
-	outage  rtspOutage
-	encoder *rtph264.Encoder
+	clockStep  time.Duration
+	clockArmed atomic.Int64
+	profile    *profileVideo
+	stream     *gortsplib.ServerStream
+	silent     *gortsplib.ServerStream
+	media      *description.Media
+	audio      *description.Media
+	gap        videoGap
+	outage     rtspOutage
+	encoder    *rtph264.Encoder
 }
 
 type videoServer struct {
@@ -90,6 +92,9 @@ func (v *videoServer) OnPlay(ctx *gortsplib.ServerHandlerOnPlayCtx) (*base.Respo
 	if track != nil && !track.outage.play(time.Now(), ctx.Session, ctx.Conn) {
 		return &base.Response{StatusCode: base.StatusServiceUnavailable}, nil
 	}
+	if track != nil && track.clockStep != 0 {
+		track.clockArmed.CompareAndSwap(0, time.Now().Add(3*time.Second).UnixNano())
+	}
 	if ctx.Session.Transport().Protocol == gortsplib.ProtocolTCP {
 		v.tcpPlays.Add(1)
 		if track != nil && track.gap.duration > 0 {
@@ -112,8 +117,9 @@ func startVideo(ip net.IP, cfg Config, profiles []*profileVideo, fixture *record
 		v.tracks[profile.path] = &videoTrack{profile: profile, encoder: encoder,
 			media:  &description.Media{Type: description.MediaTypeVideo, Formats: []format.Format{profile.avc}},
 			outage: rtspOutage{duration: time.Duration(cfg.RTSPDisconnectMS) * time.Millisecond}}
-		if cfg.VideoGapMS > 0 {
+		if cfg.VideoGapMS > 0 || cfg.RTCPClockStepMS != 0 {
 			track := v.tracks[profile.path]
+			track.clockStep = time.Duration(cfg.RTCPClockStepMS) * time.Millisecond
 			track.gap.duration = time.Duration(cfg.VideoGapMS) * time.Millisecond
 			track.audio = &description.Media{Type: description.MediaTypeAudio, Formats: []format.Format{&format.G711{PayloadTyp: 8, SampleRate: 8000, ChannelCount: 1}}}
 		}
@@ -128,12 +134,13 @@ func startVideo(ip net.IP, cfg Config, profiles []*profileVideo, fixture *record
 		return nil, err
 	}
 	v.server = &gortsplib.Server{
-		Handler:        v,
-		AuthMethods:    []auth.VerifyMethod{auth.VerifyMethodDigestMD5},
-		RTSPAddress:    tcp.Addr().String(),
-		UDPRTPAddress:  rtp.LocalAddr().String(),
-		UDPRTCPAddress: rtcp.LocalAddr().String(),
-		Listen:         func(_, _ string) (net.Listener, error) { return tcp, nil },
+		Handler:                  v,
+		DisableRTCPSenderReports: cfg.RTCPClockStepMS != 0,
+		AuthMethods:              []auth.VerifyMethod{auth.VerifyMethodDigestMD5},
+		RTSPAddress:              tcp.Addr().String(),
+		UDPRTPAddress:            rtp.LocalAddr().String(),
+		UDPRTCPAddress:           rtcp.LocalAddr().String(),
+		Listen:                   func(_, _ string) (net.Listener, error) { return tcp, nil },
 		ListenPacket: func(_, address string) (net.PacketConn, error) {
 			if address == rtp.LocalAddr().String() {
 				return rtp, nil
@@ -213,6 +220,7 @@ func (v *videoTrack) play(ctx context.Context) {
 	ticker := time.NewTicker(time.Second / time.Duration(v.profile.FPS))
 	defer ticker.Stop()
 	var timestamp uint32
+	var clock senderClock
 	var skipped bool
 	for index := 0; ; index = (index + 1) % len(v.profile.frames) {
 		now := time.Now()
@@ -227,11 +235,16 @@ func (v *videoTrack) play(ctx context.Context) {
 			if err != nil {
 				return
 			}
+			var octets uint32
 			for _, packet := range packets {
+				octets += uint32(len(packet.Payload))
 				packet.Timestamp = timestamp
 				if err := v.stream.WritePacketRTP(v.media, packet); err != nil {
 					return
 				}
+			}
+			if len(packets) > 0 && v.clockStep != 0 {
+				clock.send(v, v.media, packets[0], 90000, now, 0, uint32(len(packets)), octets)
 			}
 			if skipped {
 				v.gap.end.CompareAndSwap(0, time.Now().UnixNano())

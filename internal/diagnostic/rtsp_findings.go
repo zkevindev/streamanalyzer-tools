@@ -1,6 +1,9 @@
 package diagnostic
 
-import "fmt"
+import (
+	"fmt"
+	"math"
+)
 
 func addRTSPFindings(report *Report, events []Event, states []rtspTrackState) {
 	add := func(code, severity, message, next string, start, end int64, evidence []Event) {
@@ -40,6 +43,12 @@ func addRTSPFindings(report *Report, events []Event, states []rtspTrackState) {
 		}
 		if track.DuplicatePackets > 0 || track.OutOfOrderPackets > 0 {
 			add("rtsp_rtp_reordered", "info", fmt.Sprintf("轨道 %d 观测到 %d 个重复包、%d 个乱序包。", track.ID, track.DuplicatePackets, track.OutOfOrderPackets), "核对源端打包顺序与 SSRC；不将乱序包计成额外媒体帧。", 0, observation.ElapsedMS, nil)
+		}
+	}
+	for _, clock := range metrics.SenderClocks {
+		if math.Abs(clock.MaxStepMS) >= 80 {
+			add("rtsp_sender_clock_step", "warn", fmt.Sprintf("轨道 %d 的 RTCP Sender Report 呈现 %+.1f ms 的 RTP/NTP 时钟跳变。", clock.TrackID, clock.MaxStepMS),
+				"核对源端该轨道的时钟映射与采集时间；接收抖动需单独对照。", clock.MaxStepAtMS, clock.MaxStepAtMS, []Event{clock.evidence})
 		}
 	}
 	if metrics.MalformedPackets > 0 || metrics.TrailingBytes > 0 {
