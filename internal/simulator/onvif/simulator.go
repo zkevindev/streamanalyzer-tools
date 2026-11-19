@@ -30,6 +30,7 @@ var (
 )
 
 type Config struct {
+	VideoGapMS   int    `json:"video_gap_ms,omitempty"`
 	SOAPUsername string `json:"soap_username,omitempty"`
 	SOAPPassword string `json:"soap_password,omitempty"`
 	ClockOffset  int    `json:"clock_offset_seconds,omitempty"`
@@ -94,6 +95,9 @@ func (c *Config) normalize() (net.IP, *net.Interface, error) {
 		strings.ContainsAny(c.SOAPUsername+c.SOAPPassword, "\r\n\x00") {
 		return nil, nil, fmt.Errorf("%w，请同时填写有效的 SOAP UsernameToken 用户名和密码", ErrConfig)
 	}
+	if c.VideoGapMS != 0 && (c.VideoGapMS < 1000 || c.VideoGapMS > 10000) {
+		return nil, nil, fmt.Errorf("%w，视频停包时长需为 1000–10000 ms", ErrConfig)
+	}
 	if c.ClockOffset < -3600 || c.ClockOffset > 3600 {
 		return nil, nil, fmt.Errorf("%w，设备时钟偏差需在 ±3600 秒以内", ErrConfig)
 	}
@@ -124,27 +128,28 @@ func (c *Config) normalize() (net.IP, *net.Interface, error) {
 }
 
 type Status struct {
-	SOAPDigest        bool      `json:"soap_digest"`
-	SOAPAuthRejected  uint64    `json:"soap_auth_rejected"`
-	SOAPClockRejected uint64    `json:"soap_clock_rejected"`
-	ClockOffset       int       `json:"clock_offset_seconds"`
-	SilentUDP         bool      `json:"silent_udp"`
-	UDPPlays          uint64    `json:"udp_plays"`
-	TCPPlays          uint64    `json:"tcp_plays"`
-	Profiles          []Profile `json:"profiles,omitempty"`
-	RTSPDigest        bool      `json:"rtsp_digest"`
-	Active            bool      `json:"active"`
-	Name              string    `json:"name,omitempty"`
-	Interface         string    `json:"interface,omitempty"`
-	DiscoveryAddress  string    `json:"discovery_address,omitempty"`
-	EndpointID        string    `json:"endpoint_id,omitempty"`
-	DeviceURL         string    `json:"device_url,omitempty"`
-	PTZURL            string    `json:"ptz_url,omitempty"`
-	MediaURL          string    `json:"media_url,omitempty"`
-	StreamURL         string    `json:"stream_url,omitempty"`
-	DiscoveryReplies  uint64    `json:"discovery_replies"`
-	SOAPRequests      uint64    `json:"soap_requests"`
-	RTSPPlays         uint64    `json:"rtsp_plays"`
+	VideoGaps         []RTPGapStatus `json:"video_gaps,omitempty"`
+	SOAPDigest        bool           `json:"soap_digest"`
+	SOAPAuthRejected  uint64         `json:"soap_auth_rejected"`
+	SOAPClockRejected uint64         `json:"soap_clock_rejected"`
+	ClockOffset       int            `json:"clock_offset_seconds"`
+	SilentUDP         bool           `json:"silent_udp"`
+	UDPPlays          uint64         `json:"udp_plays"`
+	TCPPlays          uint64         `json:"tcp_plays"`
+	Profiles          []Profile      `json:"profiles,omitempty"`
+	RTSPDigest        bool           `json:"rtsp_digest"`
+	Active            bool           `json:"active"`
+	Name              string         `json:"name,omitempty"`
+	Interface         string         `json:"interface,omitempty"`
+	DiscoveryAddress  string         `json:"discovery_address,omitempty"`
+	EndpointID        string         `json:"endpoint_id,omitempty"`
+	DeviceURL         string         `json:"device_url,omitempty"`
+	PTZURL            string         `json:"ptz_url,omitempty"`
+	MediaURL          string         `json:"media_url,omitempty"`
+	StreamURL         string         `json:"stream_url,omitempty"`
+	DiscoveryReplies  uint64         `json:"discovery_replies"`
+	SOAPRequests      uint64         `json:"soap_requests"`
+	RTSPPlays         uint64         `json:"rtsp_plays"`
 }
 
 type camera struct {
@@ -257,6 +262,9 @@ func (m *Manager) StartFiles(ctx context.Context, cfg Config, files [2]LocalVide
 	c.workers.Go(func() { c.discovery.serve(c) })
 	for _, track := range c.video.tracks {
 		c.workers.Go(func() { track.play(runCtx) })
+		if track.audio != nil {
+			c.workers.Go(func() { track.playAudio(runCtx) })
+		}
 	}
 	m.camera = c
 	return c.snapshot(), nil
@@ -269,6 +277,12 @@ func (c *camera) snapshot() Status {
 	status.SOAPAuthRejected, status.SOAPClockRejected = c.authRejected.Load(), c.clockRejected.Load()
 	status.UDPPlays, status.TCPPlays = c.video.udpPlays.Load(), c.video.tcpPlays.Load()
 	status.RTSPPlays = status.UDPPlays + status.TCPPlays
+	for _, profile := range c.profiles {
+		track := c.video.tracks[profile.path]
+		if track.gap.duration > 0 {
+			status.VideoGaps = append(status.VideoGaps, track.gap.snapshot(profile.Token))
+		}
+	}
 	return status
 }
 

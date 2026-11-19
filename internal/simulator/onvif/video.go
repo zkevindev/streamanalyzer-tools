@@ -22,6 +22,8 @@ type videoTrack struct {
 	stream  *gortsplib.ServerStream
 	silent  *gortsplib.ServerStream
 	media   *description.Media
+	audio   *description.Media
+	gap     videoGap
 	encoder *rtph264.Encoder
 }
 
@@ -61,6 +63,9 @@ func (v *videoServer) OnSetup(ctx *gortsplib.ServerHandlerOnSetupCtx) (*base.Res
 func (v *videoServer) OnPlay(ctx *gortsplib.ServerHandlerOnPlayCtx) (*base.Response, error) {
 	if ctx.Session.Transport().Protocol == gortsplib.ProtocolTCP {
 		v.tcpPlays.Add(1)
+		if track := v.tracks[ctx.Path]; track != nil && track.gap.duration > 0 {
+			track.gap.armed.CompareAndSwap(0, time.Now().Add(videoGapDelay).UnixNano())
+		}
 	} else {
 		v.udpPlays.Add(1)
 	}
@@ -77,6 +82,11 @@ func startVideo(ip net.IP, cfg Config, profiles []*profileVideo) (*videoServer, 
 		}
 		v.tracks[profile.path] = &videoTrack{profile: profile, encoder: encoder,
 			media: &description.Media{Type: description.MediaTypeVideo, Formats: []format.Format{profile.avc}}}
+		if cfg.VideoGapMS > 0 {
+			track := v.tracks[profile.path]
+			track.gap.duration = time.Duration(cfg.VideoGapMS) * time.Millisecond
+			track.audio = &description.Media{Type: description.MediaTypeAudio, Formats: []format.Format{&format.G711{PayloadTyp: 8, SampleRate: 8000, ChannelCount: 1}}}
+		}
 	}
 	tcp, err := net.Listen("tcp4", net.JoinHostPort(ip.String(), strconv.Itoa(cfg.RTSPPort)))
 	if err != nil {
@@ -108,7 +118,11 @@ func startVideo(ip net.IP, cfg Config, profiles []*profileVideo) (*videoServer, 
 		return nil, err
 	}
 	for _, track := range v.tracks {
-		stream := &gortsplib.ServerStream{Server: v.server, Desc: &description.Session{Medias: []*description.Media{track.media}}}
+		medias := []*description.Media{track.media}
+		if track.audio != nil {
+			medias = append(medias, track.audio)
+		}
+		stream := &gortsplib.ServerStream{Server: v.server, Desc: &description.Session{Medias: medias}}
 		if err := stream.Initialize(); err != nil {
 			close(v.ready)
 			v.close()
@@ -116,7 +130,7 @@ func startVideo(ip net.IP, cfg Config, profiles []*profileVideo) (*videoServer, 
 		}
 		track.stream = stream
 		if cfg.SilentUDP {
-			silent := &gortsplib.ServerStream{Server: v.server, Desc: &description.Session{Medias: []*description.Media{track.media}}}
+			silent := &gortsplib.ServerStream{Server: v.server, Desc: &description.Session{Medias: medias}}
 			if err := silent.Initialize(); err != nil {
 				close(v.ready)
 				v.close()
@@ -159,15 +173,27 @@ func (v *videoTrack) play(ctx context.Context) {
 	ticker := time.NewTicker(time.Second / time.Duration(v.profile.FPS))
 	defer ticker.Stop()
 	var timestamp uint32
+	var skipped bool
 	for index := 0; ; index = (index + 1) % len(v.profile.frames) {
-		packets, err := v.encoder.Encode(v.profile.frames[index])
-		if err != nil {
-			return
-		}
-		for _, packet := range packets {
-			packet.Timestamp = timestamp
-			if err := v.stream.WritePacketRTP(v.media, packet); err != nil {
+		if v.gap.skip(time.Now()) {
+			skipped = true
+		} else {
+			if skipped {
+				index = 0
+			}
+			packets, err := v.encoder.Encode(v.profile.frames[index])
+			if err != nil {
 				return
+			}
+			for _, packet := range packets {
+				packet.Timestamp = timestamp
+				if err := v.stream.WritePacketRTP(v.media, packet); err != nil {
+					return
+				}
+			}
+			if skipped {
+				v.gap.end.CompareAndSwap(0, time.Now().UnixNano())
+				skipped = false
 			}
 		}
 		timestamp += uint32(90000 / v.profile.FPS)

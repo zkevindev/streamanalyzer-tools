@@ -49,6 +49,10 @@ function render(status) {
   ].join(' · ') : '无鉴权';
   el('transport-observation').textContent = 'UDP PLAY ' + status.udp_plays + ' 次 · TCP PLAY ' + status.tcp_plays + ' 次' +
     (status.silent_udp ? ' · UDP 无 RTP' : '');
+  const gaps = status.video_gaps || [];
+  el('gap-observation-row').hidden = !gaps.length;
+  el('gap-observation').textContent = gaps.map((gap, index) => (index ? '子码流' : '主码流') + ' ' +
+    (gap.end ? '已恢复（' + (Date.parse(gap.end) - Date.parse(gap.begin)) + ' ms）' : gap.begin ? '停包中' : '等待 TCP 点播')).join(' · ');
   for (const [index, endpoint, detail, snapshot] of [[0, 'rtsp-url', 'main-profile-detail', 'main-snapshot'], [1, 'rtsp-sub-url', 'sub-profile-detail', 'sub-snapshot']]) {
     const profile = status.profiles?.[index];
     el(endpoint).textContent = profile?.stream_url || '';
@@ -128,6 +132,7 @@ form.addEventListener('submit', event => {
   config.rtsp_port = Number(config.rtsp_port);
   config.clock_offset_seconds = Number(config.clock_offset_seconds);
   config.silent_udp = el('silent-udp').checked;
+  config.video_gap_ms = el('video-gap').checked ? 5000 : 0;
   const files = [['main', el('main-video').files[0]], ['sub', el('sub-video').files[0]]].filter(([, file]) => file);
   if (!files.length) {
     void change('/start', config);
