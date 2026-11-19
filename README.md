@@ -103,6 +103,14 @@ JSON 报告及 SQLite 任务索引位于数据目录下的 `diagnostics/`。基�
 - ONVIF Device 服务提供设备信息、Scope、服务和能力查询。Media 服务提供 Profile、视频源、编码配置和 `GetStreamUri`。
 - RTSP 提供一路无鉴权的内置 H.264 测试画面，分辨率 320 × 180，帧率 15 fps。支持 RTP/UDP 和 RTSP/TCP 交织，可把界面里的 RTSP 地址直接粘贴到 VLC 或 ffplay。
 
+#### 通用 SIP
+
+在「模拟器」切换到「通用 SIP」，填写 PBX 地址、分机号和鉴权信息后注册。信令使用 IPv4 UDP，支持 REGISTER Digest 鉴权、续期和注销。SIP 域和 Digest 用户名可按 PBX 配置单独填写。
+
+- 注册后可输入分机号或 SIP URI，通过所填服务器呼出，也可接听或拒绝呼入。振铃时可取消呼出，已接通的任一方可通过 BYE 挂断。每次模拟一台分机、一路通话。
+- 通过 SDP 协商 G.711 PCMU 或 PCMA。通话时按 20 ms 发包发送 440 Hz 测试音，显示双向 RTP 包计数和音频端点。可试听当前或最近一次通话收到的最后 20 秒音频。
+- 工作台显示 SIP 方法和响应码，便于对照 REGISTER、INVITE、ACK、CANCEL 和 BYE。
+
 
 ### 配置大模型厂商
 
@@ -229,6 +237,7 @@ go build -o bin/server ./cmd/server
 - `GET /diagnostics`：排障工作台
 - `GET /simulators`：协议模拟器工作台，默认打开 GB28181
 - `GET /simulators/onvif`：ONVIF 模拟器
+- `GET /simulators/sip`：通用 SIP 模拟器
 - `GET /realtime`：实时拉流分析（标题 **实时拉流分析 · Stream Analyzer**）
 - `GET /offline`：离线文件解析（标题 **离线文件解析 · Stream Analyzer**；支持 raw/pcap/flv/ts/mp4 等）
 - `GET /history`：历史记录（标题 **历史记录 · Stream Analyzer**）

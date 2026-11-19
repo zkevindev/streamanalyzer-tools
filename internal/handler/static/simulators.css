@@ -62,3 +62,7 @@ details[open] > summary .event-summary::before { content: "▾ "; }
 .onvif-addresses { display: grid; grid-template-columns: minmax(0, 1fr); gap: .65rem; margin: 1rem 0 0; }
 .onvif-addresses dt { font-size: .8rem; font-weight: 600; color: var(--muted); }
 .onvif-addresses dd { margin: .2rem 0 0; font-family: var(--font-data); overflow-wrap: anywhere; user-select: all; }
+.sip-metrics { margin-top: .85rem; }
+.sip-audio { display: flex; flex-wrap: wrap; align-items: center; gap: .65rem; margin-top: .85rem; }
+.sip-audio audio { max-width: 100%; }
+#call-form input { margin-bottom: .55rem; }

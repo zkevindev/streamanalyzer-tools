@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>通用 SIP 模拟器 · Stream Analyzer</title>
+  <link rel="stylesheet" href="/static/workbench-theme.css">
+  <link rel="stylesheet" href="/static/diagnostics.css">
+  <link rel="stylesheet" href="/static/simulators.css">
+  <script src="/static/simulator-sip.js" defer></script>
+</head>
+<body>
+  <a class="skip" href="#main">跳转到主要内容</a>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="wordmark" href="/"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>Stream Analyzer</a>
+      <nav aria-label="主导航">
+        <a href="/diagnostics">排障工作台</a>
+        <a href="/simulators" aria-current="page">模拟器</a>
+        <a href="/realtime?protocol=rtmp">RTMP 实时分析</a>
+        <a href="/hls-stats">HLS 分析</a>
+      </nav>
+    </div>
+  </header>
+  <main id="main" tabindex="-1">
+    <nav class="simulator-protocols" aria-label="模拟协议">
+      <a href="/simulators">GB28181</a>
+      <a href="/simulators/onvif">ONVIF</a>
+      <a href="/simulators/sip" aria-current="page">通用 SIP</a>
+    </nav>
+    <div class="page-heading">
+      <div>
+        <h1>通用 SIP 模拟器</h1>
+        <p class="muted">注册 SIP 分机，验证呼入、呼出和双向 G.711 音频。</p>
+      </div>
+    </div>
+    <p id="notice" class="error" role="alert" hidden></p>
+    <div class="simulator-grid">
+      <section class="panel" aria-labelledby="registration-title">
+        <div class="panel-heading">
+          <h2 id="registration-title">SIP 注册</h2>
+          <span id="registration-state" class="status" role="status">正在读取</span>
+        </div>
+        <form id="registration-form" class="panel-body" autocomplete="off">
+          <fieldset id="simulator-fields" disabled>
+            <div class="sim-fields">
+              <div><label for="sip-host">服务器地址</label><input id="sip-host" name="host" placeholder="IPv4 或主机名" maxlength="253" required></div>
+              <div><label for="sip-port">SIP UDP 端口</label><input id="sip-port" name="port" type="number" min="1" max="65535" value="5060" required></div>
+              <div><label for="sip-user">分机号</label><input id="sip-user" name="user" maxlength="96" required></div>
+              <div><label for="sip-domain">SIP 域</label><input id="sip-domain" name="domain" maxlength="253" placeholder="默认使用服务器地址"></div>
+              <div><label for="sip-username">Digest 用户名</label><input id="sip-username" name="username" placeholder="默认使用分机号" maxlength="128"></div>
+              <div><label for="sip-password">密码</label><input id="sip-password" name="password" type="password" maxlength="1024" autocomplete="new-password"></div>
+            </div>
+            <details class="sim-advanced">
+              <summary>本机信令地址</summary>
+              <div class="sim-fields">
+                <div><label for="sip-local-ip">本机 IPv4 地址</label><input id="sip-local-ip" name="local_ip" maxlength="15" placeholder="按服务器路由自动选择"></div>
+                <div><label for="sip-local-port">本机 UDP 端口</label><input id="sip-local-port" name="local_port" type="number" min="0" max="65535" value="0"></div>
+              </div>
+            </details>
+          </fieldset>
+          <div class="sim-controls">
+            <button id="register" type="submit" disabled>注册分机</button>
+            <button id="unregister" class="secondary" type="button" disabled>停止并注销</button>
+          </div>
+          <dl id="sip-addresses" class="onvif-addresses" hidden>
+            <div><dt>本机信令</dt><dd id="signal-local"></dd></div>
+            <div><dt>服务器</dt><dd id="signal-peer"></dd></div>
+          </dl>
+          <p id="registration-error" class="sim-error" hidden></p>
+        </form>
+      </section>
+      <div class="sim-monitor">
+        <section class="panel" aria-labelledby="call-title">
+          <div class="panel-heading">
+            <h2 id="call-title">通话</h2>
+            <span id="call-state" class="status" role="status">空闲</span>
+          </div>
+          <div class="panel-body">
+            <form id="call-form" autocomplete="off">
+              <label for="sip-target">被叫</label>
+              <input id="sip-target" placeholder="分机号或 sip:用户@主机" maxlength="384" required disabled>
+              <div class="sim-controls">
+                <button id="dial" type="submit" disabled>呼出</button>
+                <button id="answer" class="secondary" type="button" disabled>接听</button>
+                <button id="hangup" class="secondary" type="button" disabled>挂断</button>
+              </div>
+            </form>
+            <p class="muted field-hint">通话时发送 440 Hz 测试音。收到的音频可试听最近 20 秒。</p>
+            <dl id="call-metrics" class="metrics sim-metrics sip-metrics" hidden>
+              <div><dt>方向</dt><dd id="call-direction"></dd></div>
+              <div><dt>编码</dt><dd id="audio-codec"></dd></div>
+              <div><dt>发送 RTP 包</dt><dd id="packets-sent">0</dd></div>
+              <div><dt>收到 RTP 包</dt><dd id="packets-received">0</dd></div>
+            </dl>
+            <dl id="media-addresses" class="onvif-addresses" hidden>
+              <div><dt>通话对端</dt><dd id="call-peer"></dd></div>
+              <div><dt>本机音频 RTP</dt><dd id="media-local"></dd></div>
+              <div><dt>对端音频 RTP</dt><dd id="media-remote"></dd></div>
+            </dl>
+            <p id="call-error" class="sim-error" hidden></p>
+            <div class="sip-audio" id="received-audio" hidden>
+              <button id="hear-audio" class="secondary" type="button">试听接收音频</button>
+              <audio id="audio-player" controls preload="none" aria-label="收到的 SIP 音频" hidden></audio>
+            </div>
+          </div>
+        </section>
+        <section class="panel" aria-labelledby="sip-events-title">
+          <div class="panel-heading"><h2 id="sip-events-title">SIP 信令</h2></div>
+          <p id="no-events" class="muted panel-body">注册和通话事件会显示在这里。</p>
+          <ol id="sip-events" class="sim-events" aria-label="最近的 SIP 信令"></ol>
+        </section>
+      </div>
+    </div>
+  </main>
+</body>
+</html>

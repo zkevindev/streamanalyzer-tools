@@ -14,12 +14,14 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/keybase/go-keychain v0.0.1
 	github.com/pion/rtp v1.10.2
+	github.com/pion/sdp/v3 v3.0.18
 	github.com/sunfish-shogi/bufseekio v0.0.0-20210207115823-a4185644b365
 	github.com/wailsapp/wails/v3 v3.1.0
 	github.com/xuri/excelize/v2 v2.9.0
 	github.com/yutopp/go-amf0 v0.1.0
 	github.com/yutopp/go-flv v0.3.1
 	github.com/yutopp/go-rtmp v0.0.0
+	github.com/zaf/g711 v1.4.0
 	github.com/zalando/go-keyring v0.2.8
 	golang.org/x/net v0.60.0
 	gopkg.in/yaml.v3 v3.0.1
@@ -64,7 +66,6 @@ require (
 	github.com/pion/logging v0.2.4 // indirect
 	github.com/pion/randutil v0.1.0 // indirect
 	github.com/pion/rtcp v1.2.16 // indirect
-	github.com/pion/sdp/v3 v3.0.18 // indirect
 	github.com/pion/srtp/v3 v3.0.11 // indirect
 	github.com/pion/transport/v4 v4.0.2 // indirect
 	github.com/pkg/errors v0.9.1 // indirect

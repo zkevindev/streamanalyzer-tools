@@ -14,6 +14,7 @@ import (
 	"streamanalyzer/internal/offline"
 	"streamanalyzer/internal/simulator/gb28181"
 	"streamanalyzer/internal/simulator/onvif"
+	"streamanalyzer/internal/simulator/sipphone"
 	"streamanalyzer/internal/storage"
 
 	"github.com/gin-gonic/gin"
@@ -22,9 +23,11 @@ import (
 type simulators struct {
 	gb28181 gb28181.Manager
 	onvif   onvif.Manager
+	sip     sipphone.Manager
 }
 
 func (s *simulators) Close() {
+	s.sip.Close()
 	s.onvif.Close()
 	s.gb28181.Close()
 }
@@ -67,7 +70,7 @@ func newEngine(cfg *Config, model diagnostic.Explainer, sim *simulators) (*gin.E
 	r := gin.Default()
 	h.RegisterRoutes(r)
 	handler.RegisterDiagnosticRoutes(r, diagnostics)
-	handler.RegisterSimulatorRoutes(r, &sim.gb28181, &sim.onvif)
+	handler.RegisterSimulatorRoutes(r, &sim.gb28181, &sim.onvif, &sim.sip)
 	return r, xlsxStorage, diagnostics, nil
 }
 

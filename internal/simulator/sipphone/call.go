@@ -1,0 +1,432 @@
+package sipphone
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"math/rand/v2"
+	"strings"
+	"time"
+
+	"github.com/emiago/sipgo"
+	"github.com/emiago/sipgo/sip"
+)
+
+const ringTimeout = 45 * time.Second
+
+type CallStatus struct {
+	Active          bool   `json:"active"`
+	State           string `json:"state"`
+	Direction       string `json:"direction"`
+	Peer            string `json:"peer"`
+	ID              string `json:"call_id,omitempty"`
+	Codec           string `json:"codec,omitempty"`
+	MediaLocal      string `json:"media_local"`
+	MediaRemote     string `json:"media_remote,omitempty"`
+	PacketsSent     uint64 `json:"packets_sent"`
+	PacketsReceived uint64 `json:"packets_received"`
+	Error           string `json:"error,omitempty"`
+}
+
+type phoneCall struct {
+	status       CallStatus
+	audio        *audioSession
+	sdpID        uint32
+	answer       chan struct{}
+	hangup       chan struct{}
+	done         chan struct{}
+	cancelInvite context.CancelFunc
+
+	// Dialog identity and pointers are published under agent.mu.
+	dialogID string
+	caller   *sipgo.DialogClientSession
+	callee   *sipgo.DialogServerSession
+}
+
+func (a *agent) newCall(direction, peer, state string) (*phoneCall, error) {
+	audio, err := openAudio(a.local.Addr())
+	if err != nil {
+		return nil, fmt.Errorf("绑定 RTP 音频端口失败：%w", err)
+	}
+	return &phoneCall{audio: audio, sdpID: rand.Uint32(), answer: make(chan struct{}), hangup: make(chan struct{}), done: make(chan struct{}),
+		status: CallStatus{Active: true, Direction: direction, Peer: peer, State: state, MediaLocal: audio.local.String()}}, nil
+}
+
+func (a *agent) finishCall(c *phoneCall, err error) {
+	c.audio.conn.Close()
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	c.status.Active = false
+	c.status.State = "ended"
+	if err != nil {
+		c.status.State, c.status.Error = "failed", err.Error()
+	}
+	close(c.done)
+}
+
+func (a *agent) callAction(answer bool) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	c := a.call
+	if a.ctx.Err() != nil || c == nil || !c.status.Active || c.status.State == "ending" {
+		return ErrConflict
+	}
+	if answer {
+		if c.status.Direction != "inbound" || c.status.State != "ringing" {
+			return ErrConflict
+		}
+		c.status.State = "answering"
+		close(c.answer)
+		return nil
+	}
+	c.status.State = "ending"
+	close(c.hangup)
+	if c.cancelInvite != nil {
+		c.cancelInvite()
+	}
+	return nil
+}
+
+func (a *agent) target(value string) (sip.Uri, error) {
+	value = strings.TrimSpace(value)
+	if userPattern.MatchString(value) {
+		return sip.Uri{Scheme: "sip", User: value, Host: a.cfg.Domain}, nil
+	}
+	var uri sip.Uri
+	if len(value) <= 384 && !strings.ContainsAny(value, "\r\n\x00") && sip.ParseUri(value, &uri) == nil && uri.Scheme == "sip" &&
+		userPattern.MatchString(uri.User) && hostPattern.MatchString(uri.Host) && uri.Port >= 0 && uri.Port <= 65535 &&
+		uri.Password == "" && len(uri.Headers) == 0 && len(uri.UriParams) == 0 {
+		return uri, nil
+	}
+	return sip.Uri{}, fmt.Errorf("%w，请输入分机号或 sip:用户@主机", ErrConfig)
+}
+
+func (a *agent) dial(target string) error {
+	recipient, err := a.target(target)
+	if err != nil {
+		return err
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.ctx.Err() != nil || a.status.State != "registered" || a.call != nil && a.call.status.Active {
+		return ErrConflict
+	}
+	c, err := a.newCall("outbound", recipient.String(), "dialing")
+	if err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(a.ctx, ringTimeout)
+	c.cancelInvite = cancel
+	a.call = c
+	a.workers.Go(func() {
+		defer cancel()
+		a.finishCall(c, a.outgoing(ctx, c, recipient))
+	})
+	return nil
+}
+
+func (a *agent) outgoing(ctx context.Context, c *phoneCall, recipient sip.Uri) error {
+	req := sip.NewRequest(sip.INVITE, recipient)
+	// A preloaded loose route keeps CANCEL and non-2xx ACK on the same
+	// next hop as INVITE even when the logical SIP domain is different.
+	proxy := sip.Uri{Scheme: "sip", Host: a.registrar.Addr().String(), Port: int(a.registrar.Port())}
+	proxy.UriParams.Add("lr", "")
+	req.AppendHeader(&sip.RouteHeader{Address: proxy})
+	req.SetTransport("UDP")
+	req.SetBody(makeOffer(c.audio.local, c.sdpID))
+	// Keep the SIP address of record in From; Contact contains the local socket.
+	from := &sip.FromHeader{Address: sip.Uri{Scheme: "sip", User: a.cfg.User, Host: a.cfg.Domain}}
+	from.Params.Add("tag", sip.GenerateTagN(16))
+	req.AppendHeader(from)
+	req.AppendHeader(&sip.ToHeader{Address: recipient})
+	req.AppendHeader(sip.NewHeader("Content-Type", "application/sdp"))
+
+	dialog, err := a.dialogs.WriteInvite(ctx, req)
+	if err != nil {
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return nil
+		}
+		return errors.New("无法发送 SIP INVITE")
+	}
+	defer dialog.Close()
+	a.mu.Lock()
+	c.status.ID = req.CallID().Value()
+	a.mu.Unlock()
+
+	err = dialog.WaitAnswer(ctx, sipgo.AnswerOptions{Username: a.cfg.Username, Password: a.cfg.Password,
+		OnResponse: func(res *sip.Response) error {
+			if res.StatusCode == 180 || res.StatusCode == 183 {
+				a.mu.Lock()
+				if c.status.State == "dialing" {
+					c.status.State = "ringing"
+				}
+				a.mu.Unlock()
+			}
+			return nil
+		},
+	})
+	if err != nil && (dialog.InviteResponse == nil || !dialog.InviteResponse.IsSuccess()) {
+		if errors.Is(ctx.Err(), context.Canceled) {
+			return nil
+		}
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return errors.New("呼出等待接听超时")
+		}
+		var response *sipgo.ErrDialogResponse
+		if errors.As(err, &response) {
+			return fmt.Errorf("呼叫被拒绝（SIP %d）", response.Res.StatusCode)
+		}
+		return errors.New("SIP INVITE 未完成")
+	}
+
+	// When CANCEL crosses a successful INVITE, acknowledge the final response
+	// and end the resulting dialog with BYE.
+	id, err := sip.DialogIDFromResponse(dialog.InviteResponse)
+	if err != nil || dialog.InviteResponse.Contact() == nil {
+		return errors.New("SIP INVITE 应答缺少有效的对话标识或 Contact")
+	}
+	a.mu.Lock()
+	c.dialogID, c.caller, c.cancelInvite = id, dialog, nil
+	if c.status.State != "ending" {
+		c.status.State = "answering"
+	}
+	a.mu.Unlock()
+	if err := dialog.Ack(context.Background()); err != nil {
+		return errors.New("无法发送 SIP ACK")
+	}
+	_, _, media, err := negotiateAudio(dialog.InviteResponse.Body(), false)
+	if err != nil {
+		a.sendBye(dialog.Bye)
+		return err
+	}
+	return a.connected(c, dialog.Context(), media, dialog.Bye)
+}
+
+func (a *agent) routes(server *sipgo.Server) {
+	server.OnInvite(a.incoming)
+	server.OnAck(a.ack)
+	server.OnBye(a.bye)
+	server.OnOptions(func(req *sip.Request, tx sip.ServerTransaction) {
+		res := sip.NewResponseFromRequest(req, 200, "OK", nil)
+		res.AppendHeader(sip.NewHeader("Allow", "OPTIONS, INVITE, ACK, CANCEL, BYE"))
+		_ = tx.Respond(res)
+	})
+	server.OnNoRoute(func(req *sip.Request, tx sip.ServerTransaction) {
+		if req.Method == sip.CANCEL {
+			respond(req, tx, 481, "Call/Transaction Does Not Exist")
+			return
+		}
+		respond(req, tx, 501, "Not Implemented")
+	})
+}
+
+func respond(req *sip.Request, tx sip.ServerTransaction, code int, reason string) {
+	_ = tx.Respond(sip.NewResponseFromRequest(req, code, reason, nil))
+}
+
+func (a *agent) incoming(req *sip.Request, tx sip.ServerTransaction) {
+	if req.From() == nil || req.To() == nil || req.CSeq() == nil || req.CallID() == nil {
+		respond(req, tx, 400, "Bad Request")
+		return
+	}
+	if req.Recipient.User != a.cfg.User && req.To().Address.User != a.cfg.User {
+		respond(req, tx, 404, "Not Found")
+		return
+	}
+	offer, selected, media, err := negotiateAudio(req.Body(), true)
+	if err != nil {
+		respond(req, tx, 488, "Not Acceptable Here")
+		return
+	}
+	// Allow an INVITE that arrives in the same network burst as REGISTER 200.
+	select {
+	case <-a.registered:
+	case <-a.ctx.Done():
+	case <-tx.Done():
+	case <-time.After(300 * time.Millisecond):
+	}
+	dialog, err := a.dialogs.ReadInvite(req, tx)
+	if err != nil {
+		respond(req, tx, 400, "Bad Request")
+		return
+	}
+	defer dialog.Close()
+	a.mu.Lock()
+	if a.ctx.Err() != nil || a.status.State != "registered" && a.status.State != "retrying" {
+		a.mu.Unlock()
+		respond(req, tx, 480, "Temporarily Unavailable")
+		return
+	}
+	if a.call != nil && a.call.status.Active {
+		a.mu.Unlock()
+		respond(req, tx, 486, "Busy Here")
+		return
+	}
+	// Keep the peer identity readable without copying password or URI parameters.
+	peer := req.From().Address.User + "@" + req.From().Address.Host
+	c, err := a.newCall("inbound", peer, "ringing")
+	if err != nil {
+		a.mu.Unlock()
+		respond(req, tx, 500, "Server Internal Error")
+		return
+	}
+	c.dialogID, c.callee, c.status.ID = dialog.ID, dialog, req.CallID().Value()
+	c.status.Codec, c.status.MediaRemote = media.codec.name, media.remote.String()
+	a.call = c
+	a.workers.Add(1)
+	a.mu.Unlock()
+	defer a.workers.Done()
+
+	answer := makeAnswer(c.audio.local, c.sdpID, offer, selected, media)
+	a.finishCall(c, a.ring(c, tx, dialog, answer, media))
+}
+
+func (a *agent) ring(c *phoneCall, tx sip.ServerTransaction, dialog *sipgo.DialogServerSession, answer []byte, media audioParameters) error {
+	if err := dialog.Respond(180, "Ringing", nil); err != nil {
+		if dialog.Context().Err() == nil {
+			return errors.New("无法发送 SIP 振铃响应")
+		}
+		return nil
+	}
+	timer := time.NewTimer(ringTimeout)
+	defer timer.Stop()
+	select {
+	case <-dialog.Context().Done():
+		return nil
+	case <-tx.Done():
+		return nil
+	case <-c.hangup:
+		respond(dialog.InviteRequest, tx, 603, "Decline")
+		return nil
+	case <-a.ctx.Done():
+		respond(dialog.InviteRequest, tx, 480, "Temporarily Unavailable")
+		return nil
+	case <-timer.C:
+		respond(dialog.InviteRequest, tx, 480, "Temporarily Unavailable")
+		return errors.New("呼入等待接听超时")
+	case <-c.answer:
+	}
+	if dialog.Context().Err() != nil {
+		return nil
+	}
+
+	// Handle ACKs with either a separate branch or the same branch as INVITE.
+	// Bound the wait even if the answering transaction gets no further packets.
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		timeout := time.NewTimer(32 * time.Second)
+		defer timeout.Stop()
+		for {
+			select {
+			case ack := <-tx.Acks():
+				if ack != nil {
+					a.ack(ack, tx)
+				}
+			case <-stop:
+				return
+			case <-tx.Done():
+				return
+			case <-a.ctx.Done():
+				tx.Terminate()
+				return
+			case <-timeout.C:
+				tx.Terminate()
+				return
+			}
+		}
+	}()
+	err := dialog.RespondSDP(answer)
+	close(stop)
+	<-done
+	if err != nil || dialog.LoadState() != sip.DialogStateConfirmed {
+		if dialog.Context().Err() != nil || a.ctx.Err() != nil {
+			return nil
+		}
+		return errors.New("接听未完成，未收到有效 SIP ACK")
+	}
+	return a.connected(c, dialog.Context(), media, dialog.Bye)
+}
+
+func (a *agent) ack(req *sip.Request, tx sip.ServerTransaction) {
+	if req.CSeq() == nil {
+		return
+	}
+	id, err := sip.DialogIDFromRequestUAS(req)
+	if err != nil {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	c := a.call
+	if c != nil && c.status.Active && c.callee != nil && c.dialogID == id && c.callee.LoadState() == sip.DialogStateEstablished {
+		_ = c.callee.ReadAck(req, tx)
+	}
+}
+
+func (a *agent) bye(req *sip.Request, tx sip.ServerTransaction) {
+	if req.CSeq() == nil {
+		respond(req, tx, 400, "Bad Request")
+		return
+	}
+	a.mu.Lock()
+	c := a.call
+	var handle func(*sip.Request, sip.ServerTransaction) error
+	if c != nil && c.status.Active {
+		if c.callee != nil && c.callee.LoadState() >= sip.DialogStateEstablished {
+			id, _ := sip.DialogIDFromRequestUAS(req)
+			if id == c.dialogID {
+				handle = c.callee.ReadBye
+			}
+		}
+		if c.caller != nil {
+			id, _ := sip.DialogIDFromRequestUAC(req)
+			if id == c.dialogID {
+				handle = c.caller.ReadBye
+			}
+		}
+	}
+	a.mu.Unlock()
+	if handle == nil {
+		respond(req, tx, 481, "Call/Transaction Does Not Exist")
+		return
+	}
+	if err := handle(req, tx); err != nil {
+		respond(req, tx, 500, "Server Internal Error")
+	}
+}
+
+func (a *agent) connected(c *phoneCall, dialog context.Context, media audioParameters, bye func(context.Context) error) error {
+	a.mu.Lock()
+	c.status.Codec, c.status.MediaRemote = media.codec.name, media.remote.String()
+	if c.status.State == "ending" {
+		a.mu.Unlock()
+		if dialog.Err() != nil {
+			return nil
+		}
+		return a.sendBye(bye)
+	}
+	c.status.State = "incall"
+	a.mu.Unlock()
+
+	stopAudio := c.audio.run(a.ctx, media)
+	select {
+	case <-dialog.Done():
+		stopAudio()
+		return nil
+	case <-a.ctx.Done():
+	case <-c.hangup:
+	}
+	stopAudio()
+	return a.sendBye(bye)
+}
+
+func (a *agent) sendBye(bye func(context.Context) error) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := bye(ctx); err != nil {
+		return errors.New("未收到 SIP BYE 确认")
+	}
+	return nil
+}
