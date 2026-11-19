@@ -3,6 +3,7 @@ package hlsorigin
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"embed"
 	"errors"
 	"fmt"
@@ -35,6 +36,7 @@ type Config struct {
 type Status struct {
 	LowLatency *LowLatencyStatus `json:"low_latency,omitempty"`
 	Config
+	KeyRotation     *KeyRotationStatus    `json:"key_rotation,omitempty"`
 	LiveFault       *LiveFaultObservation `json:"live_fault,omitempty"`
 	Frozen          bool                  `json:"frozen"`
 	MediaSequence   uint64                `json:"media_sequence,omitempty"`
@@ -48,6 +50,7 @@ type Status struct {
 }
 
 type Manager struct {
+	keys   [2][16]byte
 	live   liveClock
 	stale  [2]stalePlaylist
 	mu     sync.Mutex
@@ -59,7 +62,7 @@ type Manager struct {
 
 func (m *Manager) Start(cfg Config) (Status, error) {
 	switch cfg.Mode {
-	case "normal", "live", "abr", "audio", "ll", "stale", "audio_boundary":
+	case "normal", "live", "abr", "audio", "ll", "stale", "audio_boundary", "key_rotation", "key_forbidden":
 		cfg.Segment, cfg.DelayMS = 0, 0
 	case "delay", "not_found":
 		if cfg.Segment < 1 || cfg.Segment > SegmentCount {
@@ -88,6 +91,12 @@ func (m *Manager) Start(cfg Config) (Status, error) {
 	if cfg.Mode == "ll" {
 		m.status.LowLatency = &LowLatencyStatus{}
 	}
+	if cfg.Mode == "key_rotation" || cfg.Mode == "key_forbidden" {
+		for i := range m.keys {
+			rand.Read(m.keys[i][:])
+		}
+		m.status.KeyRotation = &KeyRotationStatus{RotationSequence: keyRotationSequence}
+	}
 	m.live = liveClock{started: time.Now(), last: liveWindow}
 	m.stale = [2]stalePlaylist{}
 	return m.snapshot(), nil
@@ -97,6 +106,14 @@ func (m *Manager) Status() Status {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.snapshot()
+}
+
+func (s Status) rolling() bool {
+	switch s.Mode {
+	case "live", "stale", "abr", "audio", "audio_boundary", "key_rotation", "key_forbidden":
+		return true
+	}
+	return false
 }
 
 func (m *Manager) snapshot() Status {
@@ -114,7 +131,11 @@ func (m *Manager) snapshot() Status {
 		result.MediaSequence = low.NextSequence - liveWindow
 		result.LowLatency = &low
 	}
-	if result.Mode == "live" || result.Mode == "stale" || result.Mode == "abr" || result.Mode == "audio" || result.Mode == "audio_boundary" {
+	if result.KeyRotation != nil {
+		keys := *result.KeyRotation
+		result.KeyRotation = &keys
+	}
+	if result.rolling() {
 		result.Frozen = m.live.frozen
 		last := m.live.sequence(time.Now())
 		result.MediaSequence = last - liveWindow + 1
@@ -132,7 +153,7 @@ func (m *Manager) stopLocked() Status {
 		if m.status.LowLatency != nil {
 			m.status.LowLatency.setEdge(llPublished(m.live.started, time.Now()))
 		}
-		if (m.status.Mode == "live" || m.status.Mode == "stale" || m.status.Mode == "abr" || m.status.Mode == "audio" || m.status.Mode == "audio_boundary") && !m.live.frozen {
+		if m.status.rolling() && !m.live.frozen {
 			m.live.last = m.live.sequence(time.Now())
 			m.live.frozen = true
 		}
@@ -174,7 +195,20 @@ func (m *Manager) Serve(w http.ResponseWriter, r *http.Request, id, name string)
 	kind := "application/vnd.apple.mpegurl"
 	segment := 0
 	liveFault := ""
-	if m.status.Mode == "live" || m.status.Mode == "stale" {
+	var sequence uint64
+	var key [16]byte
+	encrypted := m.status.KeyRotation != nil
+	if encrypted {
+		switch name {
+		case "key-1.bin":
+			m.serveKey(w, r, 0)
+			return
+		case "key-2.bin":
+			m.serveKey(w, r, 1)
+			return
+		}
+	}
+	if m.status.rolling() {
 		now := time.Now()
 		last := m.live.sequence(now)
 		if playlist {
@@ -185,10 +219,14 @@ func (m *Manager) Serve(w http.ResponseWriter, r *http.Request, id, name string)
 			}
 			m.mu.Unlock()
 			w.Header().Set("Content-Type", kind)
-			http.ServeContent(w, r, name, time.Time{}, bytes.NewReader(livePlaylist(last)))
+			http.ServeContent(w, r, name, time.Time{}, bytes.NewReader(rollingPlaylist(last, encrypted)))
 			return
 		}
 		if seq, ok := liveResourceSequence(name, last); ok {
+			sequence = seq
+			if encrypted {
+				key = m.keys[keyIndex(seq)]
+			}
 			segment = int((seq-1)%SegmentCount) + 1
 			name = fmt.Sprintf("segment-%02d.ts", segment)
 			liveFault = m.checkLiveFault(r, seq, now)
@@ -252,6 +290,9 @@ func (m *Manager) Serve(w http.ResponseWriter, r *http.Request, id, name string)
 	if liveFault == "truncate" {
 		serveTruncatedSegment(w, data)
 		return
+	}
+	if encrypted && sequence != 0 {
+		data = encryptSegment(data, key, sequence)
 	}
 	http.ServeContent(w, r, name, time.Time{}, bytes.NewReader(data))
 }

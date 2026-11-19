@@ -89,6 +89,14 @@ func registerHLSRoutes(r *gin.Engine, source *hlsorigin.Manager) {
 		}
 		c.JSON(http.StatusOK, status)
 	})
+	api.POST("/key-restore/:id", func(c *gin.Context) {
+		status, err := source.RestoreKey(c.Param("id"))
+		if err != nil {
+			c.JSON(http.StatusConflict, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, status)
+	})
 	api.POST("/stop", func(c *gin.Context) { c.JSON(http.StatusOK, source.Stop()) })
 	serve := func(c *gin.Context) { source.Serve(c.Writer, c.Request, c.Param("id"), c.Param("file")) }
 	api.GET("/stream/:id/:file", serve)

@@ -551,6 +551,112 @@ async function runHLSAudioBoundary(entry) {
   }
 }
 
+async function runHLSKeyRotation(mode, entry) {
+  const video = el('scenario-player');
+  const forbidden = mode === 'key_forbidden';
+  if (!globalThis.Hls?.isSupported() || !video.requestVideoFrameCallback) {
+    throw new Error('此场景需要支持 hls.js 和逐帧呈现回调的浏览器。');
+  }
+  let source;
+  let run;
+  let player;
+  let callback;
+  let recoveredFrame;
+  let k2Fragment;
+  let restoreAt = 0;
+  const evidence = entry.evidence = {mode};
+  const observe = (_, frame) => {
+    const at = Date.now();
+    if (!evidence.first_frame) evidence.first_frame = {at, time:frame.mediaTime};
+    if (!recoveredFrame && k2Fragment && (!forbidden || restoreAt) &&
+        frame.presentationTime >= k2Fragment.bufferedAt &&
+        frame.mediaTime >= k2Fragment.start && frame.mediaTime < k2Fragment.end) {
+      recoveredFrame = {at, time:frame.mediaTime, sequence:k2Fragment.sequence};
+    }
+    callback = video.requestVideoFrameCallback(observe);
+  };
+  try {
+    source = await request(hls + '/start', {mode});
+    const sequence = source.key_rotation.rotation_sequence;
+    const url = new URL(source.playlist, location.origin);
+    run = await request(runs, {protocol:'hls', url:url.href, seconds:35, playback:true});
+    if (!run.player) throw new Error('未返回播放配置。');
+    entry.diagnostic_id = run.id;
+    video.hidden = false;
+    player = new PlayerDiagnostics(video, run.player, {
+      hlsRecovery:true,
+      onHLSBuffered(fragment) {
+        if (!k2Fragment && Number.isInteger(fragment?.sn) && fragment.sn >= sequence &&
+            Number.isFinite(fragment.startPTS) && Number.isFinite(fragment.endPTS)) {
+          k2Fragment = {sequence:fragment.sn, start:fragment.startPTS, end:fragment.endPTS, bufferedAt:performance.now()};
+        }
+      },
+    });
+    callback = video.requestVideoFrameCallback(observe);
+    player.start();
+    let keyStatus;
+    progress('等待 K1 出画和新密钥请求…');
+    if (forbidden) {
+      keyStatus = await waitFor(async () => {
+        const state = await request(hls);
+        return state.id === source.id && state.key_rotation?.k2_denied > 0 ? state.key_rotation : null;
+      }, 14500, '未观察到新密钥 HTTP 403。');
+      evidence.denied = keyStatus.k2_denied;
+      const playlist = await fetch(url, {cache:'no-store'});
+      const text = await playlist.text();
+      const media = text.match(/^live-\d+\.ts$/gm)?.at(-1);
+      if (!media) throw new Error('轮换列表缺少分片。');
+      const segment = await fetch(new URL(media, url), {cache:'no-store'});
+      const bytes = (await segment.arrayBuffer()).byteLength;
+      evidence.during_denial = {playlist:playlist.status, segment:segment.status, bytes};
+      if (playlist.status !== 200 || segment.status !== 200 || !bytes) {
+        throw new Error('密钥拒绝期间列表或分片未返回 HTTP 200。');
+      }
+      restoreAt = Date.parse((await request(hls + '/key-restore/' + source.id, null)).key_rotation.restored_at);
+      evidence.restored_at = new Date(restoreAt).toISOString();
+      progress('已恢复新密钥授权，观察原播放器自动重试…');
+      try {
+        await waitFor(async () => {
+          const state = await request(hls);
+          return state.id === source.id && state.key_rotation?.k2_allowed > 0;
+        }, 4200, '等待自动重试结束');
+        evidence.recovery = 'automatic';
+      } catch {
+        evidence.recovery = 'reload';
+        k2Fragment = null;
+        player.reloadHLS();
+        progress('重新加载播放列表，等待 K2 分片出画…');
+      }
+    }
+    evidence.k2_frame = await waitFor(() => recoveredFrame, forbidden ? 10500 : 17500, '未观察到使用新密钥的分片呈帧。');
+    if (forbidden) evidence.resume_ms = evidence.k2_frame.at - restoreAt;
+    evidence.keys = (await request(hls)).key_rotation;
+    const path = runs + '/' + run.id;
+    await request(path + '/player', player.finish(), run.player.token);
+    player = null;
+    await request(path + '/stop', null);
+    const report = await waitFor(async () => (await request(path)).report, 6000, '播放器证据生成超时。');
+    const keys = (report.player_network?.requests || []).filter(row => row.kind === 'key');
+    const k1 = keys.find(row => row.http_status === 200 && row.outcome === 'complete');
+    const denied = keys.find(row => row.http_status === 403 && row.resource_id !== k1?.resource_id);
+    const k2 = keys.find(row => row.number > (denied || k1)?.number && row.resource_id !== k1?.resource_id &&
+      (!denied || row.resource_id === denied.resource_id) && row.http_status === 200 && row.outcome === 'complete');
+    evidence.requests = [k1, denied, k2].filter(Boolean);
+    entry.passed = Boolean(k1 && k2 && evidence.first_frame.at < evidence.k2_frame.at && (!forbidden || denied));
+    entry.detail = entry.passed ? (forbidden ? '新密钥 403 → 200 · ' + (evidence.recovery === 'automatic' ? '原播放器重试' : '手动重载') + '后呈帧' :
+      '两把密钥均返回 200 · 新密钥分片已呈帧') : '缺少密钥请求或解密后出画证据';
+  } finally {
+    if (callback != null) video.cancelVideoFrameCallback(callback);
+    if (player) await request(runs + '/' + run.id + '/player', player.finish(), run.player.token).catch(() => {});
+    if (run) {
+      const last = await request(runs + '/' + run.id).catch(() => null);
+      if (last?.status === 'running') await request(runs + '/' + run.id + '/stop', null).catch(() => {});
+    }
+    if (source) await stopOwned(hls, 'id', source.id).catch(() => {});
+    video.hidden = true;
+  }
+}
+
 async function runHLSStale(entry) {
   const video = el('scenario-player');
   let source;
@@ -688,6 +794,7 @@ el('scenario-form').addEventListener('submit', async event => {
     else if (expected === 'fallback') await runRTSPFallback(entry);
     else if (family === 'rtsp') await runRTSPReconnect(entry);
     else if (expected === 'audio_boundary') await runHLSAudioBoundary(entry);
+    else if (expected === 'key_rotation' || expected === 'key_forbidden') await runHLSKeyRotation(expected, entry);
     else if (expected === 'stale') await runHLSStale(entry);
     else if (expected === 'part_delay') await runLLHLS(entry);
     else await runHLS(expected, entry);

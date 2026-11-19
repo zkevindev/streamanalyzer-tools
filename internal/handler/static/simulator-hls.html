@@ -41,7 +41,7 @@
         <form id="hls-form" class="panel-body">
           <fieldset id="simulator-fields" disabled>
             <label for="mode">场景</label>
-            <select id="mode" name="mode"><option value="normal">正常点播</option><option value="live">滚动直播</option><option value="stale">直播列表回退</option><option value="abr">双码率 fMP4 直播</option><option value="audio">独立音轨分片故障</option><option value="audio_boundary">独立音轨跨段错位</option><option value="ll">低延迟直播 / Part 延迟</option><option value="delay">分片延迟</option><option value="not_found">分片返回 404</option></select>
+            <select id="mode" name="mode"><option value="normal">正常点播</option><option value="live">滚动直播</option><option value="stale">直播列表回退</option><option value="key_rotation">AES-128 密钥轮换</option><option value="key_forbidden">轮换后新密钥返回 403</option><option value="abr">双码率 fMP4 直播</option><option value="audio">独立音轨分片故障</option><option value="audio_boundary">独立音轨跨段错位</option><option value="ll">低延迟直播 / Part 延迟</option><option value="delay">分片延迟</option><option value="not_found">分片返回 404</option></select>
             <div class="sim-fields">
               <div id="segment-field" hidden><label for="segment">分片序号</label><input id="segment" name="segment" type="number" value="4" min="1" max="12" required></div>
               <div id="delay-field" hidden><label for="delay-ms">延迟（毫秒）</label><input id="delay-ms" name="delay_ms" type="number" value="10000" min="500" max="15000" required></div>
@@ -82,8 +82,10 @@
               <div class="sim-controls"><button type="submit" class="secondary">安排一次故障</button></div>
             </fieldset>
           </form>
+          <p id="key-observation" class="field-hint" hidden></p>
           <p id="live-fault-status" class="field-hint" hidden></p>
           <div class="sim-controls sip-metrics" id="actions" hidden>
+            <button id="key-restore" type="button" class="secondary" hidden>恢复新密钥</button>
             <button id="freeze" type="button" class="secondary" hidden>冻结播放列表</button>
             <a id="open-workbench" class="button">打开排障工作台</a>
             <a id="open-recovery" class="button secondary" hidden>测试播放器重试</a>

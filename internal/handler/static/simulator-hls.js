@@ -2,7 +2,7 @@
 
 const api = '/api/simulators/hls';
 const el = id => document.getElementById(id);
-const modes = {normal: '正常点播', live: '滚动直播', stale: '直播列表回退', abr: '双码率 fMP4 直播', audio: '独立音轨分片故障', audio_boundary: '独立音轨跨段错位', ll: '低延迟直播 / Part 延迟', delay: '分片延迟', not_found: '分片返回 404'};
+const modes = {normal: '正常点播', live: '滚动直播', stale: '直播列表回退', key_rotation: 'AES-128 密钥轮换', key_forbidden: '轮换后新密钥返回 403', abr: '双码率 fMP4 直播', audio: '独立音轨分片故障', audio_boundary: '独立音轨跨段错位', ll: '低延迟直播 / Part 延迟', delay: '分片延迟', not_found: '分片返回 404'};
 let current;
 let busy = false;
 let generation = 0;
@@ -17,6 +17,7 @@ function updateFields() {
   el('start').disabled = el('simulator-fields').disabled;
   el('stop').disabled = busy || !current?.active;
   el('freeze').disabled = busy || !current?.active;
+  el('key-restore').disabled = busy || !current?.active || Boolean(current?.key_rotation?.restored_at);
   const fault = current?.live_fault;
   const partial = current?.low_latency?.fault;
   el('arm-part').disabled = busy || !current?.active || Boolean(partial && !partial.unblocked_at && Date.now() < Date.parse(partial.release_at) + 6000);
@@ -35,6 +36,11 @@ function render(status) {
   el('last-fault').textContent = status.last_fault ? new Date(status.last_fault).toLocaleTimeString('zh-CN', {fractionalSecondDigits: 3}) : '—';
   el('playlist').textContent = status.active ? new URL(status.playlist, location.origin).href : '—';
   if (status.active) el('open-workbench').href = '/diagnostics?hls_simulator=' + encodeURIComponent(status.id);
+  const keys = status.key_rotation;
+  el('key-observation').hidden = !keys;
+  el('key-observation').textContent = keys ? '媒体序号 ' + keys.rotation_sequence + ' 轮换 · K1 请求 ' + keys.k1_requests +
+    ' 次 · K2 成功 ' + keys.k2_allowed + ' 次 / 403 ' + keys.k2_denied + ' 次' + (keys.restored_at ? ' · 已恢复授权' : '') : '';
+  el('key-restore').hidden = status.mode !== 'key_forbidden';
   const live = status.mode === 'live';
   const abr = status.mode === 'abr';
   const stale = status.mode === 'stale';
@@ -144,5 +150,6 @@ el('part-fault-form').addEventListener('submit', event => {
   void change('/part-delay', {delay_ms: Number(el('part-delay-ms').value)});
 });
 el('freeze').addEventListener('click', () => { void change('/freeze', {frozen: !current.frozen}); });
+el('key-restore').addEventListener('click', () => { void change('/key-restore/' + encodeURIComponent(current.id)); });
 el('stop').addEventListener('click', () => { void change('/stop'); });
 void poll();
