@@ -44,8 +44,10 @@
               <div class="sim-fields">
                 <div><label for="channel">通道编号</label><input id="channel" name="channel_id" pattern="[0-9]{20}" value="34020000001320000002" required></div>
                 <div><label for="media-transport">点播媒体传输</label><select id="media-transport" name="media_transport"><option value="udp">UDP</option><option value="tcp-active">TCP（平台主动连接）</option><option value="tcp-passive">TCP（平台等待连入）</option></select></div>
+                <div><label for="recovery-mode">恢复场景</label><select id="recovery-mode" name="recovery"><option value="">常规点播</option><option value="sip_tcp_disconnect" data-transport="tcp">收到关键帧后断开 SIP TCP</option><option value="udp_keepalive_timeout" data-transport="udp">收到关键帧后忽略 UDP 心跳</option></select></div>
                 <div><label for="window">观测窗口（毫秒）</label><input id="window" name="window_ms" type="number" min="500" max="15000" value="4000" required></div>
               </div>
+              <p id="recovery-hint" class="muted field-hint" hidden>UDP 场景使用 5 秒设备心跳，最多等待 30 秒重新注册。</p>
               <label class="sim-check"><input id="skip-ack" type="checkbox"> 观测窗口内暂缓 ACK</label>
               <label id="skip-connect-control" class="sim-check" hidden><input id="skip-connect" type="checkbox"> 观测窗口内暂缓平台侧 TCP 建连</label>
               <div class="sim-controls"><button>点播并收流</button></div>
@@ -56,6 +58,7 @@
       <section class="panel">
         <div class="panel-heading"><h2>点播结果</h2><span id="result" class="status" role="status">等待点播</span></div>
         <div class="panel-body">
+          <p id="recovery-result" class="field-hint" hidden></p>
           <p id="detail" class="field-hint" hidden></p>
           <dl id="stats" class="metrics sim-metrics" hidden>
             <div><dt>收到 RTP</dt><dd id="rtp">0</dd></div>

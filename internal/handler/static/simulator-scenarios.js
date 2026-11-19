@@ -142,12 +142,15 @@ async function stopOwned(path, field, value) {
 async function runGB(expected, entry) {
   let bridge;
   let device;
+  const recovery = {tcp_recovery: 'sip_tcp_disconnect', udp_recovery: 'udp_keepalive_timeout'}[expected];
+  const sipTransport = expected === 'tcp_recovery' ? 'tcp' : 'udp';
   try {
     progress('启动测试平台和设备…');
-    bridge = await request(platform + '/start', ids);
+    bridge = await request(platform + '/start', {...ids, sip_transport: sipTransport});
     const [host, port] = bridge.address.split(':');
     device = await request(gb + '/start', {
-      ...ids, platform_host: host, platform_port: Number(port),
+      ...ids, platform_host: host, platform_port: Number(port), sip_transport: sipTransport,
+      ...(recovery && {heartbeat_seconds: 5}),
       ...(expected === 'no_rtp' ? {faults: {first_delay_ms: 3000}} : {}),
     });
     await waitFor(async () => {
@@ -155,15 +158,24 @@ async function runGB(expected, entry) {
       if (state.state === 'failed') throw new Error(state.error || '设备注册失败');
       return state.state === 'registered' && (await request(platform)).peer;
     }, 6000, '设备未在观测窗口内完成注册。');
-    progress('点播并观察 ACK、RTP 和关键帧…');
+    progress(recovery ? '首次出画后注入 SIP 故障，等待重注册和恢复出画…' : '点播并观察 ACK、RTP 和关键帧…');
     await request(platform + '/preview', {
-      channel_id: ids.channel_id, window_ms: 2300, skip_ack: expected === 'no_ack',
+      channel_id: ids.channel_id, window_ms: 2300, skip_ack: expected === 'no_ack', ...(recovery && {recovery}),
     });
     const observed = await waitFor(async () => {
       const state = await request(platform);
       return !state.busy && state.preview ? state : null;
-    }, 9000, '平台点播观测超时。');
+    }, recovery ? 45000 : 9000, '平台点播观测超时。');
     entry.evidence = observed;
+    if (recovery) {
+      const report = observed.recovery;
+      const oldEnded = report?.previous_session?.timeline.some(mark => mark.stage === 'ended');
+      entry.passed = Boolean(report?.state === 'passed' && oldEnded && report.before.call_id !== observed.preview.call_id &&
+        observed.device_session?.call_id === observed.preview.call_id);
+      entry.detail = entry.passed ? '重注册、目录和新点播均通过 · 首个关键帧恢复 ' + report.recovery_ms + ' ms' :
+        (report?.error || '恢复证据缺少旧会话释放或新会话');
+      return;
+    }
     entry.passed = observed.preview.state === expected && observed.device_session?.call_id === observed.preview.call_id;
     entry.detail = '预期 ' + expected + '，实际 ' + observed.preview.state;
   } finally {

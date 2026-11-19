@@ -21,7 +21,9 @@ func registerGBPlatformRoutes(r *gin.Engine, platform *gb28181.PlatformManager, 
 				for _, session := range device.Sessions {
 					if session.CallID == result.Preview.CallID {
 						result.DeviceSession = &session
-						break
+					}
+					if result.Recovery != nil && session.CallID == result.Recovery.Before.CallID {
+						result.Recovery.PreviousSession = &session
 					}
 				}
 			}
