@@ -34,15 +34,16 @@ type Config struct {
 
 type Status struct {
 	Config
-	Frozen          bool             `json:"frozen"`
-	MediaSequence   uint64           `json:"media_sequence,omitempty"`
-	PlaylistSamples []PlaylistSample `json:"playlist_samples,omitempty"`
-	Active          bool             `json:"active"`
-	ID              string           `json:"id,omitempty"`
-	Playlist        string           `json:"playlist,omitempty"`
-	SegmentRequests uint64           `json:"segment_requests"`
-	FaultHits       uint64           `json:"fault_hits"`
-	LastFault       *time.Time       `json:"last_fault,omitempty"`
+	LiveFault       *LiveFaultObservation `json:"live_fault,omitempty"`
+	Frozen          bool                  `json:"frozen"`
+	MediaSequence   uint64                `json:"media_sequence,omitempty"`
+	PlaylistSamples []PlaylistSample      `json:"playlist_samples,omitempty"`
+	Active          bool                  `json:"active"`
+	ID              string                `json:"id,omitempty"`
+	Playlist        string                `json:"playlist,omitempty"`
+	SegmentRequests uint64                `json:"segment_requests"`
+	FaultHits       uint64                `json:"fault_hits"`
+	LastFault       *time.Time            `json:"last_fault,omitempty"`
 }
 
 type Manager struct {
@@ -97,7 +98,13 @@ func (m *Manager) snapshot() Status {
 	result.PlaylistSamples = slices.Clone(result.PlaylistSamples)
 	if result.Mode == "live" {
 		result.Frozen = m.live.frozen
-		result.MediaSequence = m.live.sequence(time.Now()) - liveWindow + 1
+		last := m.live.sequence(time.Now())
+		result.MediaSequence = last - liveWindow + 1
+		if result.LiveFault != nil {
+			fault := *result.LiveFault
+			fault.Expired = fault.RetryAt == nil && (!result.Active || last >= fault.Sequence+2*liveWindow)
+			result.LiveFault = &fault
+		}
 	}
 	return result
 }
@@ -137,6 +144,7 @@ func (m *Manager) Serve(w http.ResponseWriter, r *http.Request, id, name string)
 	playlist := name == "playlist.m3u8"
 	kind := "application/vnd.apple.mpegurl"
 	segment := 0
+	liveFault := ""
 	if m.status.Mode == "live" {
 		now := time.Now()
 		last := m.live.sequence(now)
@@ -149,8 +157,10 @@ func (m *Manager) Serve(w http.ResponseWriter, r *http.Request, id, name string)
 			http.ServeContent(w, r, name, time.Time{}, bytes.NewReader(livePlaylist(last)))
 			return
 		}
-		if selected, ok := liveSegment(name, last); ok {
-			name, segment = fmt.Sprintf("segment-%02d.ts", selected), selected
+		if seq, ok := liveResourceSequence(name, last); ok {
+			segment = int((seq-1)%SegmentCount) + 1
+			name = fmt.Sprintf("segment-%02d.ts", segment)
+			liveFault = m.checkLiveFault(r, seq, now)
 		}
 	} else if !playlist {
 		for i := 1; i <= SegmentCount; i++ {
@@ -180,6 +190,11 @@ func (m *Manager) Serve(w http.ResponseWriter, r *http.Request, id, name string)
 		}
 	}
 	m.mu.Unlock()
+	if liveFault == "not_found" {
+		w.Header().Set("Cache-Control", "no-store")
+		http.NotFound(w, r)
+		return
+	}
 	if fault {
 		if cfg.Mode == "not_found" {
 			http.NotFound(w, r)
@@ -202,5 +217,10 @@ func (m *Manager) Serve(w http.ResponseWriter, r *http.Request, id, name string)
 		return
 	}
 	w.Header().Set("Content-Type", kind)
+	w.Header().Set("Cache-Control", "no-store")
+	if liveFault == "truncate" {
+		serveTruncatedSegment(w, data)
+		return
+	}
 	http.ServeContent(w, r, name, time.Time{}, bytes.NewReader(data))
 }

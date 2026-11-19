@@ -11,6 +11,8 @@ import (
 	"net/url"
 	"path"
 	"strconv"
+
+	"streamanalyzer/internal/simulator/hlsorigin"
 	"strings"
 	"sync"
 	"time"
@@ -95,7 +97,7 @@ func (h *playerHLS) serve(w http.ResponseWriter, r *http.Request, resource strin
 		return
 	}
 	upstream.Header.Set("Accept-Encoding", "identity")
-	upstream.Header.Set("User-Agent", "StreamAnalyzer-Diagnostic-Player/1.0")
+	upstream.Header.Set("User-Agent", hlsorigin.PlayerUserAgent)
 	if entry.playlist {
 		upstream.Header.Set("Accept", "application/vnd.apple.mpegurl, application/x-mpegURL, */*")
 		appendPlayerReloadQuery(upstream.URL, r.URL.Query())
@@ -119,6 +121,7 @@ func (h *playerHLS) serve(w http.ResponseWriter, r *http.Request, resource strin
 		h.network.fail(evidence, "response_headers", "http_error")
 		outcome = "http_error"
 		if resp.StatusCode >= 400 && resp.StatusCode <= 599 {
+			w.Header().Set("Cache-Control", "no-store")
 			http.Error(w, "HLS 源返回错误状态", resp.StatusCode)
 		} else {
 			hlsPlaybackError(w)

@@ -15,10 +15,10 @@ func TestLivePlaylistTracksDiscontinuityAcrossFixtureWrap(t *testing.T) {
 	if !strings.Contains(afterWrap, "#EXT-X-DISCONTINUITY-SEQUENCE:1\n") || strings.Contains(afterWrap, "#EXT-X-DISCONTINUITY\n") {
 		t.Fatal(afterWrap)
 	}
-	if n, ok := liveSegment("live-13.ts", 15); !ok || n != 1 {
+	if n, ok := liveResourceSequence("live-13.ts", 15); !ok || n != 13 {
 		t.Fatalf("rolled segment lookup: %d %t", n, ok)
 	}
-	if _, ok := liveSegment("live-8.ts", 15); ok {
+	if _, ok := liveResourceSequence("live-8.ts", 15); ok {
 		t.Fatal("expired segment was served")
 	}
 }

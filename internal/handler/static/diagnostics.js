@@ -188,7 +188,7 @@ function completePlayback(player, reason) {
     player.deadline = setTimeout(() => stopPlayback(player), 800);
 }
 
-function startPlayback(run, startedAt, startedAtPerformanceMS, seconds) {
+function startPlayback(run, startedAt, startedAtPerformanceMS, seconds, hlsRecovery) {
     const grant = run.player;
     if (!grant) return;
     const player = { id: run.id, token: grant.token };
@@ -211,7 +211,7 @@ function startPlayback(run, startedAt, startedAtPerformanceMS, seconds) {
         autoplay_blocked: playerStates.autoplay_blocked, unsupported: playerStates.unsupported, error: playerStates.error,
     };
     player.collector = new PlayerDiagnostics(video, grant, {
-        startedAt, startedAtPerformanceMS,
+        startedAt, startedAtPerformanceMS, hlsRecovery,
         onChange(event) {
             if (activePlayer !== player || !statuses[event.kind]) return;
             if (['autoplay_blocked', 'unsupported', 'error'].includes(player.status) &&
@@ -1387,11 +1387,14 @@ node('protocol').addEventListener('change', () => {
     hint.hidden = !selected.receive;
     hint.textContent = selected.receive ? `填写本机 IPv4 和端口。组播示例 ${protocol.split('-')[0]}://239.1.1.1:5000?interface=en0` : '';
 });
-const simulatedHLS = new URLSearchParams(location.search).get('hls_simulator');
+const launchOptions = new URLSearchParams(location.search);
+const simulatedHLS = launchOptions.get('hls_simulator');
+let simulatorURL = '';
 if (simulatedHLS && /^[a-f0-9-]{36}$/.test(simulatedHLS)) {
     node('protocol').value = 'hls';
     node('protocol').dispatchEvent(new Event('change'));
-    node('url').value = new URL('/api/simulators/hls/stream/' + simulatedHLS + '/playlist.m3u8', location.origin).href;
+    simulatorURL = new URL('/api/simulators/hls/stream/' + simulatedHLS + '/playlist.m3u8', location.origin).href;
+    node('url').value = simulatorURL;
     node('seconds').value = '30';
     node('analyze-playback').checked = true;
 }
@@ -1401,12 +1404,14 @@ bindForm('sample', async () => {
     const startedAtPerformanceMS = performance.now();
     const seconds = node('seconds').valueAsNumber;
     const playback = node('analyze-playback').checked;
+    const url = node('url').value.trim();
+    const hlsRecovery = Boolean(simulatorURL && simulatorURL === url && launchOptions.get('hls_recovery') === '1');
     const run = await api('/runs', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ protocol: node('protocol').value, url: node('url').value.trim(), seconds, playback }),
+        body: JSON.stringify({ protocol: node('protocol').value, url, seconds, playback }),
     });
     stopPlayback(activePlayer);
-    startPlayback(run, startedAt, startedAtPerformanceMS, seconds);
+    startPlayback(run, startedAt, startedAtPerformanceMS, seconds, hlsRecovery);
     return run;
 });
 bindForm('import', () => {
