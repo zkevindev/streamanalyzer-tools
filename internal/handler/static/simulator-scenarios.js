@@ -92,6 +92,12 @@ function renderHistory(scenario) {
     exportRun.textContent = '导出结果';
     exportRun.addEventListener('click', () => download('simulator-result.json', entry));
     detail.append(' ', exportRun);
+    if (entry.evidence?.udp?.id) {
+      const report = document.createElement('a');
+      report.href = runs + '/' + encodeURIComponent(entry.evidence.udp.id) + '/report.html';
+      report.textContent = ' UDP 报告';
+      detail.append(' ', report);
+    }
     if (entry.diagnostic_id) {
       const report = document.createElement('a');
       report.href = runs + '/' + encodeURIComponent(entry.diagnostic_id) + '/report.html';
@@ -196,7 +202,7 @@ function frameState(video, player) {
   };
 }
 
-async function sampleRTSPReconnect(source, video, first) {
+async function sampleRTSPTCP(source, video, first) {
   const startedAt = Date.now();
   const startedAtPerformanceMS = performance.now();
   const run = await request(runs, {protocol: 'rtsp', url: source.stream_url, transport: 'tcp', seconds: first ? 9 : 5, playback: true});
@@ -221,12 +227,70 @@ async function sampleRTSPReconnect(source, video, first) {
       const state = await request(path);
       return state.report ? state : null;
     }, 4000, 'RTSP 采样报告生成超时。');
-    return {id: run.id, frame_at: frameAt, end_reason: completed.report.manifest.observation.end_reason,
+    return {id: run.id, frame_at: frameAt, first_rtp_ms: completed.report.rtsp?.first_rtp_ms,
+      end_reason: completed.report.manifest.observation.end_reason,
       requests: (completed.report.rtsp?.requests || []).map(({method, status_code}) => ({method, status_code}))};
   } finally {
     if (player) await request(path + '/player', player.finish(), run.player.token).catch(() => {});
     const latest = await request(path).catch(() => null);
     if (latest?.status === 'running') await request(path + '/stop', null).catch(() => {});
+  }
+}
+
+async function runRTSPFallback(entry) {
+  const video = el('scenario-player');
+  entry.evidence = {};
+  let source;
+  let udpPath;
+  try {
+    progress('使用 UDP 点播并等待首个 RTP…');
+    source = await request(onvif + '/start', {bind_ip: '127.0.0.1', silent_udp: true});
+    const udp = await request(runs, {protocol: 'rtsp', url: source.stream_url, transport: 'udp', seconds: 3});
+    udpPath = runs + '/' + udp.id;
+    entry.evidence.udp = {id: udp.id};
+    const detail = await waitFor(async () => {
+      const state = await request(udpPath);
+      if (state.status !== 'running' && !state.report) throw new Error('UDP 采样未生成报告。');
+      return state.report;
+    }, 6500, 'UDP 观测超时。');
+    const rtsp = detail.rtsp;
+    Object.assign(entry.evidence.udp, {
+      transport: rtsp?.transport, rtp_packets: rtsp?.rtp_packets,
+      end_reason: detail.manifest.observation.end_reason,
+      elapsed_ms: detail.manifest.observation.elapsed_ms,
+      requests: (rtsp?.requests || []).map(({method, status_code}) => ({method, status_code})),
+    });
+    const udpResult = entry.evidence.udp;
+    if (rtsp?.transport !== 'udp' || rtsp.rtp_packets !== 0 ||
+      !udpResult.requests.some(item => item.method === 'PLAY' && item.status_code === 200) ||
+      !['duration_limit', 'rtsp_error'].includes(udpResult.end_reason) ||
+      !detail.findings?.some(finding => finding.code === 'rtsp_udp_no_rtp')) {
+      throw new Error('UDP 报告未确认 PLAY 成功后无 RTP。');
+    }
+    const fallbackAt = Date.now();
+    entry.evidence.reason = 'udp_first_rtp_timeout';
+    progress('UDP 首包超时，回退到 TCP 并等待呈帧…');
+    video.hidden = false;
+    const tcp = await sampleRTSPTCP(source, video, false);
+    entry.evidence.tcp = tcp;
+    entry.diagnostic_id = tcp.id;
+    const state = await request(onvif);
+    entry.evidence.udp_plays = state.udp_plays;
+    entry.evidence.tcp_plays = state.tcp_plays;
+    if (tcp.frame_at) entry.evidence.recovery_ms = tcp.frame_at - fallbackAt;
+    entry.passed = tcp.frame_at >= fallbackAt && Number.isFinite(tcp.first_rtp_ms) &&
+      ['DESCRIBE', 'SETUP', 'PLAY'].every(method =>
+        tcp.requests.some(item => item.method === method && item.status_code === 200)) &&
+      state.udp_plays === 1 && state.tcp_plays === 1;
+    entry.detail = entry.passed ? 'UDP 首包超时后回退 TCP · 恢复呈帧 ' + entry.evidence.recovery_ms + ' ms' :
+      'TCP 回退缺少协商、首包或呈帧证据。';
+  } finally {
+    if (udpPath) {
+      const latest = await request(udpPath).catch(() => null);
+      if (latest?.status === 'running') await request(udpPath + '/stop', null).catch(() => {});
+    }
+    if (source) await stopOwned(onvif, 'device_url', source.device_url).catch(() => {});
+    video.hidden = true;
   }
 }
 
@@ -239,7 +303,7 @@ async function runRTSPReconnect(entry) {
     source = await request(onvif + '/start', {bind_ip: '127.0.0.1', rtsp_disconnect_ms: 3000});
     video.hidden = false;
     entry.evidence = {attempts};
-    const before = await sampleRTSPReconnect(source, video, true);
+    const before = await sampleRTSPTCP(source, video, true);
     attempts.push(before);
     const state = await request(onvif);
     const outage = state.rtsp_outages?.find(item => item.profile === source.profiles[0].token);
@@ -250,7 +314,7 @@ async function runRTSPReconnect(entry) {
     progress('旧会话已断开，正在重新建立 RTSP 会话…');
     const recovered = await waitFor(async () => {
       if (attempts.length >= 12) throw new Error('已达到 RTSP 重连次数上限。');
-      const next = await sampleRTSPReconnect(source, video, false);
+      const next = await sampleRTSPTCP(source, video, false);
       attempts.push(next);
       if (next.frame_at) return next;
       await new Promise(resolve => setTimeout(resolve, 350));
@@ -405,6 +469,7 @@ el('scenario-form').addEventListener('submit', async event => {
   notice();
   try {
     if (family === 'gb') await runGB(expected, entry);
+    else if (expected === 'fallback') await runRTSPFallback(entry);
     else if (family === 'rtsp') await runRTSPReconnect(entry);
     else if (expected === 'part_delay') await runLLHLS(entry);
     else await runHLS(expected, entry);
