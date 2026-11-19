@@ -155,8 +155,12 @@ func (a *agent) outgoing(ctx context.Context, c *phoneCall, recipient sip.Uri) e
 	// next hop as INVITE even when the logical SIP domain is different.
 	proxy := sip.Uri{Scheme: "sip", Host: a.registrar.Addr().String(), Port: int(a.registrar.Port())}
 	proxy.UriParams.Add("lr", "")
+	if a.cfg.Transport != "udp" {
+		proxy.UriParams.Add("transport", a.cfg.Transport)
+		req.SetDestination(a.registrar.String())
+	}
 	req.AppendHeader(&sip.RouteHeader{Address: proxy})
-	req.SetTransport("UDP")
+	req.SetTransport(strings.ToUpper(a.cfg.Transport))
 	req.SetBody(makeOffer(c.audio.advertised, c.sdpID))
 	// Keep the SIP address of record in From; Contact contains the local socket.
 	from := &sip.FromHeader{Address: sip.Uri{Scheme: "sip", User: a.cfg.User, Host: a.cfg.Domain}}

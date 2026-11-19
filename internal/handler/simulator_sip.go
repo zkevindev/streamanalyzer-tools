@@ -18,7 +18,7 @@ func registerSIPRoutes(r *gin.Engine, simulator *sipphone.Manager) {
 		c.JSON(http.StatusOK, simulator.Status())
 	})
 	api.POST("/start", func(c *gin.Context) {
-		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 4096)
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 64<<10)
 		var cfg sipphone.Config
 		if err := c.ShouldBindJSON(&cfg); err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": "SIP 配置格式无效"})

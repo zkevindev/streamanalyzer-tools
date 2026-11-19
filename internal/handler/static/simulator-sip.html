@@ -46,17 +46,23 @@
           <fieldset id="simulator-fields" disabled>
             <div class="sim-fields">
               <div><label for="sip-host">服务器地址</label><input id="sip-host" name="host" placeholder="IPv4 或主机名" maxlength="253" required></div>
-              <div><label for="sip-port">SIP UDP 端口</label><input id="sip-port" name="port" type="number" min="1" max="65535" value="5060" required></div>
+              <div><label for="sip-transport">SIP 信令传输</label><select id="sip-transport" name="transport"><option value="udp">UDP</option><option value="tcp">TCP</option><option value="tls">TLS</option></select></div>
+              <div><label for="sip-port">服务器端口</label><input id="sip-port" name="port" type="number" min="1" max="65535" value="5060" required></div>
               <div><label for="sip-user">分机号</label><input id="sip-user" name="user" maxlength="96" required></div>
               <div><label for="sip-domain">SIP 域</label><input id="sip-domain" name="domain" maxlength="253" placeholder="默认使用服务器地址"></div>
               <div><label for="sip-username">Digest 用户名</label><input id="sip-username" name="username" placeholder="默认使用分机号" maxlength="128"></div>
               <div><label for="sip-password">密码</label><input id="sip-password" name="password" type="password" maxlength="1024" autocomplete="new-password"></div>
             </div>
+            <details id="tls-settings" class="sim-advanced" hidden>
+              <summary>TLS 证书验证</summary>
+              <div><label for="sip-tls-name">证书主机名</label><input id="sip-tls-name" name="tls_server_name" maxlength="253" placeholder="默认使用服务器地址"></div>
+              <div><label for="sip-tls-ca">附加受信 CA（PEM）</label><textarea id="sip-tls-ca" name="tls_ca_pem" maxlength="32768" rows="3"></textarea></div>
+            </details>
             <details class="sim-advanced">
               <summary>本机信令地址</summary>
               <div class="sim-fields">
                 <div><label for="sip-local-ip">本机 IPv4 地址</label><input id="sip-local-ip" name="local_ip" maxlength="15" placeholder="按服务器路由自动选择"></div>
-                <div><label for="sip-local-port">本机 UDP 端口</label><input id="sip-local-port" name="local_port" type="number" min="0" max="65535" value="0"></div>
+                <div><label for="sip-local-port">本机信令端口</label><input id="sip-local-port" name="local_port" type="number" min="0" max="65535" value="0"></div>
               </div>
             </details>
             <details class="sim-advanced">
@@ -90,7 +96,8 @@
             <div><dt>本机信令</dt><dd id="signal-local"></dd></div>
             <div><dt>服务器</dt><dd id="signal-peer"></dd></div>
           </dl>
-          <p id="registration-error" class="sim-error" hidden></p>
+          <p id="sip-stage" class="field-hint" hidden></p>
+        <p id="registration-error" class="sim-error" hidden></p>
         </form>
       </section>
       <div class="sim-monitor">

@@ -65,6 +65,8 @@ function render(next) {
   el('signal-local').textContent = status.local_address || '';
   el('signal-peer').textContent = status.registrar || '';
   setError('registration-error', status.error);
+  const labels = {connection:'建立信令连接', tls_handshake:'TLS 握手', register:'SIP 注册', digest:'SIP Digest 鉴权', registered:'已完成注册'};
+  setError('sip-stage', status.signal_stage ? [status.transport?.toUpperCase(), labels[status.signal_stage], status.signal_failure].filter(Boolean).join(' · ') : '');
 
   const call = status.call;
   el('call-state').textContent = call ? callState[call.state] || call.state : '空闲';
@@ -227,6 +229,16 @@ async function change(path, data) {
   }
 }
 
+function updateSignalTransport() {
+  const tls = el('sip-transport').value === 'tls';
+  el('tls-settings').hidden = !tls;
+  el('sip-tls-name').disabled = el('sip-tls-ca').disabled = !tls;
+  const port = el('sip-port');
+  if (port.value === '5060' && tls) port.value = '5061';
+  if (port.value === '5061' && !tls) port.value = '5060';
+}
+el('sip-transport').addEventListener('change', updateSignalTransport);
+updateSignalTransport();
 el('preset').addEventListener('change', updateButtons);
 el('registration-form').addEventListener('submit', event => {
   event.preventDefault();
