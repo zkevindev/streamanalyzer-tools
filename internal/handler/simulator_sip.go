@@ -66,6 +66,21 @@ func registerSIPRoutes(r *gin.Engine, simulator *sipphone.Manager) {
 		}
 		c.JSON(http.StatusOK, simulator.Status())
 	})
+	api.POST("/dtmf", func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 1024)
+		var input struct {
+			Digit string `json:"digit"`
+		}
+		if err := c.ShouldBindJSON(&input); err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "DTMF 按键格式无效"})
+			return
+		}
+		if err := simulator.SendDigit(input.Digit); err != nil {
+			sipActionError(c, err)
+			return
+		}
+		c.JSON(http.StatusAccepted, simulator.Status())
+	})
 	api.GET("/received.wav", func(c *gin.Context) {
 		wav, err := simulator.ReceivedAudio()
 		if err != nil {

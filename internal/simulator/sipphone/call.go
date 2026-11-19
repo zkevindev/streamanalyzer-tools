@@ -15,6 +15,12 @@ import (
 const ringTimeout = 45 * time.Second
 
 type CallStatus struct {
+	EarlyMedia      bool            `json:"early_media"`
+	EarlySend       RTPStats        `json:"early_send_rtp,omitzero"`
+	EarlyReceive    RTPStats        `json:"early_receive_rtp,omitzero"`
+	AudioReady      bool            `json:"audio_ready"`
+	DTMFKeys        string          `json:"dtmf_keys,omitempty"`
+	DigitEvents     []DigitEvent    `json:"digit_events,omitempty"`
 	Scenario        *ScenarioReport `json:"scenario,omitempty"`
 	AudioFault      string          `json:"audio_fault"`
 	SendRTP         RTPStats        `json:"send_rtp"`
@@ -33,6 +39,7 @@ type CallStatus struct {
 }
 
 type phoneCall struct {
+	dtmfSend     uint16
 	status       CallStatus
 	audio        *audioSession
 	sdpID        uint32
@@ -157,18 +164,35 @@ func (a *agent) outgoing(ctx context.Context, c *phoneCall, recipient sip.Uri) e
 	c.status.ID = req.CallID().Value()
 	a.mu.Unlock()
 
+	var earlyMedia audioParameters
+	var stopEarly func()
 	err = dialog.WaitAnswer(ctx, sipgo.AnswerOptions{Username: a.cfg.Username, Password: a.cfg.Password,
 		OnResponse: func(res *sip.Response) error {
 			if res.StatusCode == 180 || res.StatusCode == 183 {
+				var params audioParameters
+				if res.StatusCode == 183 && stopEarly == nil && len(res.Body()) > 0 {
+					_, _, params, _ = negotiateAudio(res.Body(), false)
+				}
 				a.mu.Lock()
 				if c.status.State == "dialing" {
 					c.status.State = "ringing"
+				}
+				if params.remote.IsValid() && c.status.State == "ringing" {
+					earlyMedia = params
+					c.status.EarlyMedia = true
+					if params.recv {
+						params.send = false
+						stopEarly = c.audio.run(ctx, params, true)
+					}
 				}
 				a.mu.Unlock()
 			}
 			return nil
 		},
 	})
+	if stopEarly != nil {
+		stopEarly()
+	}
 	if err != nil && (dialog.InviteResponse == nil || !dialog.InviteResponse.IsSuccess()) {
 		if errors.Is(ctx.Err(), context.Canceled) {
 			return nil
@@ -198,10 +222,13 @@ func (a *agent) outgoing(ctx context.Context, c *phoneCall, recipient sip.Uri) e
 	if err := dialog.Ack(context.Background()); err != nil {
 		return errors.New("无法发送 SIP ACK")
 	}
-	_, _, media, err := negotiateAudio(dialog.InviteResponse.Body(), false)
-	if err != nil {
-		a.sendBye(dialog.Bye)
-		return err
+	media := earlyMedia
+	if !media.remote.IsValid() || len(dialog.InviteResponse.Body()) != 0 {
+		_, _, media, err = negotiateAudio(dialog.InviteResponse.Body(), false)
+		if err != nil {
+			_ = a.sendBye(dialog.Bye)
+			return err
+		}
 	}
 	return a.connected(c, dialog.Context(), media, dialog.Bye)
 }
@@ -292,6 +319,18 @@ func (a *agent) ring(c *phoneCall, tx sip.ServerTransaction, dialog *sipgo.Dialo
 		}
 		return nil
 	}
+	var stopEarly func()
+	if a.cfg.EarlyMedia && media.send {
+		if err := dialog.Respond(183, "Session Progress", answer, sip.NewHeader("Content-Type", "application/sdp")); err != nil {
+			return errors.New("无法发送早期媒体响应")
+		}
+		a.mu.Lock()
+		c.status.EarlyMedia = true
+		a.mu.Unlock()
+		stopEarly = c.audio.run(a.ctx, media, true)
+		defer stopEarly()
+
+	}
 	timer := time.NewTimer(ringTimeout)
 	defer timer.Stop()
 	select {
@@ -309,6 +348,9 @@ func (a *agent) ring(c *phoneCall, tx sip.ServerTransaction, dialog *sipgo.Dialo
 		respond(dialog.InviteRequest, tx, 480, "Temporarily Unavailable")
 		return errors.New("呼入等待接听超时")
 	case <-c.answer:
+	}
+	if stopEarly != nil {
+		stopEarly()
 	}
 	if dialog.Context().Err() != nil {
 		return nil
@@ -412,13 +454,21 @@ func (a *agent) connected(c *phoneCall, dialog context.Context, media audioParam
 		return a.sendBye(bye)
 	}
 	c.status.State = "incall"
+	if media.send && media.dtmfPT != 0 {
+		c.dtmfSend = media.dtmfEvents
+		for i := range dtmfDigits {
+			if c.dtmfSend&(1<<i) != 0 {
+				c.status.DTMFKeys += string(dtmfDigits[i])
+			}
+		}
+	}
 	preset := a.cfg.Preset != ""
 	if preset {
 		c.status.Scenario = &ScenarioReport{State: "waiting"}
 	}
 	a.mu.Unlock()
 
-	stopAudio := c.audio.run(a.ctx, media)
+	stopAudio := c.audio.run(a.ctx, media, false)
 	presetCtx, cancelPreset := context.WithCancel(a.ctx)
 	defer cancelPreset()
 	var presetDone chan struct{}

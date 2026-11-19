@@ -18,6 +18,8 @@ type audioCodec struct {
 var codecs = []audioCodec{{"PCMU", 0}, {"PCMA", 8}}
 
 type audioParameters struct {
+	dtmfPT     uint8
+	dtmfEvents uint16
 	codec      audioCodec
 	remote     netip.AddrPort
 	send, recv bool
@@ -72,6 +74,29 @@ func negotiateAudio(body []byte, answering bool) (*sdp.SessionDescription, int, 
 				}
 			}
 		}
+		var eventPT uint8
+		var events uint16
+		for _, value := range m.Formats {
+			if mapping[value] != "TELEPHONE-EVENT/8000" {
+				continue
+			}
+			pt, err := strconv.ParseUint(value, 10, 7)
+			if err != nil || pt < 96 || !answering && pt != offeredDTMF {
+				continue
+			}
+			events = 0xffff
+			for _, attr := range media.Attributes {
+				if attr.Key == "fmtp" {
+					if number, config, ok := strings.Cut(attr.Value, " "); ok && number == value {
+						events = dtmfMask(strings.TrimSpace(config))
+					}
+				}
+			}
+			if events != 0 {
+				eventPT = uint8(pt)
+				break
+			}
+		}
 		for _, format := range m.Formats {
 			pt, err := strconv.ParseUint(format, 10, 7)
 			if err != nil {
@@ -89,7 +114,7 @@ func negotiateAudio(body []byte, answering bool) (*sdp.SessionDescription, int, 
 					}
 					return &session, i, audioParameters{
 						codec: audioCodec{codec.name, uint8(pt)}, remote: netip.AddrPortFrom(ip, uint16(m.Port.Value)),
-						send: send, recv: recv,
+						send: send, recv: recv, dtmfPT: eventPT, dtmfEvents: events,
 					}, nil
 				}
 			}
@@ -104,7 +129,7 @@ func sdpBase(local netip.AddrPort, id uint32) string {
 }
 
 func makeOffer(local netip.AddrPort, id uint32) []byte {
-	return fmt.Appendf([]byte(sdpBase(local, id)), "m=audio %d RTP/AVP 0 8\r\na=rtpmap:0 PCMU/8000\r\na=rtpmap:8 PCMA/8000\r\na=ptime:20\r\na=sendrecv\r\n", local.Port())
+	return fmt.Appendf([]byte(sdpBase(local, id)), "m=audio %d RTP/AVP 0 8 101\r\na=rtpmap:0 PCMU/8000\r\na=rtpmap:8 PCMA/8000\r\na=rtpmap:101 telephone-event/8000\r\na=fmtp:101 0-15\r\na=ptime:20\r\na=sendrecv\r\n", local.Port())
 }
 
 func makeAnswer(local netip.AddrPort, id uint32, offer *sdp.SessionDescription, accepted int, audio audioParameters) []byte {
@@ -122,8 +147,15 @@ func makeAnswer(local netip.AddrPort, id uint32, offer *sdp.SessionDescription, 
 		} else if !audio.send {
 			direction = "recvonly"
 		}
-		fmt.Fprintf(&result, "m=audio %d RTP/AVP %d\r\na=rtpmap:%d %s/8000\r\na=ptime:20\r\na=%s\r\n",
-			local.Port(), audio.codec.pt, audio.codec.pt, audio.codec.name, direction)
+		fmt.Fprintf(&result, "m=audio %d RTP/AVP %d", local.Port(), audio.codec.pt)
+		if audio.dtmfPT != 0 {
+			fmt.Fprintf(&result, " %d", audio.dtmfPT)
+		}
+		fmt.Fprintf(&result, "\r\na=rtpmap:%d %s/8000\r\n", audio.codec.pt, audio.codec.name)
+		if audio.dtmfPT != 0 {
+			fmt.Fprintf(&result, "a=rtpmap:%d telephone-event/8000\r\na=fmtp:%d %s\r\n", audio.dtmfPT, audio.dtmfPT, dtmfList(audio.dtmfEvents))
+		}
+		fmt.Fprintf(&result, "a=ptime:20\r\na=%s\r\n", direction)
 	}
 	return []byte(result.String())
 }

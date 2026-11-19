@@ -71,6 +71,7 @@
                 <div><label for="preset-duration">故障持续（毫秒）</label><input id="preset-duration" name="preset_duration_ms" type="number" min="300" max="30000" value="5000"></div>
               </div>
             </details>
+            <label class="sim-check"><input id="offer-early" type="checkbox"> 呼入振铃时发送 183 和早期测试音</label>
           </fieldset>
           <div class="sim-controls">
             <button id="register" type="submit" disabled>注册分机</button>
@@ -102,6 +103,7 @@
             <p class="muted field-hint">通话时发送 440 Hz 测试音。收到的音频可试听最近 20 秒。</p>
             <section id="call-metrics" class="sip-metrics" aria-label="RTP 音频" hidden>
               <p id="scenario-result" class="field-hint" role="status" hidden></p>
+              <p id="early-summary" class="field-hint" hidden></p>
               <p id="audio-summary" class="field-hint"></p>
               <label for="audio-fault">单向无声</label>
               <select id="audio-fault" aria-describedby="audio-fault-hint" disabled>
@@ -118,6 +120,14 @@
               <div><dt>本机音频 RTP</dt><dd id="media-local"></dd></div>
               <div><dt>对端音频 RTP</dt><dd id="media-remote"></dd></div>
             </dl>
+            <div id="dtmf-panel" class="sip-metrics" hidden>
+              <label for="dtmf-digit">DTMF 按键</label>
+              <div class="sim-controls">
+                <select id="dtmf-digit" aria-label="DTMF 按键"></select>
+                <button id="send-dtmf" class="secondary" type="button" disabled>发送按键</button>
+              </div>
+              <p id="dtmf-events" class="field-hint muted"></p>
+            </div>
             <p id="call-error" class="sim-error" hidden></p>
             <div class="sip-audio" id="received-audio" hidden>
               <button id="hear-audio" class="secondary" type="button">试听接收音频</button>
