@@ -613,6 +613,8 @@
             const player = mpegts.createPlayer({type: transport, isLive: true, url}, {
                 customLoader: captureSocketLoader(mpegts),
                 lazyLoad: false,
+                enableWorker: false,
+                enableWorkerForMSE: false,
             });
             this.releaseMedia = () => player.destroy();
             player.on(mpegts.Events.ERROR, (type, detail, info) => {
@@ -626,11 +628,14 @@
                 }
             });
             if (mpegts.Events.MEDIA_INFO) player.on(mpegts.Events.MEDIA_INFO, (info) => {
-                if (!/^(hvc1|hev1)\./.test(info?.videoCodec || '')) return;
                 const source = globalThis.MediaSource || globalThis.ManagedMediaSource;
                 // A negative capability check is conclusive. A positive one
                 // still requires the actual first-frame/playback observations.
-                if (source?.isTypeSupported && !source.isTypeSupported(`video/mp4; codecs="${info.videoCodec}"`)) {
+                const unsupportedVideo = /^(hvc1|hev1)\./.test(info?.videoCodec || '') && source?.isTypeSupported && !source.isTypeSupported(`video/mp4; codecs="${info.videoCodec}"`);
+                const opus = (info?.audioCodec || '').toLowerCase() === 'opus';
+                const opusMP4 = source?.isTypeSupported?.('audio/mp4; codecs="opus"');
+                const opusWebM = globalThis.StreamAnalyzerOpusWebM && source?.isTypeSupported?.('audio/webm; codecs="opus"');
+                if (unsupportedVideo || (opus && source?.isTypeSupported && !opusMP4 && !opusWebM)) {
                     this.event('unsupported', {code: 'browser_codec_unsupported'});
                     player.unload();
                 }

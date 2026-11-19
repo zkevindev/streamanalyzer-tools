@@ -7,6 +7,7 @@
     <link rel="stylesheet" href="/static/workbench-theme.css">
     <link rel="stylesheet" href="/static/diagnostics.css">
     <link rel="stylesheet" href="/static/onvif-discovery.css">
+    <script src="/static/opus-webm.js" defer></script>
     <script src="/static/mpegts.js" defer></script>
     <script src="/static/hls.min.js" defer></script>
     <script src="/static/player-diagnostics.js" defer></script>
@@ -71,7 +72,7 @@
                     <button type="submit">采样并保存原始流</button>
                 </div>
                 <label class="playback-option"><input id="analyze-playback" type="checkbox" aria-describedby="playback-capability-note"> 同时分析播放器体验</label>
-                <p id="playback-capability-note" class="field-hint muted" hidden>RTSP 预览复用同次采样的 RTP，在本机转封装 H.264 / H.265 / AAC-LC 后播放，H.265 需要浏览器和系统解码支持。其他编码仍可采样和 dump；不支持的音轨将明确标记并静音，不进行转码。</p>
+                <p id="playback-capability-note" class="field-hint muted" hidden>RTSP 预览复用同次采样的 RTP，在本机转封装 H.264 / H.265 / AAC-LC 后播放，H.265 需要浏览器和系统解码支持。其他编码仍可采样和 dump；不支持的音轨将明确标记并静音，不进行转码。Opus 优先使用 MP4 音频缓冲；桌面 WebKit 不支持时使用 WebM 音频缓冲，保留原始 Opus 编码与时序。</p>
             </form>
         </section>
         <section class="panel" aria-labelledby="import-heading">

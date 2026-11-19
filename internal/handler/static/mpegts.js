@@ -8696,6 +8696,9 @@ var FLVDemuxer = /** @class */ (function () {
         }
         // Identification Header
         var v = new DataView(arrayBuffer, dataOffset, dataSize);
+        // Keep the original little-endian identification header for WebM.
+        // The MP4 dOps conversion below intentionally mutates its own view.
+        var opusHead = new Uint8Array(arrayBuffer, dataOffset, dataSize).slice();
         v.setUint8(8 + 0, 0); // set version to 0
         var channelCount = v.getUint8(8 + 1); // Opus Header + 1
         v.setUint16(8 + 2, v.getUint16(8 + 2, true), false); // Big Endian to Little Endian for Pre-skip
@@ -8723,8 +8726,11 @@ var FLVDemuxer = /** @class */ (function () {
         meta.codec = misc.codec;
         meta.originalCodec = misc.originalCodec;
         meta.config = misc.config;
-        // The decode result of an opus sample is 20ms
-        meta.refSampleDuration = 20;
+        meta.opusHead = opusHead;
+        // StreamAnalyzer: RFC 6716 permits 2.5--120 ms per Opus packet.
+        // Enhanced-FLV packets carry their TOC duration below; do not route
+        // them through the fixed-duration AAC timestamp correction path.
+        meta.refSampleDuration = null;
         _utils_logger_js__WEBPACK_IMPORTED_MODULE_0__["default"].v(this.TAG, 'Parsed OpusSequenceHeader');
         if (this._isInitialMetadataDispatched()) {
             // Non-initial metadata, force dispatch (or flush) parsed frames to remuxer
@@ -8754,11 +8760,75 @@ var FLVDemuxer = /** @class */ (function () {
             this._onMediaInfo(mi);
         }
     };
+    FLVDemuxer.prototype._opusPacketDuration = function (data) {
+        // StreamAnalyzer: validate RFC 6716 packet framing, including VBR and
+        // padding. This establishes encoded duration, not successful decoding.
+        if (data.length === 0 || data.length > 65536) return 0;
+        var frameSamples = [480, 960, 1920, 2880, 480, 960, 1920, 2880,
+            480, 960, 1920, 2880, 480, 960, 480, 960,
+            120, 240, 480, 960, 120, 240, 480, 960,
+            120, 240, 480, 960, 120, 240, 480, 960][data[0] >>> 3];
+        var position = 1, end = data.length, frames = 1;
+        function size() {
+            if (position >= end) return -1;
+            var value = data[position++];
+            if (value < 252) return value;
+            if (position >= end) return -1;
+            return value + 4 * data[position++];
+        }
+        switch (data[0] & 3) {
+            case 0:
+                if (end - position > 1275) return 0;
+                break;
+            case 1:
+                frames = 2;
+                if ((end - position) % 2 || (end - position) / 2 > 1275) return 0;
+                break;
+            case 2:
+                frames = 2;
+                var first = size();
+                if (first < 0 || first > end - position || end - position - first > 1275) return 0;
+                break;
+            case 3:
+                if (position >= end) return 0;
+                var control = data[position++];
+                frames = control & 63;
+                if (!frames || frames > 48 || frameSamples * frames > 5760) return 0;
+                if (control & 64) {
+                    var padding = 0, value;
+                    do {
+                        if (position >= end) return 0;
+                        value = data[position++];
+                        padding += value === 255 ? 254 : value;
+                        if (padding > end - position) return 0;
+                    } while (value === 255);
+                    end -= padding;
+                }
+                if (!(control & 128)) {
+                    if ((end - position) % frames || (end - position) / frames > 1275) return 0;
+                } else {
+                    var total = 0;
+                    for (var index = 0; index < frames - 1; index++) {
+                        var length = size();
+                        if (length < 0) return 0;
+                        total += length;
+                    }
+                    if (total > end - position || end - position - total > 1275) return 0;
+                }
+                break;
+        }
+        return frameSamples * frames / 48;
+    };
     FLVDemuxer.prototype._parseOpusAudioData = function (arrayBuffer, dataOffset, dataSize, tagTimestamp) {
         var track = this._audioTrack;
         var data = new Uint8Array(arrayBuffer, dataOffset, dataSize);
+        var duration = this._opusPacketDuration(data);
+        if (!duration) {
+            this._onError(_demux_errors_js__WEBPACK_IMPORTED_MODULE_3__["default"].FORMAT_ERROR, 'Flv: Invalid Opus packet framing or duration');
+            return;
+        }
         var dts = this._timestampBase + tagTimestamp;
-        var opusSample = { unit: data, length: data.byteLength, dts: dts, pts: dts };
+        var opusSample = { unit: data, length: data.byteLength, dts: dts, pts: dts, duration: duration };
         track.samples.push(opusSample);
         track.length += data.length;
     };
@@ -20243,7 +20313,18 @@ var MP4Remuxer = /** @class */ (function () {
         var codec = metadata.codec;
         if (type === 'audio') {
             this._audioMeta = metadata;
-            if (metadata.codec === 'mp3' && this._mp3UseMpegAudio) {
+            var mse = typeof window !== 'undefined' && (window.MediaSource || window.ManagedMediaSource);
+            var webm = typeof window !== 'undefined' && window.StreamAnalyzerOpusWebM;
+            // WKWebView can support native Opus/WebM while rejecting
+            // Opus/fMP4. Keep the same encoded packets and receiver clock.
+            metadata.opusWebM = metadata.codec === 'opus' && metadata.opusHead && mse && mse.isTypeSupported &&
+                !mse.isTypeSupported('audio/mp4; codecs="opus"') && mse.isTypeSupported('audio/webm; codecs="opus"') &&
+                webm && typeof webm.init === 'function' && typeof webm.cluster === 'function';
+            if (metadata.opusWebM) {
+                container = 'webm';
+                metabox = webm.init(metadata.opusHead);
+            }
+            else if (metadata.codec === 'mp3' && this._mp3UseMpegAudio) {
                 // 'audio/mpeg' for MP3 audio track
                 container = 'mpeg';
                 codec = '';
@@ -20322,6 +20403,66 @@ var MP4Remuxer = /** @class */ (function () {
         this._remuxVideo(videoTrack, true);
         this._remuxAudio(audioTrack, true);
     };
+    MP4Remuxer.prototype._remuxOpusAudio = function (track) {
+        // A single MP4 trun has implicit consecutive DTS. Split at real gaps
+        // instead of stretching the preceding encoded packet across silence.
+        var remuxer = this, output = [];
+        function emit() {
+            if (!output.length) return;
+            var first = output[0], last = output[output.length - 1];
+            var bytes = 0;
+            for (var i = 0; i < output.length; i++) bytes += output[i].unit.byteLength;
+            var payload = new Uint8Array(bytes), offset = 0;
+            for (var i = 0; i < output.length; i++) {
+                payload.set(output[i].unit, offset);
+                offset += output[i].unit.byteLength;
+            }
+            var info = new _core_media_segment_info_js__WEBPACK_IMPORTED_MODULE_4__["MediaSegmentInfo"]();
+            info.beginDts = info.beginPts = first.dts;
+            info.endDts = info.endPts = last.dts + last.duration;
+            info.originalBeginDts = first.originalDts;
+            info.originalEndDts = last.originalDts + last.duration;
+            info.firstSample = new _core_media_segment_info_js__WEBPACK_IMPORTED_MODULE_4__["SampleInfo"](first.dts, first.pts, first.duration, first.originalDts, false);
+            info.lastSample = new _core_media_segment_info_js__WEBPACK_IMPORTED_MODULE_4__["SampleInfo"](last.dts, last.pts, last.duration, last.originalDts, false);
+            if (!remuxer._isLive) remuxer._audioSegmentInfoList.append(info);
+            track.samples = output;
+            track.sequenceNumber++;
+            var segment;
+            if (remuxer._audioMeta.opusWebM) {
+                segment = window.StreamAnalyzerOpusWebM.cluster(output.map(function (sample) {
+                    return {unit:sample.unit, dts:sample.opusDts, duration:sample.opusDuration};
+                }));
+            } else {
+                var moof = _mp4_generator_js__WEBPACK_IMPORTED_MODULE_1__["default"].moof(track, first.dts);
+                var mdat = _mp4_generator_js__WEBPACK_IMPORTED_MODULE_1__["default"].mdat(payload);
+                segment = remuxer._mergeBoxes(moof, mdat);
+            }
+            remuxer._onMediaSegment('audio', {type:'audio', data:segment.buffer, sampleCount:output.length, info:info});
+            output = [];
+        }
+        var samples = track.samples;
+        for (var i = 0; i < samples.length; i++) {
+            var sample = samples[i], originalDts = sample.dts - this._dtsBase;
+            if (originalDts < -0.001 || !(sample.duration > 0 && sample.duration <= 120)) continue;
+            var exactDts = originalDts;
+            // Carry only sub-ms quantisation for consecutive 2.5 ms packets.
+            if (this._audioNextDts !== undefined && Math.abs(originalDts - this._audioNextDts) < 1) {
+                exactDts = this._audioNextDts;
+            } else if (this._audioNextDts !== undefined && originalDts < Math.floor(this._audioNextDts)) {
+                continue;
+            }
+            var dts = Math.floor(exactDts);
+            var duration = Math.floor(exactDts + sample.duration) - dts;
+            if (output.length && (output.length >= 4096 || output[output.length - 1].dts + output[output.length - 1].duration !== dts)) emit();
+            output.push({dts:dts, pts:dts, cts:0, unit:sample.unit, size:sample.unit.byteLength,
+                duration:duration, originalDts:originalDts, opusDts:exactDts, opusDuration:sample.duration,
+                flags:{isLeading:0, dependsOn:1, isDependedOn:0, hasRedundancy:0}});
+            this._audioNextDts = exactDts + sample.duration;
+        }
+        emit();
+        track.samples = [];
+        track.length = 0;
+    };
     MP4Remuxer.prototype._remuxAudio = function (audioTrack, force) {
         if (this._audioMeta == null) {
             return;
@@ -20335,6 +20476,10 @@ var MP4Remuxer = /** @class */ (function () {
         var firstSegmentAfterSeek = this._dtsBaseInited && this._audioNextDts === undefined;
         var insertPrefixSilentFrame = false;
         if (!samples || samples.length === 0) {
+            return;
+        }
+        if (this._audioMeta.codec === 'opus' && samples[0].duration > 0) {
+            this._remuxOpusAudio(track);
             return;
         }
         if (samples.length === 1 && !force) {

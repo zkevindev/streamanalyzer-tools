@@ -246,6 +246,12 @@ func rtspPreviewReasonLabel(code string) string {
 
 func rtspPreviewReasonLabelFor(preview *RTSPPreviewReport, code string) string {
 	if preview != nil && preview.Version == 2 {
+		if preview.CodecCapabilitiesVersion >= 2 && code == "codec_unsupported" {
+			return "本版支持 H.264 / H.265 / AAC-LC / Opus；其他编码预览暂不支持"
+		}
+		if preview.CodecCapabilitiesVersion >= 2 && code == "opus_configuration_unsupported" {
+			return "Opus 预览仅支持单/双声道和映射族 0"
+		}
 		if code == "codec_unsupported" {
 			return "本版支持 H.264 / H.265 / AAC-LC；其他编码预览暂不支持"
 		}
