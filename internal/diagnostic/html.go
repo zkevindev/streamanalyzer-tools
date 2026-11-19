@@ -475,6 +475,10 @@ thead{color:#52657e;background:#f7f9fc}
 {{end}}
 {{template "codecRows" $.Report.Metrics}}
 </dl>
+{{if .ProgramMaps}}<h3>PMT 与媒体 PID 切换</h3>
+<div class="scroll"><table><thead><tr><th scope="col">节目 / PMT PID</th><th scope="col">切换偏移</th><th scope="col">版本</th><th scope="col">PCR PID</th><th scope="col">原媒体 PID</th><th scope="col">新媒体 PID / 首包</th></tr></thead>
+<tbody>{{range .ProgramMaps}}<tr><td>{{.Program}} / {{pid .PMTPID}}</td><td>{{.AtMS}} ms</td><td>{{.Before.Version}} → {{.After.Version}}</td><td>{{pid .Before.PCRPID}} → {{pid .After.PCRPID}}</td>
+<td>{{range .Before.Streams}}<div>{{pid .PID}}</div>{{end}}</td><td>{{range .After.Streams}}<div>{{pid .PID}} · {{if .FirstPacketMS}}{{.FirstPacketMS}} ms{{else}}未观测{{end}}</div>{{end}}</td></tr>{{end}}</tbody></table></div>{{end}}
 {{if .PIDs}}<h3>PID 明细{{if gt .PIDCount (len .PIDs)}}（显示 {{len .PIDs}} / {{.PIDCount}}）{{end}}</h3>
 <div class="scroll"><table>
 <thead><tr><th scope="col">PID</th><th scope="col">编码</th><th scope="col">流类型</th><th scope="col">TS 包数</th><th scope="col">TEI</th><th scope="col">连续计数错误</th><th scope="col">重复包</th><th scope="col">PES 起始数</th><th scope="col">PCR / PTS / DTS 计数</th></tr></thead>

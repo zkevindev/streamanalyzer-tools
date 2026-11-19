@@ -83,7 +83,7 @@ func TestMediaSimulatorDatagramFaults(t *testing.T) {
 		protocol, fault string
 		multicast       bool
 	}{
-		{"rtp-ts", "rtp_drop", false}, {"rtp-ts", "rtp_reorder", false}, {"rtp-ts", "rtp_duplicate", false}, {"udp-ts", "continuity", true},
+		{"rtp-ts", "rtp_drop", false}, {"rtp-ts", "rtp_reorder", false}, {"rtp-ts", "rtp_duplicate", false}, {"rtp-ts", "pmt_pid_switch", false}, {"udp-ts", "continuity", true},
 	} {
 		t.Run(tc.fault, func(t *testing.T) {
 			t.Parallel()
@@ -111,7 +111,11 @@ func TestMediaSimulatorDatagramFaults(t *testing.T) {
 			}
 			config, _ := json.Marshal(cfg)
 			source := decodeDiagnostic[mediasource.Status](t, diagnosticRequest(t, server, "POST", api+"/start", http.StatusCreated, config))
-			request, _ := json.Marshal(diagnostic.SampleRequest{Protocol: tc.protocol, URL: source.URL, Seconds: 4})
+			seconds := 4
+			if tc.fault == "pmt_pid_switch" {
+				seconds = 5
+			}
+			request, _ := json.Marshal(diagnostic.SampleRequest{Protocol: tc.protocol, URL: source.URL, Seconds: seconds})
 			run := decodeDiagnostic[diagnostic.Run](t, diagnosticRequest(t, server, "POST", "/api/diagnostics/runs", http.StatusAccepted, request))
 			time.Sleep(150 * time.Millisecond)
 			diagnosticRequest(t, server, "POST", api+"/send", http.StatusAccepted, nil)
@@ -132,6 +136,32 @@ func TestMediaSimulatorDatagramFaults(t *testing.T) {
 			case "rtp_duplicate":
 				if m.RTPDuplicates != 1 {
 					t.Fatalf("wrong RTP duplicates: %+v", m)
+				}
+			case "pmt_pid_switch":
+				if m.RTPMissing != 0 || m.RTPOutOfOrder != 0 || m.RTPDuplicates != 0 || m.ContinuityErrors != 0 || m.PSIErrors != 0 ||
+					len(m.ProgramMaps) != 1 {
+					t.Fatalf("PMT/PID switch introduced a transport fault or lacked map evidence: %+v", m)
+				}
+				change := m.ProgramMaps[0]
+				if change.Before.Version == change.After.Version || change.Before.PCRPID != 256 || change.After.PCRPID != 300 || len(change.After.Streams) != 2 {
+					t.Fatalf("wrong program map: %+v", change)
+				}
+				for i, after := range change.After.Streams {
+					if after.PID != uint16(300+i) || after.FirstPacketMS == nil || *after.FirstPacketMS < change.AtMS {
+						t.Fatalf("missing first packet after switching PID: %+v", after)
+					}
+				}
+				html := diagnosticRequest(t, server, "GET", "/api/diagnostics/runs/"+run.ID+"/report.html", http.StatusOK, nil)
+				if !strings.Contains(string(html), "PMT 与媒体 PID 切换") {
+					t.Fatal("report does not render the PID switch")
+				}
+				bundle := diagnosticRequest(t, server, "GET", "/api/diagnostics/runs/"+run.ID+"/evidence.zip", http.StatusOK, nil)
+				replay := decodeDiagnostic[diagnostic.Run](t, diagnosticRequest(t, server, "POST", "/api/diagnostics/import", http.StatusCreated, bundle))
+				offline := waitDiagnostic(t, server, "/api/diagnostics/runs/"+replay.ID)
+				beforeJSON, _ := json.Marshal(m.ProgramMaps)
+				afterJSON, _ := json.Marshal(offline.Report.MPEGTS.ProgramMaps)
+				if string(beforeJSON) != string(afterJSON) {
+					t.Fatalf("offline replay lost program map evidence: %s vs %s", beforeJSON, afterJSON)
 				}
 			case "continuity":
 				if m.ContinuityErrors != 1 {

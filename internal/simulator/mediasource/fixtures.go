@@ -59,6 +59,14 @@ func planTS(raw []byte, fault string) ([]chunk, error) {
 	if len(raw) < tsPacketBytes || len(raw)%tsPacketBytes != 0 {
 		return nil, errors.New("TS 分包长度无效")
 	}
+	switchOffset := len(raw)
+	if fault == "pmt_pid_switch" {
+		var err error
+		switchOffset, err = tsMapSwitch(raw)
+		if err != nil {
+			return nil, err
+		}
+	}
 	var plan []chunk
 	batchStart := 0
 	injected, hit := false, false
@@ -75,6 +83,14 @@ func planTS(raw []byte, fault string) ([]chunk, error) {
 			return nil, errors.New("TS 同步字无效")
 		}
 		pid := uint16(p[1]&0x1f)<<8 | uint16(p[2])
+		if offset >= switchOffset {
+			if err := switchFixturePacket(p, pid); err != nil {
+				return nil, err
+			}
+			if offset == switchOffset {
+				injected, hit = true, true
+			}
+		}
 		if !injected && offset >= tsRate/4 && pid == 256 {
 			switch {
 			case fault == "continuity" && p[1]&0x40 == 0 && p[3]&0x10 != 0:

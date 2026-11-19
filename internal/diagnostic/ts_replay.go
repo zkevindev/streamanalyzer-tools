@@ -14,26 +14,27 @@ const (
 )
 
 type MPEGTSMetrics struct {
-	Packets          int                `json:"packets"`
-	PacketSize       int                `json:"packet_size,omitempty"`
-	TransportErrors  int                `json:"transport_errors"`
-	SyncLossBytes    int64              `json:"sync_loss_bytes"`
-	TrailingBytes    int64              `json:"trailing_bytes,omitempty"`
-	ContinuityErrors int                `json:"continuity_errors"`
-	Duplicates       int                `json:"duplicates"`
-	MalformedPackets int                `json:"malformed_packets"`
-	PATSections      int                `json:"pat_sections"`
-	PMTSections      int                `json:"pmt_sections"`
-	PCRPIDs          int                `json:"pcr_pids"`
-	MaxPCRGapMS      int64              `json:"max_pcr_gap_ms,omitempty"`
-	PSIErrors        int                `json:"psi_errors,omitempty"`
-	PIDCount         int                `json:"pid_count"`
-	RTPDatagrams     int                `json:"rtp_datagrams"`
-	RTPMissing       int                `json:"rtp_missing"`
-	RTPOutOfOrder    int                `json:"rtp_out_of_order"`
-	RTPDuplicates    int                `json:"rtp_duplicates"`
-	RTPInvalid       int                `json:"rtp_invalid"`
-	PIDs             []MPEGTSPIDMetrics `json:"pids"`
+	ProgramMaps      []TSProgramMapChange `json:"program_map_changes,omitempty"`
+	Packets          int                  `json:"packets"`
+	PacketSize       int                  `json:"packet_size,omitempty"`
+	TransportErrors  int                  `json:"transport_errors"`
+	SyncLossBytes    int64                `json:"sync_loss_bytes"`
+	TrailingBytes    int64                `json:"trailing_bytes,omitempty"`
+	ContinuityErrors int                  `json:"continuity_errors"`
+	Duplicates       int                  `json:"duplicates"`
+	MalformedPackets int                  `json:"malformed_packets"`
+	PATSections      int                  `json:"pat_sections"`
+	PMTSections      int                  `json:"pmt_sections"`
+	PCRPIDs          int                  `json:"pcr_pids"`
+	MaxPCRGapMS      int64                `json:"max_pcr_gap_ms,omitempty"`
+	PSIErrors        int                  `json:"psi_errors,omitempty"`
+	PIDCount         int                  `json:"pid_count"`
+	RTPDatagrams     int                  `json:"rtp_datagrams"`
+	RTPMissing       int                  `json:"rtp_missing"`
+	RTPOutOfOrder    int                  `json:"rtp_out_of_order"`
+	RTPDuplicates    int                  `json:"rtp_duplicates"`
+	RTPInvalid       int                  `json:"rtp_invalid"`
+	PIDs             []MPEGTSPIDMetrics   `json:"pids"`
 }
 
 type MPEGTSPIDMetrics struct {
@@ -51,23 +52,25 @@ type MPEGTSPIDMetrics struct {
 }
 
 type tsAnalyzer struct {
-	onMedia    func(Event)
-	report     Report
-	seen       map[string]int
-	pids       map[uint16]*tsPID
-	pmt        map[uint16]uint16
-	patID      uint16
-	patVersion byte
-	patSeen    bool
-	pcrPIDs    map[uint16]bool
-	rtp        map[uint32]*tsRTPSource
-	lastSSRC   uint32
-	hasSSRC    bool
-	rtpGap     []Event
-	generation uint64
+	pendingPMTPackets map[uint16][]*TSProgramPID
+	onMedia           func(Event)
+	report            Report
+	seen              map[string]int
+	pids              map[uint16]*tsPID
+	pmt               map[uint16]uint16
+	patID             uint16
+	patVersion        byte
+	patSeen           bool
+	pcrPIDs           map[uint16]bool
+	rtp               map[uint32]*tsRTPSource
+	lastSSRC          uint32
+	hasSSRC           bool
+	rtpGap            []Event
+	generation        uint64
 }
 
 type tsPID struct {
+	lastMap         *TSProgramMap
 	mediaKind       string
 	mediaGeneration uint64
 	generation      uint64
@@ -96,7 +99,7 @@ func newTSAnalyzer(manifest Manifest) *tsAnalyzer {
 			Metrics: Metrics{MediaTimingUnit: "pes"},
 		},
 		seen: make(map[string]int), pids: make(map[uint16]*tsPID), pmt: make(map[uint16]uint16),
-		pcrPIDs: make(map[uint16]bool), rtp: make(map[uint32]*tsRTPSource),
+		pendingPMTPackets: make(map[uint16][]*TSProgramPID), pcrPIDs: make(map[uint16]bool), rtp: make(map[uint32]*tsRTPSource),
 	}
 }
 
@@ -260,6 +263,9 @@ func (a *tsAnalyzer) inspectPacket(p []byte, event Event, ordered bool) {
 	copy(state.prev[:], p)
 	if identical {
 		return
+	}
+	if payload && len(a.pendingPMTPackets) != 0 {
+		a.firstAfterProgramMap(id, event.ArrivalMS)
 	}
 	if packet.hasPCR {
 		a.observePCR(state, packet.pcr, event)
