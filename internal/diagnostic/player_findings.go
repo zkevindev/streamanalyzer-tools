@@ -42,6 +42,7 @@ func addPlayerFindings(report *Report) {
 	case "error":
 		add("player_error", "warn", "播放器发生播放错误，记录已保留。", "查看播放器事件并对照同一时间的拉流报告。", player.StartOffsetMS, player.StartOffsetMS+player.ElapsedMS)
 	}
+	addPlayerSchedulingFindings(report)
 	slices.SortStableFunc(report.Findings, func(a, b Finding) int { return cmp.Compare(a.StartMS, b.StartMS) })
 	for i := range report.Findings {
 		report.Findings[i].ID = fmt.Sprintf("F%03d", i+1)

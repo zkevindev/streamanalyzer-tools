@@ -237,6 +237,7 @@ func (s *Service) explainStall(ctx context.Context, runID, caseID string) (Expla
 	// unrelated requests from the rest of the run out of a scoped model call.
 	scoped.PlayerNetwork = nil
 	player := *scoped.Player
+	player.Scheduling = item.Correlation.Scheduling
 	player.Stalls = []PlayerStall{item.Stall}
 	player.StallCount = 1
 	player.TotalStallMS = item.Stall.DurationMS

@@ -92,6 +92,13 @@ func correlateStall(dir string, report Report, id string, stallIndex int) (Stall
 		result.Notes = append(result.Notes, "所选时间窗口没有播放器缓冲样本，无法补推缓冲变化。")
 	}
 
+	result.Scheduling = schedulingWindow(report.Player.Scheduling, result.WindowStartMS, result.WindowEndMS)
+	for _, finding := range schedulingCaseFindings(result.Scheduling, stall) {
+		add(finding.Code, finding.Severity, finding.Message, finding.StartMS, finding.EndMS, finding.Evidence...)
+	}
+	if result.Scheduling != nil {
+		result.Notes = append(result.Notes, "页面调度按已记录的前台播放覆盖裁剪，长任务与定时器延后分开统计；调度阻塞期间可能缺少缓冲样本，不推断其变化。")
+	}
 	correlatePlayerRequests(&result, report, stall)
 	for _, request := range result.PlayerRequests {
 		if code := playerRequestFindingCode(request); code != "" {

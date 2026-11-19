@@ -7,6 +7,9 @@
     const maxEvents = 3000;
     const maxSamples = 1401;
     const maxFrameCounter = 1000000000;
+    const maxSchedulingIntervals = 256;
+    const minLongTaskMS = 50;
+    const minTimerDelayMS = 100;
     const socketNormalClose = 1000;
     const socketUnavailable = 1008;
 
@@ -133,6 +136,11 @@
             this.canPlay = false;
             this.measurementEnded = false;
             this.finalRecording = null;
+            this.scheduling = null;
+            this.schedulingObserver = null;
+            this.schedulingStopped = false;
+            this.longTaskKeys = new Set();
+            this.nextSampleDeadline = null;
         }
 
         elapsed() {
@@ -144,8 +152,14 @@
             if (['pause', 'seeking', 'ended', 'error', 'autoplay_blocked', 'unsupported', 'hidden', 'stop'].includes(kind)) {
                 this.framePlaybackActive = false;
                 this.resetFrameBaseline();
+                this.resetSchedulingBaseline();
             } else if (kind === 'playing') {
                 this.framePlaybackActive = !this.measurementEnded && !document.hidden;
+                this.resetSchedulingBaseline();
+                if (this.scheduling && this.framePlaybackActive && this.hasPlayed &&
+                    !this.video.paused && !this.video.seeking && !this.video.ended && !this.video.error) {
+                    this.nextSampleDeadline = this.elapsed() + sampleIntervalMS;
+                }
             }
             if (this.events.length >= maxEvents - (kind === 'stop' ? 0 : 1)) return;
             this.events.push({at_ms: this.elapsed(), kind, ...detail});
@@ -218,6 +232,112 @@
             this.activeFrameElapsed = null;
         }
 
+        resetSchedulingBaseline() {
+            this.nextSampleDeadline = null;
+        }
+
+        observeScheduling() {
+            if (this.scheduling) return;
+            const at = this.elapsed();
+            this.scheduling = {
+                longtask_support: 'unsupported',
+                observation_start_ms: at,
+                observation_end_ms: at,
+                long_tasks: [],
+                timer_delays: [],
+                dropped_long_tasks: 0,
+                dropped_timer_delays: 0,
+            };
+            let observer;
+            try {
+                const Observer = globalThis.PerformanceObserver;
+                if (!Observer?.supportedEntryTypes?.includes('longtask')) return;
+                observer = new Observer((list) => {
+                    this.recordLongTasks(list.getEntries());
+                });
+                observer.observe({type: 'longtask', buffered: true});
+                this.schedulingObserver = observer;
+                this.scheduling.longtask_support = 'supported';
+            } catch {
+                observer?.disconnect();
+                // The timer observation remains available in WebViews without Long Tasks.
+            }
+        }
+
+        recordLongTasks(entries) {
+            const scheduling = this.scheduling;
+            if (!this.active || this.schedulingStopped || !scheduling || scheduling.longtask_support !== 'supported') return;
+            const end = this.elapsed();
+            const intervals = [];
+            for (const entry of entries) {
+                if (!Number.isFinite(entry.startTime) || entry.startTime < 0 || !Number.isFinite(entry.duration) || entry.duration < minLongTaskMS) continue;
+                const start = Math.max(scheduling.observation_start_ms, Math.round(entry.startTime - this.startClock));
+                const finish = Math.round(entry.startTime + entry.duration - this.startClock);
+                if (finish > end || finish - start < minLongTaskMS) continue;
+                intervals.push({start_ms: start, end_ms: finish});
+            }
+            intervals.sort((a, b) => a.start_ms - b.start_ms || a.end_ms - b.end_ms);
+            for (const interval of intervals) {
+                const key = `${interval.start_ms}:${interval.end_ms}`;
+                if (this.longTaskKeys.has(key)) continue;
+                // Native long tasks are nonoverlapping and >= 50 ms: the observed
+                // time window bounds this set even after the saved interval cap.
+                this.longTaskKeys.add(key);
+                const previous = scheduling.long_tasks.at(-1);
+                if (scheduling.long_tasks.length >= maxSchedulingIntervals || (previous && interval.start_ms < previous.end_ms)) {
+                    scheduling.dropped_long_tasks = Math.min(maxFrameCounter, scheduling.dropped_long_tasks + 1);
+                    continue;
+                }
+                scheduling.long_tasks.push(interval);
+            }
+        }
+
+        drainLongTasks() {
+            if (!this.schedulingObserver || this.schedulingStopped) return;
+            this.recordLongTasks(this.schedulingObserver.takeRecords());
+        }
+
+        sampleTick() {
+            const scheduling = this.scheduling;
+            const video = this.video;
+            if (scheduling && this.active && !this.schedulingStopped && this.framePlaybackActive &&
+                this.hasPlayed && !video.paused && !video.seeking && !video.ended && !video.error && !document.hidden) {
+                const at = this.elapsed();
+                if (this.nextSampleDeadline !== null && at - this.nextSampleDeadline >= minTimerDelayMS) {
+                    if (scheduling.timer_delays.length < maxSchedulingIntervals) {
+                        scheduling.timer_delays.push({start_ms: this.nextSampleDeadline, end_ms: at});
+                    } else scheduling.dropped_timer_delays = Math.min(maxFrameCounter, scheduling.dropped_timer_delays + 1);
+                }
+                // Reset from the actual tick; one delayed tick must not create catch-up gaps.
+                this.nextSampleDeadline = at + sampleIntervalMS;
+            } else this.resetSchedulingBaseline();
+            this.sample();
+        }
+
+        schedulingSnapshot() {
+            const scheduling = this.scheduling;
+            if (!scheduling) {
+                const at = this.elapsed();
+                return {longtask_support: 'unsupported', observation_start_ms: at, observation_end_ms: at,
+                    long_tasks: [], timer_delays: [], dropped_long_tasks: 0, dropped_timer_delays: 0};
+            }
+            if (!this.schedulingStopped) scheduling.observation_end_ms = Math.max(scheduling.observation_end_ms, this.elapsed());
+            return {...scheduling,
+                long_tasks: scheduling.long_tasks.map((interval) => ({...interval})),
+                timer_delays: scheduling.timer_delays.map((interval) => ({...interval})),
+            };
+        }
+
+        stopScheduling() {
+            if (this.schedulingStopped) return;
+            this.drainLongTasks();
+            if (this.scheduling) this.scheduling.observation_end_ms = Math.max(this.scheduling.observation_end_ms, this.elapsed());
+            this.schedulingStopped = true;
+            this.schedulingObserver?.disconnect();
+            this.schedulingObserver = null;
+            this.resetSchedulingBaseline();
+        }
+
         observeFrame() {
             if (!this.active || (this.measurementEnded && this.firstFrame)) return false;
             try {
@@ -267,7 +387,10 @@
             const video = this.video;
             for (const type of ['waiting', 'pause', 'seeking', 'seeked', 'ended']) {
                 this.listen(video, type, () => {
-                    if (type !== 'waiting') this.resetFrameBaseline();
+                    if (type !== 'waiting') {
+                        this.resetFrameBaseline();
+                        this.resetSchedulingBaseline();
+                    }
                     if (type !== 'waiting' || !this.measurementEnded) this.event(type);
                 });
             }
@@ -286,6 +409,7 @@
             });
             this.listen(document, 'visibilitychange', () => {
                 this.resetFrameBaseline();
+                this.resetSchedulingBaseline();
                 const hidden = document.hidden;
                 this.event(hidden ? 'hidden' : 'visible');
                 if (!hidden && this.hasPlayed && !video.paused && !video.seeking && video.readyState >= 3) {
@@ -303,13 +427,14 @@
         start() {
             if (this.active || this.finalRecording) return;
             this.active = true;
+            this.observeScheduling();
             this.observeVideo();
             this.event('start');
             if (!this.active) return;
             if (document.hidden) this.event('hidden');
             if (!this.active) return;
             this.sample();
-            this.timer = setInterval(() => this.sample(), sampleIntervalMS);
+            this.timer = setInterval(() => this.sampleTick(), sampleIntervalMS);
             this.deadline = setTimeout(() => this.finish(), maxElapsedMS - this.elapsed());
             try {
                 const transport = this.grant.transport;
@@ -415,8 +540,10 @@
         }
 
         recording(complete) {
+            this.drainLongTasks();
+            const scheduling = this.schedulingSnapshot();
             return {
-                version: 2,
+                version: 3,
                 revision: ++this.revision,
                 started_at: this.startedAt.toISOString(),
                 elapsed_ms: this.elapsed(),
@@ -425,11 +552,13 @@
                 source: this.source,
                 events: this.events.slice(),
                 samples: this.samples.slice(),
+                scheduling,
             };
         }
 
         cutoff() {
             if (!this.active || this.measurementEnded) return;
+            this.stopScheduling();
             // The decoder can still present a buffered first frame after capture ends.
             this.measurementEnded = true;
             this.resetFrameBaseline();

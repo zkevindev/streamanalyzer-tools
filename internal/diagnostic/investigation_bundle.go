@@ -224,7 +224,7 @@ func importedStallEvidence(dir string, report *Report, entries map[string]*zip.F
 
 func emptyStallCorrelation(value StallCorrelation) bool {
 	return value.Source == "" && value.WindowStartMS == 0 && value.WindowEndMS == 0 && len(value.BufferSamples) == 0 && len(value.Gaps) == 0 &&
-		len(value.Keyframes) == 0 && len(value.Requests) == 0 && len(value.PlayerRequests) == 0 && !value.PlayerNetworkRecorded && len(value.Findings) == 0 && len(value.Notes) == 0
+		len(value.Keyframes) == 0 && len(value.Requests) == 0 && len(value.PlayerRequests) == 0 && !value.PlayerNetworkRecorded && value.Scheduling == nil && len(value.Findings) == 0 && len(value.Notes) == 0
 }
 
 func loadStallImages(dir string, report Report) map[string][]byte {

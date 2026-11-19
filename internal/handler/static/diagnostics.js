@@ -594,6 +594,70 @@ function renderVideoWindowSamples(samples) {
     return block;
 }
 
+const schedulingRowLimit = 200;
+const schedulingMethodNote = '调度区间按前台播放和观测窗口裁切，区间数与时长表示裁切后的有效片段。定时器每 250 ms 检查，仅采集原始延后 ≥100 ms 的记录；裁切后的区间可能更短。';
+const schedulingBoundaryNote = '长任务和定时器延后分别观测。页面负载、系统调度等都可能影响结果，不能单独证明 CPU 瓶颈或解码故障；与卡顿重合用于安排进一步验证。';
+const schedulingSupportLabels = { supported: '支持 Long Tasks API', unsupported: '当前环境不支持 Long Tasks API' };
+
+function schedulingMetricsList(metrics) {
+    const list = element('dl', '', 'metrics scheduling-metrics');
+    for (const [label, value] of [['区间数', videoObservedCount(metrics?.count)], ['区间累计时长', videoObservedTime(metrics?.total_ms)], ['最长区间', videoObservedTime(metrics?.max_ms)]]) {
+        const item = element('div', '');
+        item.append(element('dt', label), element('dd', value));
+        list.append(item);
+    }
+    return list;
+}
+
+function renderPlayerScheduling(scheduling, stall) {
+    const block = element('section', '', 'player-scheduling-report');
+    block.append(element(stall ? 'h5' : 'h4', stall ? '补查窗口页面调度' : '页面调度观测'));
+    if (!scheduling) {
+        block.append(element('p', stall ? '该补查未包含页面调度数据，可重新采样后补查。' : '该记录未采集页面调度数据，重新采样可补充长任务和定时器延后证据。', 'timing-note muted'));
+        return block;
+    }
+    const coverage = element('dl', '', 'metrics scheduling-coverage');
+    for (const [label, value] of [
+        ['长任务接口', schedulingSupportLabels[scheduling.longtask_support] || '接口支持状态未记录'],
+        ['观测区间', `${videoObservedTime(scheduling.observation_start_ms)}–${videoObservedTime(scheduling.observation_end_ms)}`],
+        ['前台播放有效覆盖', videoObservedTime(scheduling.active_coverage_ms)],
+    ]) {
+        const item = element('div', '');
+        item.append(element('dt', label), element('dd', value));
+        coverage.append(item);
+    }
+    block.append(coverage, element('p', schedulingMethodNote, 'timing-note muted'), element('p', schedulingBoundaryNote, 'timing-note muted'));
+    if (scheduling.longtask_support === 'unsupported') block.append(element('p', '长任务未观测不代表没有长任务，定时器延后仍单独记录。', 'timing-note muted scheduling-capability-note'));
+    if (scheduling.active_coverage_ms === 0) block.append(element('p', '本记录没有可用于统计的前台播放覆盖区间，异常区间数保持未观测。', 'timing-note muted scheduling-coverage-note'));
+    const longTasks = scheduling.longtask_support === 'supported' ? scheduling.long_tasks : null;
+    for (const [kind, title, metrics] of [['long_task', '浏览器长任务', longTasks], ['timer_delay', '定时器延后（原始延后 ≥100 ms）', scheduling.timer_delays]]) {
+        const group = element('section', '', 'player-scheduling-kind');
+        group.dataset.kind = kind;
+        group.append(element(stall ? 'h6' : 'h5', title), schedulingMetricsList(metrics));
+        block.append(group);
+    }
+    if (scheduling.dropped_long_tasks > 0 || scheduling.dropped_timer_delays > 0) block.append(element('p', `采集上限外未记录：长任务 ${scheduling.dropped_long_tasks || 0} 条，定时器延后 ${scheduling.dropped_timer_delays || 0} 条。当前统计可能不完整。`, 'timing-note muted scheduling-dropped'));
+    const intervals = [
+        ...(longTasks?.intervals || []).map((interval) => ({ ...interval, kind: '浏览器长任务' })),
+        ...(scheduling.timer_delays?.intervals || []).map((interval) => ({ ...interval, kind: '定时器延后' })),
+    ].sort((left, right) => left.start_ms - right.start_ms || left.end_ms - right.end_ms);
+    if (!intervals.length) block.append(element('p', '当前记录未包含可展示的调度区间。', 'timing-note muted'));
+    else {
+        const rows = intervals.slice(0, schedulingRowLimit).map((interval) => {
+            const row = [interval.kind, interval.start_ms, interval.end_ms, interval.end_ms - interval.start_ms];
+            if (stall) row.push(Math.max(0, Math.min(interval.end_ms, stall.end_ms) - Math.max(interval.start_ms, stall.start_ms)));
+            return row;
+        });
+        const table = renderTable(['类型', '开始偏移 (ms)', '结束偏移 (ms)', '有效区间时长 (ms)', ...(stall ? ['与本次卡顿重合 (ms)'] : [])], rows);
+        table.tabIndex = 0;
+        table.setAttribute('role', 'region');
+        table.setAttribute('aria-label', '页面调度有效区间，可横向滚动');
+        block.append(table);
+        if (intervals.length > rows.length) block.append(element('p', `页面仅展示前 ${rows.length} 个有效区间，另有 ${intervals.length - rows.length} 个已保存区间可在报告 JSON 或证据包中查看。`, 'timing-note muted scheduling-omitted'));
+    }
+    return block;
+}
+
 function renderPlayerReport(player, elapsed) {
     node('player-report').hidden = !player;
     if (!player) return;
@@ -617,6 +681,7 @@ function renderPlayerReport(player, elapsed) {
     const threshold = player.stall_threshold_ms > 0 ? `至少 ${player.stall_threshold_ms} ms 的` : '';
     node('player-method').textContent = `卡顿统计从开始播放到采样结束，计入${threshold}等待。暂停、跳转和后台期间停止计时。正常结束后可短暂补记首屏。`;
     renderPlayerVideo(player.video);
+    node('player-scheduling-report').replaceChildren(renderPlayerScheduling(player.scheduling));
     const stalls = player.stalls || [];
     const samples = player.buffer_samples || [];
     node('player-buffer').replaceChildren(...(samples.length ? [renderBufferChart(samples, stalls, elapsed)] : []));
@@ -877,6 +942,7 @@ function renderInvestigation(item) {
     if (c.buffer_samples?.length) card.append(renderBufferChart(c.buffer_samples, [item.stall], c.window_end_ms, c.window_start_ms));
     const videoSamples = renderVideoWindowSamples(c.buffer_samples);
     if (videoSamples) card.append(videoSamples);
+    card.append(renderPlayerScheduling(c.scheduling, item.stall));
     card.append(element('h5', '关联收流间隔'));
     if (c.gaps?.length) card.append(renderTable(['媒体', '开始偏移', '结束偏移', '间隔'], c.gaps.map((gap) => [tagLabels[gap.kind] || gap.kind, time(gap.start_ms), time(gap.end_ms), time(gap.duration_ms)])));
     else card.append(element('p', '窗口内没有可关联的音视频接收间隔记录。', 'timing-note muted'));

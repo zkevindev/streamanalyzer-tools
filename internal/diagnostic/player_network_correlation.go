@@ -59,9 +59,9 @@ func playerRequestFindingCode(request PlayerNetworkRequest) string {
 	return ""
 }
 
-func assessStall(item StallInvestigation) *StallAssessment {
+func assessStallV2(item StallInvestigation) *StallAssessment {
 	result := assessStallV1(item)
-	result.Version = stallAssessmentVersion
+	result.Version = "stall-assessment/2"
 	if !item.Correlation.PlayerNetworkRecorded && len(item.Correlation.PlayerRequests) == 0 {
 		return result
 	}
@@ -111,7 +111,15 @@ func assessStall(item StallInvestigation) *StallAssessment {
 func recomputeStallAssessment(item StallInvestigation, version string) (*StallAssessment, error) {
 	switch version {
 	case "stall-assessment/1":
+		if item.Correlation.PlayerNetworkRecorded || len(item.Correlation.PlayerRequests) > 0 || item.Correlation.Scheduling != nil {
+			return nil, fmt.Errorf("%w: 排查分层版本与证据类型不一致", ErrInvalid)
+		}
 		return assessStallV1(item), nil
+	case "stall-assessment/2":
+		if item.Correlation.Scheduling != nil {
+			return nil, fmt.Errorf("%w: 排查分层版本与证据类型不一致", ErrInvalid)
+		}
+		return assessStallV2(item), nil
 	case stallAssessmentVersion:
 		return assessStall(item), nil
 	default:
