@@ -27,6 +27,7 @@ var (
 )
 
 type Config struct {
+	EarlyMedia       bool   `json:"early_media,omitempty"`
 	Preset           string `json:"preset,omitempty"`
 	PresetDelayMS    int    `json:"preset_delay_ms,omitempty"`
 	PresetDurationMS int    `json:"preset_duration_ms,omitempty"`
@@ -258,6 +259,11 @@ func (a *agent) snapshot() Status {
 		call.ReceiveRTP = a.call.audio.received.snapshot()
 		call.PacketsSent = call.SendRTP.Packets
 		call.PacketsReceived = call.ReceiveRTP.Packets
+		call.EarlySend, call.EarlyReceive = a.call.audio.earlySent.snapshot(), a.call.audio.earlyReceived.snapshot()
+		a.call.audio.mu.Lock()
+		call.DigitEvents = slices.Clone(a.call.audio.digitEvents)
+		call.AudioReady = len(a.call.audio.samples) > 0
+		a.call.audio.mu.Unlock()
 		call.AudioFault = audioFault(a.call.audio.fault.Load()).String()
 		if call.Scenario != nil {
 			report := *call.Scenario

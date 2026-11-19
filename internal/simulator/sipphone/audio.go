@@ -22,11 +22,16 @@ const (
 )
 
 type audioSession struct {
-	conn     *net.UDPConn
-	local    netip.AddrPort
-	sent     rtpStats
-	received rtpStats
-	fault    atomic.Uint32
+	earlySent     rtpStats
+	earlyReceived rtpStats
+	digits        chan uint8
+	digitEvents   []DigitEvent
+	nextHeader    rtp.Header
+	conn          *net.UDPConn
+	local         netip.AddrPort
+	sent          rtpStats
+	received      rtpStats
+	fault         atomic.Uint32
 
 	mu      sync.Mutex
 	samples []int16
@@ -38,26 +43,31 @@ func openAudio(ip netip.Addr) (*audioSession, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &audioSession{conn: conn, local: conn.LocalAddr().(*net.UDPAddr).AddrPort()}, nil
+	return &audioSession{conn: conn, digits: make(chan uint8, 8), local: conn.LocalAddr().(*net.UDPAddr).AddrPort()}, nil
 }
 
-func (a *audioSession) run(ctx context.Context, params audioParameters) func() {
+func (a *audioSession) run(ctx context.Context, params audioParameters, early bool) func() {
 	ctx, cancel := context.WithCancel(ctx)
 	var media sync.WaitGroup
 	if params.send {
-		media.Go(func() { a.sendTone(ctx, params) })
+		media.Go(func() { a.sendTone(ctx, params, early) })
 	}
 	if params.recv {
-		media.Go(func() { a.receive(params) })
+		media.Go(func() { a.receive(params, early) })
 	}
-	return func() {
+	return sync.OnceFunc(func() {
 		cancel()
-		a.conn.Close()
+		if params.recv {
+			_ = a.conn.SetReadDeadline(time.Now())
+		}
 		media.Wait()
-	}
+		if params.recv {
+			_ = a.conn.SetReadDeadline(time.Time{})
+		}
+	})
 }
 
-func (a *audioSession) sendTone(ctx context.Context, params audioParameters) {
+func (a *audioSession) sendTone(ctx context.Context, params audioParameters, early bool) {
 	tone := make([]byte, 800) // 100 ms, exactly 44 periods of 440 Hz.
 	encode := g711.EncodeUlawFrame
 	if params.codec.name == "PCMA" {
@@ -68,23 +78,51 @@ func (a *audioSession) sendTone(ctx context.Context, params audioParameters) {
 	}
 	ticker := time.NewTicker(20 * time.Millisecond)
 	defer ticker.Stop()
-	header := rtp.Header{Version: 2, Marker: true, PayloadType: params.codec.pt,
-		SSRC: rand.Uint32(), Timestamp: rand.Uint32(), SequenceNumber: uint16(rand.Uint32())}
+	if a.nextHeader.Version == 0 {
+		a.nextHeader = rtp.Header{Version: 2, Marker: true, SSRC: rand.Uint32(), Timestamp: rand.Uint32(), SequenceNumber: uint16(rand.Uint32())}
+	}
+	header := a.nextHeader
+	header.PayloadType = params.codec.pt
+	defer func() { a.nextHeader = header }()
+	stats := &a.sent
+	if early {
+		stats = &a.earlySent
+	}
+	var digit *digitSender
 	dist := params.remote
 	buffer := make([]byte, 12+audioFrame)
 	offset := 0
 	for ctx.Err() == nil {
+		if !early && params.dtmfPT != 0 && digit == nil {
+			select {
+			case code := <-a.digits:
+				digit = &digitSender{code: code, timestamp: header.Timestamp}
+			default:
+			}
+		}
+		packet := rtp.Packet{Header: header, Payload: tone[offset : offset+audioFrame]}
+		var digitDone bool
+		var digitPayload [4]byte
+		if digit != nil {
+			digitPayload, packet.Marker, digitDone = digit.payload()
+			packet.PayloadType, packet.Timestamp, packet.Payload = params.dtmfPT, digit.timestamp, digitPayload[:]
+		}
 		if audioFault(a.fault.Load()) == audioFaultSend {
-			a.sent.drop()
+			stats.drop()
 		} else {
-			packet := rtp.Packet{Header: header, Payload: tone[offset : offset+audioFrame]}
 			n, err := packet.MarshalTo(buffer)
 			if err != nil {
 				return
 			}
 			if _, err := a.conn.WriteToUDPAddrPort(buffer[:n], dist); err == nil {
-				a.sent.observe(header, time.Now())
+				stats.observe(packet.Header, time.Now())
+				if digitDone {
+					a.recordDigit("send", digit.code)
+				}
 			}
+		}
+		if digitDone {
+			digit = nil
 		}
 		header.SequenceNumber++
 		header.Timestamp += audioFrame
@@ -98,11 +136,20 @@ func (a *audioSession) sendTone(ctx context.Context, params audioParameters) {
 	}
 }
 
-func (a *audioSession) receive(params audioParameters) {
+func (a *audioSession) receive(params audioParameters, early bool) {
 	decoder := g711.DecodeUlawFrame
 	if params.codec.name == "PCMA" {
 		decoder = g711.DecodeAlawFrame
 	}
+	stats := &a.received
+	if early {
+		stats = &a.earlyReceived
+	}
+	type key struct {
+		ssrc, timestamp uint32
+		code            uint8
+	}
+	var previous *key
 	buf := make([]byte, 2048)
 	for {
 		n, remote, err := a.conn.ReadFromUDPAddrPort(buf)
@@ -114,14 +161,29 @@ func (a *audioSession) receive(params audioParameters) {
 			continue
 		}
 		var packet rtp.Packet
-		if packet.Unmarshal(buf[:n]) != nil || packet.Version != 2 || packet.PayloadType != params.codec.pt || len(packet.Payload) == 0 {
+		if packet.Unmarshal(buf[:n]) != nil || packet.Version != 2 || len(packet.Payload) == 0 {
+			continue
+		}
+		event := !early && params.dtmfPT != 0 && packet.PayloadType == params.dtmfPT
+		if packet.PayloadType != params.codec.pt && !event {
 			continue
 		}
 		if audioFault(a.fault.Load()) == audioFaultReceive {
-			a.received.drop()
+			stats.drop()
 			continue
 		}
 		arrival := time.Now()
+		if event {
+			if len(packet.Payload) >= 4 && packet.Payload[0] < 16 && params.dtmfEvents&(1<<packet.Payload[0]) != 0 {
+				current := key{packet.SSRC, packet.Timestamp, packet.Payload[0]}
+				if packet.Payload[1]&0x80 != 0 && (previous == nil || *previous != current) {
+					a.recordDigit("receive", current.code)
+					previous = &current
+				}
+				stats.observe(packet.Header, arrival)
+			}
+			continue
+		}
 		a.mu.Lock()
 		for _, sample := range packet.Payload {
 			pcm := decoder(sample)
@@ -133,7 +195,7 @@ func (a *audioSession) receive(params audioParameters) {
 			}
 		}
 		a.mu.Unlock()
-		a.received.observe(packet.Header, arrival)
+		stats.observe(packet.Header, arrival)
 	}
 }
 

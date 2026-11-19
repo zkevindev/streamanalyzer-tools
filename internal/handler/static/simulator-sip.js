@@ -43,6 +43,7 @@ function updateButtons() {
   const scenarioActive = ['waiting', 'injecting', 'recovering'].includes(status?.call?.scenario?.state);
   el('audio-fault').disabled = busy || status?.state === 'stopping' || status?.call?.state !== 'incall' || scenarioActive;
   el('preset-times').hidden = !el('preset').value;
+  el('send-dtmf').disabled = busy || status?.state === 'stopping' || status?.call?.state !== 'incall' || !status.call.dtmf_keys;
   el('answer').disabled = busy || status?.state === 'stopping' || !incoming;
   el('hangup').disabled = busy || status?.state === 'stopping' || !calling || status.call.state === 'ending';
   el('hangup').textContent = incoming ? '拒接'
@@ -71,6 +72,17 @@ function render(next) {
   el('call-metrics').hidden = el('media-addresses').hidden = !call;
   const direction = call?.direction === 'inbound' ? '呼入' : '呼出';
   el('audio-summary').textContent = call?.codec ? direction + ' · ' + call.codec + ' · 8 kHz' : direction;
+  el('early-summary').hidden = !call?.early_media;
+  el('early-summary').textContent = call?.early_media ?
+    '183 早期媒体 · 发送 ' + (call.early_send_rtp?.packets || 0) + ' 包 · 接收 ' + (call.early_receive_rtp?.packets || 0) + ' 包' : '';
+  const keys = call?.dtmf_keys || '';
+  const digits = call?.digit_events || [];
+  el('dtmf-panel').hidden = !keys && !digits.length;
+  const select = el('dtmf-digit');
+  if ([...select.options].map(option => option.value).join('') !== keys) {
+    select.replaceChildren(...[...keys].map(digit => new Option(digit, digit)));
+  }
+  el('dtmf-events').textContent = digits.map(event => (event.direction === 'send' ? '发送 ' : '收到 ') + event.digit).join(' · ');
   const scenario = call?.scenario;
   const result = el('scenario-result');
   result.hidden = !scenario;
@@ -86,7 +98,7 @@ function render(next) {
   el('media-local').textContent = call?.media_local || '—';
   el('media-remote').textContent = call?.media_remote || '—';
   setError('call-error', call?.error);
-  el('received-audio').hidden = !call?.packets_received;
+  el('received-audio').hidden = !call?.audio_ready;
   if (clipCall !== (call?.call_id || '')) {
     audio.removeAttribute('src');
     audio.load();
@@ -191,6 +203,7 @@ el('registration-form').addEventListener('submit', event => {
   const config = Object.fromEntries(new FormData(event.currentTarget));
   config.port = Number(config.port);
   config.local_port = Number(config.local_port);
+  config.early_media = el('offer-early').checked;
   config.preset_delay_ms = Number(config.preset_delay_ms);
   config.preset_duration_ms = Number(config.preset_duration_ms);
   void change('/start', config);
@@ -202,6 +215,7 @@ el('call-form').addEventListener('submit', event => {
 el('unregister').addEventListener('click', () => { void change('/stop'); });
 el('answer').addEventListener('click', () => { void change('/answer'); });
 el('hangup').addEventListener('click', () => { void change('/hangup'); });
+el('send-dtmf').addEventListener('click', () => { void change('/dtmf', {digit: el('dtmf-digit').value}); });
 el('audio-fault').addEventListener('change', event => { void change('/audio-fault', {direction: event.target.value}); });
 el('hear-audio').addEventListener('click', () => {
   audio.hidden = false;
