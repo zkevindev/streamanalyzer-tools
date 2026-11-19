@@ -7,6 +7,9 @@ const outcomes = {
   receiving: '正在收流',
   invite_failed: '点播协商失败',
   no_ack: '未发送 ACK',
+  connecting: '正在建立 TCP 媒体连接',
+  no_media_connection: '未建立 TCP 媒体连接',
+  media_negotiation: 'TCP 媒体协商失败',
   no_rtp: '未收到 RTP',
   no_keyframe: '收到 RTP，未解析到关键帧',
   passed: '收到并解析出首个关键帧',
@@ -15,7 +18,7 @@ const outcomes = {
 const stages = {
   invite: 'INVITE', invite_ok: 'INVITE 200 OK', ack: 'ACK',
   ack_withheld: '暂缓 ACK', cleanup_ack: '清理会话时补发 ACK',
-  media_connected: '媒体就绪', first_rtp: '首个 RTP',
+  media_connect: '尝试建立媒体连接', media_connected: '媒体就绪', first_rtp: '首个 RTP',
   first_keyframe: '首个关键帧', bye: 'BYE', ended: '会话结束', failed: '失败',
 };
 let pending = false;
@@ -49,7 +52,7 @@ function render() {
   el('start').disabled = el('platform-config').disabled;
   el('stop').disabled = pending || !active;
   el('preview-config').disabled = pending || !active || !status?.peer || status.busy;
-  el('address').textContent = status?.address || '—';
+  el('address').textContent = status?.address ? status.address + ' · SIP ' + status.sip_transport.toUpperCase() : '—';
   el('peer').textContent = status?.peer || '—';
   const badge = el('result');
   const label = preview ? outcomes[preview.state] : '等待点播';
@@ -124,7 +127,11 @@ el('preview-form').addEventListener('submit', event => {
   const config = Object.fromEntries(new FormData(event.currentTarget));
   config.window_ms = Number(config.window_ms);
   config.skip_ack = el('skip-ack').checked;
+  config.skip_connect = config.media_transport === 'tcp-active' && el('skip-connect').checked;
   void change('/preview', config);
+});
+el('media-transport').addEventListener('change', () => {
+  el('skip-connect-control').hidden = el('media-transport').value !== 'tcp-active';
 });
 el('stop').addEventListener('click', () => void change('/stop'));
 void poll();
