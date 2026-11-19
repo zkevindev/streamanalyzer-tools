@@ -537,7 +537,9 @@
 
         attachHLS(url) {
             const video = this.video;
-            if (video.canPlayType('application/vnd.apple.mpegurl') || video.canPlayType('application/x-mpegURL')) {
+            const Hls = globalThis.Hls;
+            const recovery = this.options.hlsRecovery && Hls?.isSupported();
+            if (!recovery && (video.canPlayType('application/vnd.apple.mpegurl') || video.canPlayType('application/x-mpegURL'))) {
                 this.engine = 'native-hls';
                 this.releaseMedia = () => {
                     video.pause();
@@ -550,12 +552,24 @@
                 this.play();
                 return;
             }
-            const Hls = globalThis.Hls;
             if (!Hls?.isSupported()) {
                 this.event('unsupported', {code: 'unsupported'});
                 return;
             }
-            const player = new Hls({enableWorker: false});
+            const config = {enableWorker: false};
+            if (recovery) {
+                const policy = Hls.DefaultConfig.fragLoadPolicy.default;
+                config.fragLoadPolicy = {default: {
+                    ...policy,
+                    errorRetry: {
+                        ...policy.errorRetry,
+                        shouldRetry(_retry, count, _timeout, response, defaultRetry) {
+                            return defaultRetry || (count === 0 && [0, 200, 404].includes(response?.code));
+                        },
+                    },
+                }};
+            }
+            const player = new Hls(config);
             this.releaseMedia = () => player.destroy();
             player.on(Hls.Events.ERROR, (_event, data) => {
                 if (!data.fatal) return;

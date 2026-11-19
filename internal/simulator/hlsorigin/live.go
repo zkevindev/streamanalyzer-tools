@@ -16,6 +16,7 @@ const (
 )
 
 var ErrLiveUnavailable = errors.New("请先启动 HLS 直播源")
+var ErrFaultPending = errors.New("当前故障仍在等待触发或重试")
 
 type PlaylistSample struct {
 	At       time.Time `json:"at"`
@@ -69,7 +70,7 @@ func livePlaylist(last uint64) []byte {
 	return playlist.Bytes()
 }
 
-func liveSegment(name string, last uint64) (int, bool) {
+func liveResourceSequence(name string, last uint64) (uint64, bool) {
 	n, suffix, ok := strings.Cut(strings.TrimPrefix(name, "live-"), ".")
 	if !strings.HasPrefix(name, "live-") || !ok || suffix != "ts" {
 		return 0, false
@@ -78,7 +79,7 @@ func liveSegment(name string, last uint64) (int, bool) {
 	if err != nil || seq == 0 || seq > last || last-seq >= 2*liveWindow {
 		return 0, false
 	}
-	return int((seq-1)%SegmentCount) + 1, true
+	return seq, true
 }
 
 func (m *Manager) recordPlaylist(now time.Time, seq uint64) {

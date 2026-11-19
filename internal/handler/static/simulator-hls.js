@@ -17,6 +17,8 @@ function updateFields() {
   el('start').disabled = el('simulator-fields').disabled;
   el('stop').disabled = busy || !current?.active;
   el('freeze').disabled = busy || !current?.active;
+  const fault = current?.live_fault;
+  el('live-fault-fields').disabled = busy || !current?.active || Boolean(fault && !fault.retry_at && !fault.expired);
 }
 
 function render(status) {
@@ -32,7 +34,14 @@ function render(status) {
   el('playlist').textContent = status.active ? new URL(status.playlist, location.origin).href : '—';
   if (status.active) el('open-workbench').href = '/diagnostics?hls_simulator=' + encodeURIComponent(status.id);
   const live = status.mode === 'live';
+  el('open-recovery').hidden = !live;
+  if (status.active && live) el('open-recovery').href = el('open-workbench').href + '&hls_recovery=1';
   el('freeze').hidden = !live;
+  el('live-fault-form').hidden = !live || !status.active;
+  const fault = status.live_fault;
+  const faultState = !fault ? '' : fault.retry_at ? '已收到重试' : fault.expired ? '观测已结束' : fault.hit_at ? '已注入，等待重试' : '等待目标分片请求';
+  el('live-fault-status').hidden = !fault;
+  el('live-fault-status').textContent = fault ? '媒体序号 ' + fault.sequence + ' · ' + faultState + ' · 匹配请求 ' + fault.attempts + ' 次' : '';
   el('freeze').textContent = status.frozen ? '恢复列表更新' : '冻结播放列表';
   el('live-summary').hidden = !live;
   el('live-summary').textContent = '列表起始序号 ' + status.media_sequence + (status.frozen ? ' · 已冻结' : ' · 更新中');
@@ -102,6 +111,14 @@ el('mode').addEventListener('change', updateFields);
 el('hls-form').addEventListener('submit', event => {
   event.preventDefault();
   void change('/start', {mode: el('mode').value, segment: Number(el('segment').value), delay_ms: Number(el('delay-ms').value)});
+});
+el('live-fault-form').addEventListener('submit', event => {
+  event.preventDefault();
+  void change('/live-fault', {
+    kind: el('live-fault-kind').value,
+    sequence: Number(el('live-fault-seq').value),
+    audience: el('live-fault-audience').value,
+  });
 });
 el('freeze').addEventListener('click', () => { void change('/freeze', {frozen: !current.frozen}); });
 el('stop').addEventListener('click', () => { void change('/stop'); });
