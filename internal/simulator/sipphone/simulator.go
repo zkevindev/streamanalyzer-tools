@@ -27,6 +27,8 @@ var (
 )
 
 type Config struct {
+	SessionTimer     string `json:"session_timer,omitempty"`
+	SessionSeconds   int    `json:"session_seconds,omitempty"`
 	RTPReturn        string `json:"rtp_return,omitempty"`
 	SimulateNATPort  bool   `json:"simulate_nat_port,omitempty"`
 	ReliableEarly    bool   `json:"reliable_early,omitempty"`
@@ -49,6 +51,19 @@ func isUnicast(ip netip.Addr) bool {
 }
 
 func (c *Config) validate() error {
+	switch c.SessionTimer {
+	case "":
+		c.SessionSeconds = 0
+	case "normal", "reject", "timeout":
+		if c.SessionSeconds == 0 {
+			c.SessionSeconds = 90
+		}
+		if c.SessionSeconds < 2 || c.SessionSeconds > 3600 {
+			return fmt.Errorf("%w，SIP 会话周期需为 2–3600 秒", ErrConfig)
+		}
+	default:
+		return fmt.Errorf("%w，未知的 SIP 会话计时场景", ErrConfig)
+	}
 	switch c.RTPReturn {
 	case "":
 		c.RTPReturn = "sdp"
@@ -276,6 +291,10 @@ func (a *agent) snapshot() Status {
 		call.RTPPath = a.call.audio.pathStatus()
 		a.call.audio.mu.Unlock()
 		call.AudioFault = audioFault(a.call.audio.fault.Load()).String()
+		if call.SessionTimer != nil {
+			timer := *call.SessionTimer
+			call.SessionTimer = &timer
+		}
 		if call.Scenario != nil {
 			report := *call.Scenario
 			call.Scenario = &report

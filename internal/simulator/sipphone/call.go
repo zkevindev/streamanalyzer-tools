@@ -16,35 +16,37 @@ import (
 const ringTimeout = 45 * time.Second
 
 type CallStatus struct {
-	RTPPath         RTPPathStatus   `json:"rtp_path"`
-	PRACK           *PRACKStatus    `json:"prack,omitempty"`
-	MediaDirection  string          `json:"media_direction,omitempty"`
-	PreviousRemote  string          `json:"previous_remote,omitempty"`
-	MediaChanges    int             `json:"media_changes,omitempty"`
-	EarlyMedia      bool            `json:"early_media"`
-	EarlySend       RTPStats        `json:"early_send_rtp,omitzero"`
-	EarlyReceive    RTPStats        `json:"early_receive_rtp,omitzero"`
-	AudioReady      bool            `json:"audio_ready"`
-	DTMFKeys        string          `json:"dtmf_keys,omitempty"`
-	DigitEvents     []DigitEvent    `json:"digit_events,omitempty"`
-	Scenario        *ScenarioReport `json:"scenario,omitempty"`
-	AudioFault      string          `json:"audio_fault"`
-	SendRTP         RTPStats        `json:"send_rtp"`
-	ReceiveRTP      RTPStats        `json:"receive_rtp"`
-	Active          bool            `json:"active"`
-	State           string          `json:"state"`
-	Direction       string          `json:"direction"`
-	Peer            string          `json:"peer"`
-	ID              string          `json:"call_id,omitempty"`
-	Codec           string          `json:"codec,omitempty"`
-	MediaLocal      string          `json:"media_local"`
-	MediaRemote     string          `json:"media_remote,omitempty"`
-	PacketsSent     uint64          `json:"packets_sent"`
-	PacketsReceived uint64          `json:"packets_received"`
-	Error           string          `json:"error,omitempty"`
+	SessionTimer    *SessionTimerStatus `json:"session_timer,omitempty"`
+	RTPPath         RTPPathStatus       `json:"rtp_path"`
+	PRACK           *PRACKStatus        `json:"prack,omitempty"`
+	MediaDirection  string              `json:"media_direction,omitempty"`
+	PreviousRemote  string              `json:"previous_remote,omitempty"`
+	MediaChanges    int                 `json:"media_changes,omitempty"`
+	EarlyMedia      bool                `json:"early_media"`
+	EarlySend       RTPStats            `json:"early_send_rtp,omitzero"`
+	EarlyReceive    RTPStats            `json:"early_receive_rtp,omitzero"`
+	AudioReady      bool                `json:"audio_ready"`
+	DTMFKeys        string              `json:"dtmf_keys,omitempty"`
+	DigitEvents     []DigitEvent        `json:"digit_events,omitempty"`
+	Scenario        *ScenarioReport     `json:"scenario,omitempty"`
+	AudioFault      string              `json:"audio_fault"`
+	SendRTP         RTPStats            `json:"send_rtp"`
+	ReceiveRTP      RTPStats            `json:"receive_rtp"`
+	Active          bool                `json:"active"`
+	State           string              `json:"state"`
+	Direction       string              `json:"direction"`
+	Peer            string              `json:"peer"`
+	ID              string              `json:"call_id,omitempty"`
+	Codec           string              `json:"codec,omitempty"`
+	MediaLocal      string              `json:"media_local"`
+	MediaRemote     string              `json:"media_remote,omitempty"`
+	PacketsSent     uint64              `json:"packets_sent"`
+	PacketsReceived uint64              `json:"packets_received"`
+	Error           string              `json:"error,omitempty"`
 }
 
 type phoneCall struct {
+	timerWake     chan struct{}
 	pendingPRACK  *inboundPRACK
 	pendingMedia  *mediaChange
 	mediaUpdates  chan *mediaChange
@@ -70,7 +72,7 @@ func (a *agent) newCall(direction, peer, state string) (*phoneCall, error) {
 	if err != nil {
 		return nil, fmt.Errorf("绑定 RTP 音频端口失败：%w", err)
 	}
-	return &phoneCall{audio: audio, sdpID: rand.Uint32(), mediaUpdates: make(chan *mediaChange, 1), answer: make(chan struct{}), hangup: make(chan struct{}), done: make(chan struct{}),
+	return &phoneCall{timerWake: make(chan struct{}, 1), audio: audio, sdpID: rand.Uint32(), mediaUpdates: make(chan *mediaChange, 1), answer: make(chan struct{}), hangup: make(chan struct{}), done: make(chan struct{}),
 		status: CallStatus{Active: true, Direction: direction, Peer: peer, State: state, MediaLocal: audio.local.String()}}, nil
 }
 
@@ -162,7 +164,13 @@ func (a *agent) outgoing(ctx context.Context, c *phoneCall, recipient sip.Uri) e
 	req.AppendHeader(from)
 	req.AppendHeader(&sip.ToHeader{Address: recipient})
 	req.AppendHeader(sip.NewHeader("Content-Type", "application/sdp"))
-	req.AppendHeader(sip.NewHeader("Supported", "100rel"))
+	if a.cfg.SessionTimer != "" {
+		req.AppendHeader(sip.NewHeader("Supported", "100rel, timer"))
+		req.AppendHeader(sip.NewHeader("Min-SE", fmt.Sprint(a.cfg.SessionSeconds)))
+		req.AppendHeader((sessionOffer{seconds: a.cfg.SessionSeconds, role: "uas"}).header())
+	} else {
+		req.AppendHeader(sip.NewHeader("Supported", "100rel"))
+	}
 
 	client, err := sipgo.NewClient(a.client.UserAgent, sipgo.WithClientAddr(a.local.String()), sipgo.WithClientConnectionAddr(a.local.String()), sipgo.WithClientNAT())
 	if err != nil {
@@ -267,7 +275,15 @@ func (a *agent) outgoing(ctx context.Context, c *phoneCall, recipient sip.Uri) e
 			return err
 		}
 	}
-	return a.connected(c, dialog.Context(), media, dialog.Bye)
+	var timer sessionOffer
+	if h := dialog.InviteResponse.GetHeader("Session-Expires"); h != nil && a.cfg.SessionTimer != "" {
+		timer, _ = parseSessionOffer(h.Value())
+		if timer.seconds < a.cfg.SessionSeconds {
+			_ = a.sendBye(dialog.Bye)
+			return errors.New("SIP Session-Expires 应答无效或短于 Min-SE")
+		}
+	}
+	return a.connected(c, dialog.Context(), media, dialog.Bye, timer)
 }
 
 func (a *agent) routes(server *sipgo.Server) {
@@ -275,9 +291,10 @@ func (a *agent) routes(server *sipgo.Server) {
 	server.OnAck(a.ack)
 	server.OnBye(a.bye)
 	server.OnRequest(prackMethod, a.prack)
+	server.OnRequest(sip.UPDATE, a.updateSession)
 	server.OnOptions(func(req *sip.Request, tx sip.ServerTransaction) {
 		res := sip.NewResponseFromRequest(req, 200, "OK", nil)
-		res.AppendHeader(sip.NewHeader("Allow", "OPTIONS, INVITE, ACK, CANCEL, BYE, PRACK"))
+		res.AppendHeader(sip.NewHeader("Allow", "OPTIONS, INVITE, ACK, CANCEL, BYE, PRACK, UPDATE"))
 		_ = tx.Respond(res)
 	})
 	server.OnNoRoute(func(req *sip.Request, tx sip.ServerTransaction) {
@@ -304,6 +321,10 @@ func (a *agent) incoming(req *sip.Request, tx sip.ServerTransaction) {
 	}
 	if tag, _ := req.To().Params.Get("tag"); tag != "" {
 		a.reinvite(req, tx)
+		return
+	}
+	timer, ok := a.sessionAnswer(req, tx)
+	if !ok {
 		return
 	}
 	offer, selected, media, err := negotiateAudio(req.Body(), true)
@@ -352,10 +373,10 @@ func (a *agent) incoming(req *sip.Request, tx sip.ServerTransaction) {
 	defer a.workers.Done()
 
 	answer := makeAnswer(c.audio.advertised, c.sdpID, offer, selected, media)
-	a.finishCall(c, a.ring(c, tx, dialog, answer, media))
+	a.finishCall(c, a.ring(c, tx, dialog, answer, media, timer))
 }
 
-func (a *agent) ring(c *phoneCall, tx sip.ServerTransaction, dialog *sipgo.DialogServerSession, answer []byte, media audioParameters) error {
+func (a *agent) ring(c *phoneCall, tx sip.ServerTransaction, dialog *sipgo.DialogServerSession, answer []byte, media audioParameters, session sessionOffer) error {
 	if err := dialog.Respond(180, "Ringing", nil); err != nil {
 		if dialog.Context().Err() == nil {
 			return errors.New("无法发送 SIP 振铃响应")
@@ -441,7 +462,12 @@ func (a *agent) ring(c *phoneCall, tx sip.ServerTransaction, dialog *sipgo.Dialo
 			}
 		}
 	}()
-	err := dialog.RespondSDP(answer)
+	var err error
+	if session.seconds > 0 {
+		err = dialog.Respond(200, "OK", answer, sip.NewHeader("Content-Type", "application/sdp"), session.header(), sip.NewHeader("Require", "timer"))
+	} else {
+		err = dialog.RespondSDP(answer)
+	}
 	close(stop)
 	<-done
 	if err != nil || dialog.LoadState() != sip.DialogStateConfirmed {
@@ -450,7 +476,7 @@ func (a *agent) ring(c *phoneCall, tx sip.ServerTransaction, dialog *sipgo.Dialo
 		}
 		return errors.New("接听未完成，未收到有效 SIP ACK")
 	}
-	return a.connected(c, dialog.Context(), media, dialog.Bye)
+	return a.connected(c, dialog.Context(), media, dialog.Bye, session)
 }
 
 func (a *agent) ack(req *sip.Request, tx sip.ServerTransaction) {
@@ -509,7 +535,7 @@ func (a *agent) bye(req *sip.Request, tx sip.ServerTransaction) {
 	}
 }
 
-func (a *agent) connected(c *phoneCall, dialog context.Context, media audioParameters, bye func(context.Context) error) error {
+func (a *agent) connected(c *phoneCall, dialog context.Context, media audioParameters, bye func(context.Context) error, session sessionOffer) error {
 	a.mu.Lock()
 	c.status.Codec, c.status.MediaRemote = media.codec.name, media.remote.String()
 	if c.status.State == "ending" {
@@ -522,6 +548,9 @@ func (a *agent) connected(c *phoneCall, dialog context.Context, media audioParam
 	c.status.State = "incall"
 	c.sdpVersion = c.sdpID
 	a.setCallMedia(c, media)
+	if session.seconds > 0 {
+		c.recordSessionRefresh(session, time.Now(), true)
+	}
 	preset := a.cfg.Preset != ""
 	if preset {
 		c.status.Scenario = &ScenarioReport{State: "waiting"}
@@ -541,8 +570,54 @@ func (a *agent) connected(c *phoneCall, dialog context.Context, media audioParam
 		presetWorker.Wait()
 	}
 	defer stopPreset()
+	var timer *time.Timer
+	var timerC <-chan time.Time
+	var attempted time.Time
+	if session.seconds > 0 {
+		timer = time.NewTimer(time.Hour)
+		defer timer.Stop()
+	}
 	for {
+		if timer != nil {
+			a.mu.Lock()
+			status := *c.status.SessionTimer
+			a.mu.Unlock()
+			when := status.Deadline
+			if status.Refresher == "local" && attempted != status.Deadline {
+				when = when.Add(-time.Duration(status.Interval) * time.Second / 2)
+			}
+			timer.Reset(time.Until(when))
+			timerC = timer.C
+		}
 		select {
+		case <-c.timerWake:
+			continue
+		case <-timerC:
+			a.mu.Lock()
+			status := c.status.SessionTimer
+			if !time.Now().Before(status.Deadline) {
+				status.Expired = true
+				c.status.State = "ending"
+				a.mu.Unlock()
+				stopAudio()
+				a.mu.Lock()
+				status.ByeAt = time.Now()
+				a.mu.Unlock()
+				byeErr := a.sendBye(bye)
+				a.mu.Lock()
+				status.ByeConfirmed = byeErr == nil
+				a.mu.Unlock()
+				return errors.New("SIP 会话计时到期")
+			}
+			if status.Refresher != "local" || attempted == status.Deadline ||
+				time.Until(status.Deadline) > time.Duration(status.Interval)*time.Second/2 {
+				a.mu.Unlock()
+				continue
+			}
+			attempted = status.Deadline
+			offer := sessionOffer{seconds: status.Interval, role: session.role}
+			a.mu.Unlock()
+			a.refreshSession(c, dialog, offer)
 		case <-dialog.Done():
 			return nil
 		case <-a.ctx.Done():
