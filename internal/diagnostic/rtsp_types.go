@@ -57,6 +57,7 @@ type RTSPTrackMetrics struct {
 }
 
 type RTSPMetrics struct {
+	SenderClocks          []RTSPSenderClock   `json:"sender_clocks,omitempty"`
 	Preview               *RTSPPreviewReport  `json:"preview,omitempty"`
 	Boundary              string              `json:"boundary"`
 	Transport             string              `json:"transport"`

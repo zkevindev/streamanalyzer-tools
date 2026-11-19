@@ -140,6 +140,13 @@ function renderRTSPReport(report) {
     if (!native) return;
     const metrics = report.rtsp;
     renderRTSPPreview(metrics);
+    const clocks = metrics?.sender_clocks || [];
+    node('rtsp-clocks').hidden = !clocks.length;
+    node('rtsp-clock-table').replaceChildren(...(clocks.length ? [renderTable(
+        ['轨道 / SSRC', '发送报告', '有效间隔', '累计偏移 (ms)', '最大时钟步进 (ms)', '最大接收间隔偏差 (ms)'],
+        clocks.map(clock => ['#' + clock.track_id + ' / ' + clock.ssrc, clock.samples, clock.intervals,
+            clock.offset_ms.toFixed(1), clock.max_step_ms.toFixed(1), clock.max_arrival_variation_ms.toFixed(1)])
+    )] : []));
     node('rtsp-boundary').textContent = rtspBoundaryNote;
     node('rtsp-sequence-note').textContent = metrics?.transport === 'udp' ? '序号缺口和缺失包是接收点估计，使用有限回填窗口；源端漏发、链路丢包和迟到包都可能影响结果，需对照源端及中间网络证据。' : rtspSequenceNote;
     if (!metrics) {

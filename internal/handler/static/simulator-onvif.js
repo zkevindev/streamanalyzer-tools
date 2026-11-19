@@ -165,6 +165,7 @@ form.addEventListener('submit', event => {
   config.silent_udp = el('silent-udp').checked;
   config.recording_fixture = el('recording-fixture').checked;
   config.rtsp_disconnect_ms = el('rtsp-outage').checked ? 3000 : 0;
+  config.rtcp_clock_step_ms = el('rtcp-step').checked ? 350 : 0;
   config.video_gap_ms = el('video-gap').checked ? 5000 : 0;
   const files = [['main', el('main-video').files[0]], ['sub', el('sub-video').files[0]]].filter(([, file]) => file);
   if (!files.length) {
@@ -180,9 +181,12 @@ form.addEventListener('submit', event => {
   for (const [name, file] of files) body.append(name, file);
   void change('/start-file', body);
 });
-for (const [selected, other] of [['rtsp-outage', 'video-gap'], ['video-gap', 'rtsp-outage']]) {
+const rtspFaults = ['rtsp-outage', 'video-gap', 'rtcp-step'];
+for (const selected of rtspFaults) {
   el(selected).addEventListener('change', () => {
-    if (el(selected).checked) el(other).checked = false;
+    if (el(selected).checked) {
+      for (const other of rtspFaults.filter(value => value !== selected)) el(other).checked = false;
+    }
   });
 }
 el('stop').addEventListener('click', () => { void change('/stop'); });

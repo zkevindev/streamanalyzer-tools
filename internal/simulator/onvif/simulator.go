@@ -30,6 +30,7 @@ var (
 )
 
 type Config struct {
+	RTCPClockStepMS  int    `json:"rtcp_clock_step_ms,omitempty"`
 	RecordingFixture bool   `json:"recording_fixture,omitempty"`
 	RTSPDisconnectMS int    `json:"rtsp_disconnect_ms,omitempty"`
 	VideoGapMS       int    `json:"video_gap_ms,omitempty"`
@@ -100,6 +101,9 @@ func (c *Config) normalize() (net.IP, *net.Interface, error) {
 	if c.RTSPDisconnectMS != 0 && (c.RTSPDisconnectMS < 1000 || c.RTSPDisconnectMS > 10000 || c.VideoGapMS != 0) {
 		return nil, nil, fmt.Errorf("%w，RTSP 断线窗口需为 1000–10000 毫秒并单独启用", ErrConfig)
 	}
+	if c.RTCPClockStepMS < -2000 || c.RTCPClockStepMS > 2000 || c.RTCPClockStepMS != 0 && (c.VideoGapMS != 0 || c.RTSPDisconnectMS != 0) {
+		return nil, nil, fmt.Errorf("%w，RTCP 时钟跳变需在 ±2000 ms 内并单独启用", ErrConfig)
+	}
 	if c.VideoGapMS != 0 && (c.VideoGapMS < 1000 || c.VideoGapMS > 10000) {
 		return nil, nil, fmt.Errorf("%w，视频停包时长需为 1000–10000 ms", ErrConfig)
 	}
@@ -133,6 +137,7 @@ func (c *Config) normalize() (net.IP, *net.Interface, error) {
 }
 
 type Status struct {
+	RTCPClockStepMS   int                     `json:"rtcp_clock_step_ms,omitempty"`
 	Recording         *RecordingFixtureStatus `json:"recording,omitempty"`
 	RTSPOutages       []RTSPOutageStatus      `json:"rtsp_outages,omitempty"`
 	EventURL          string                  `json:"event_url,omitempty"`
@@ -253,7 +258,7 @@ func (m *Manager) StartFiles(ctx context.Context, cfg Config, files [2]LocalVide
 	discovery.instance = max(uint32(time.Now().Unix()), m.lastDiscoveryInstance+1)
 	m.lastDiscoveryInstance = discovery.instance
 	c.status = Status{
-		Active: true, SOAPDigest: cfg.SOAPUsername != "", ClockOffset: cfg.ClockOffset, SilentUDP: cfg.SilentUDP, Name: cfg.Name, Interface: nic.Name, DiscoveryAddress: discovery.group.String(),
+		RTCPClockStepMS: cfg.RTCPClockStepMS, Active: true, SOAPDigest: cfg.SOAPUsername != "", ClockOffset: cfg.ClockOffset, SilentUDP: cfg.SilentUDP, Name: cfg.Name, Interface: nic.Name, DiscoveryAddress: discovery.group.String(),
 		EndpointID: "urn:uuid:" + uuid.NewSHA1(uuid.NameSpaceURL, []byte("streamanalyzer:onvif:"+cfg.BindIP+"/"+cfg.Name)).String(),
 		DeviceURL:  origin + devicePath, MediaURL: origin + mediaPath, PTZURL: origin + ptzPath, EventURL: origin + eventPath, RTSPDigest: cfg.RTSPUsername != "",
 	}

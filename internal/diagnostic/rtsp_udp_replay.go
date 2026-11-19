@@ -177,6 +177,8 @@ func replayRTSPUDP(report *Report, metadata rtspArchiveMetadata, session *descri
 				}
 			} else {
 				metrics.RTCPPackets += len(packets)
+				observeRTSPClocks(metrics, states, transport.MediaID, packets, Event{Artifact: rtspUDPDataName, Offset: span.Offset,
+					Size: span.Size, ArrivalMS: span.ArrivalMS, Kind: "rtcp_sender_report"})
 				if metrics.FirstRTCPMS == nil {
 					first := span.ArrivalMS
 					metrics.FirstRTCPMS = &first
