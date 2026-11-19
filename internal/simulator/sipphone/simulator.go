@@ -27,14 +27,17 @@ var (
 )
 
 type Config struct {
-	Host      string `json:"host"`
-	Port      int    `json:"port"`
-	User      string `json:"user"`
-	Domain    string `json:"domain"`
-	Username  string `json:"username"`
-	Password  string `json:"password"`
-	LocalIP   string `json:"local_ip"`
-	LocalPort int    `json:"local_port"`
+	Preset           string `json:"preset,omitempty"`
+	PresetDelayMS    int    `json:"preset_delay_ms,omitempty"`
+	PresetDurationMS int    `json:"preset_duration_ms,omitempty"`
+	Host             string `json:"host"`
+	Port             int    `json:"port"`
+	User             string `json:"user"`
+	Domain           string `json:"domain"`
+	Username         string `json:"username"`
+	Password         string `json:"password"`
+	LocalIP          string `json:"local_ip"`
+	LocalPort        int    `json:"local_port"`
 }
 
 func isUnicast(ip netip.Addr) bool {
@@ -66,10 +69,11 @@ func (c *Config) validate() error {
 	if c.LocalPort < 0 || c.LocalPort > 65535 || c.LocalIP != "" && !isUnicast(ip) {
 		return fmt.Errorf("%w，本机 SIP 地址需要单播 IPv4，端口范围为 0–65535", ErrConfig)
 	}
-	return nil
+	return c.validatePreset()
 }
 
 type Status struct {
+	Preset       string      `json:"preset,omitempty"`
 	Active       bool        `json:"active"`
 	State        string      `json:"state"`
 	User         string      `json:"user,omitempty"`
@@ -106,7 +110,7 @@ func (m *Manager) Start(cfg Config) (Status, error) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	a := &agent{cfg: cfg, ctx: ctx, cancel: cancel, done: make(chan struct{}), registered: make(chan struct{}),
-		status: Status{Active: true, State: "registering", User: cfg.User, Registrar: net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))}}
+		status: Status{Active: true, State: "registering", Preset: cfg.Preset, User: cfg.User, Registrar: net.JoinHostPort(cfg.Host, strconv.Itoa(cfg.Port))}}
 	m.agent = a
 	go a.run()
 	return a.snapshot(), nil
@@ -183,7 +187,7 @@ func (m *Manager) SetAudioFault(direction string) error {
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.ctx.Err() != nil || a.call == nil || a.call.status.State != "incall" {
+	if a.ctx.Err() != nil || a.call == nil || a.call.status.State != "incall" || a.call.status.Scenario.running() {
 		return ErrConflict
 	}
 	a.call.audio.fault.Store(uint32(mode))
@@ -255,6 +259,10 @@ func (a *agent) snapshot() Status {
 		call.PacketsSent = call.SendRTP.Packets
 		call.PacketsReceived = call.ReceiveRTP.Packets
 		call.AudioFault = audioFault(a.call.audio.fault.Load()).String()
+		if call.Scenario != nil {
+			report := *call.Scenario
+			call.Scenario = &report
+		}
 		status.Call = &call
 	}
 	return status

@@ -15,20 +15,21 @@ import (
 const ringTimeout = 45 * time.Second
 
 type CallStatus struct {
-	AudioFault      string   `json:"audio_fault"`
-	SendRTP         RTPStats `json:"send_rtp"`
-	ReceiveRTP      RTPStats `json:"receive_rtp"`
-	Active          bool     `json:"active"`
-	State           string   `json:"state"`
-	Direction       string   `json:"direction"`
-	Peer            string   `json:"peer"`
-	ID              string   `json:"call_id,omitempty"`
-	Codec           string   `json:"codec,omitempty"`
-	MediaLocal      string   `json:"media_local"`
-	MediaRemote     string   `json:"media_remote,omitempty"`
-	PacketsSent     uint64   `json:"packets_sent"`
-	PacketsReceived uint64   `json:"packets_received"`
-	Error           string   `json:"error,omitempty"`
+	Scenario        *ScenarioReport `json:"scenario,omitempty"`
+	AudioFault      string          `json:"audio_fault"`
+	SendRTP         RTPStats        `json:"send_rtp"`
+	ReceiveRTP      RTPStats        `json:"receive_rtp"`
+	Active          bool            `json:"active"`
+	State           string          `json:"state"`
+	Direction       string          `json:"direction"`
+	Peer            string          `json:"peer"`
+	ID              string          `json:"call_id,omitempty"`
+	Codec           string          `json:"codec,omitempty"`
+	MediaLocal      string          `json:"media_local"`
+	MediaRemote     string          `json:"media_remote,omitempty"`
+	PacketsSent     uint64          `json:"packets_sent"`
+	PacketsReceived uint64          `json:"packets_received"`
+	Error           string          `json:"error,omitempty"`
 }
 
 type phoneCall struct {
@@ -411,17 +412,38 @@ func (a *agent) connected(c *phoneCall, dialog context.Context, media audioParam
 		return a.sendBye(bye)
 	}
 	c.status.State = "incall"
+	preset := a.cfg.Preset != ""
+	if preset {
+		c.status.Scenario = &ScenarioReport{State: "waiting"}
+	}
 	a.mu.Unlock()
 
 	stopAudio := c.audio.run(a.ctx, media)
+	presetCtx, cancelPreset := context.WithCancel(a.ctx)
+	defer cancelPreset()
+	var presetDone chan struct{}
+	if preset {
+		presetDone = make(chan struct{})
+		go func() {
+			defer close(presetDone)
+			a.runPreset(presetCtx, c, media)
+		}()
+	}
+	remoteEnded := false
 	select {
 	case <-dialog.Done():
-		stopAudio()
-		return nil
+		remoteEnded = true
 	case <-a.ctx.Done():
 	case <-c.hangup:
 	}
+	cancelPreset()
+	if presetDone != nil {
+		<-presetDone
+	}
 	stopAudio()
+	if remoteEnded {
+		return nil
+	}
 	return a.sendBye(bye)
 }
 
