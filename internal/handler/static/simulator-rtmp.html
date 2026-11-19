@@ -33,7 +33,8 @@
                 <option value="publish_relay">接收本机推流并转发</option>
                 <option value="publish_failover">主路停发后备路接管</option>
               </select></div>
-              <div id="primary-stall-field" hidden><label for="primary-stall">主路无媒体阈值（毫秒）</label><input id="primary-stall" type="number" min="500" max="10000" value="1500" required></div>
+              <div id="stall-track-field" hidden><label for="stall-track">停发判定</label><select id="stall-track"><option value="">全部音视频停发</option><option value="video">仅判断视频停发</option></select></div>
+              <div id="primary-stall-field" hidden><label for="primary-stall">主路停发阈值（毫秒）</label><input id="primary-stall" type="number" min="500" max="10000" value="1500" required></div>
               <div id="primary-stable-field" hidden><label for="primary-stable">主路稳定后回切（毫秒，0 关闭）</label><input id="primary-stable" type="number" min="0" max="30000" value="0" required></div>
               <div id="keyframe-field" hidden><label for="keyframe-delay">延迟首个可转发关键帧（毫秒）</label><input id="keyframe-delay" type="number" min="0" max="15000" value="0" required></div>
               <div><label for="port">本机端口</label><input id="port" type="number" min="0" max="65535" value="0" required></div>
@@ -54,6 +55,7 @@
           <div id="ingest" hidden>
             <p class="field-hint">FFmpeg 可推送到同一地址。OBS 的服务器填写 <code id="ingest-server"></code>，串流密钥填 <code>test</code>。</p>
             <p id="backup-status" class="field-hint" hidden></p>
+            <p id="primary-tracks" class="field-hint" hidden></p>
             <ol id="switch-list" class="session-timeline" hidden></ol>
             <p id="ingest-status" class="field-hint"></p>
             <ol id="publication-list" class="session-timeline"></ol>
