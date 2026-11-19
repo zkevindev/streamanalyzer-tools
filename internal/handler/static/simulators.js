@@ -58,6 +58,8 @@ function notice(message = '') {
   el('notice').textContent = message;
 }
 
+let selectedStatus;
+
 function updateButtons() {
   el('simulator-fields').disabled = busy || active || !loaded;
   el('audio-codec').disabled = videoFile.files.length === 0;
@@ -65,6 +67,8 @@ function updateButtons() {
   el('clear-video').hidden = videoFile.files.length === 0 || active;
   el('start').disabled = busy || active || !loaded;
   el('stop').disabled = busy || !active;
+  el('switch-channel-state').disabled = busy || !active || selectedStatus?.state !== 'registered' ||
+    selectedStatus?.device_id !== devicePicker.value || selectedStatus?.channel_id !== channelPicker.value;
 }
 
 function selectionQuery(includeChannel = true) {
@@ -100,14 +104,18 @@ function renderTargets(status) {
   })), status.device_id);
   renderPicker(channelPicker, channels.map(channel => ({
     id: channel.channel_id,
-    label: `${channel.channel_id} · ${mediaStates[channel.media_state] || '正在连接'}`,
+    label: `${channel.channel_id} · ${channel.online === false ? '离线' : (mediaStates[channel.media_state] || '正在连接')}`,
   })), status.channel_id);
   el('export-trace').href = api + '/trace.json' + selectionQuery(false);
 }
 
 function render(status) {
   active = status.active;
+  selectedStatus = status;
   loaded = true;
+  el('channel-controls').hidden = !status.channel_id;
+  el('switch-channel-state').textContent = status.channel_online ? '通道下线' : '通道上线';
+  el('catalog-subscriptions').textContent = '目录订阅 ' + (status.catalog_subscriptions || 0);
   renderTargets(status);
   const badge = el('state');
   const label = states[status.state] || status.state;
@@ -123,7 +131,7 @@ function render(status) {
   if (status.media_state === 'connecting') {
     mediaLabel = status.media_transport === 'tcp-passive' ? '等待平台连入' : '正在连接平台';
   }
-  el('media-state').textContent = mediaLabel;
+  el('media-state').textContent = status.channel_id && !status.channel_online ? '通道离线' : mediaLabel;
   el('rtp-packets').textContent = status.rtp_packets.toLocaleString('zh-CN');
   el('device-info').hidden = !status.device_id;
   el('device-info').textContent = status.device_id ? `设备 ${status.device_id} · 通道 ${status.channel_id}` : '';
@@ -303,6 +311,7 @@ async function poll() {
 }
 
 function changeTarget() {
+  updateButtons();
   generation++;
   void refresh();
 }
@@ -322,7 +331,7 @@ async function change(path, body) {
   notice();
   try {
     const status = await request(path, body, path === '/stop' ? selectionQuery() : '');
-    if (path !== '/stop') {
+    if (path === '/start' || path === '/start-file') {
       events.replaceChildren();
       el('password').value = '';
     }
@@ -335,6 +344,14 @@ async function change(path, body) {
     updateButtons();
   }
 }
+
+el('switch-channel-state').addEventListener('click', () => {
+  void change('/channel-state', {
+    device_id: selectedStatus.device_id,
+    channel_id: selectedStatus.channel_id,
+    online: !selectedStatus.channel_online,
+  });
+});
 
 form.addEventListener('submit', (event) => {
   event.preventDefault();

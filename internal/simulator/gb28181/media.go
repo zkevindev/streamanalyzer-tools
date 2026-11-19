@@ -53,7 +53,7 @@ func (d *device) onInvite(flow *sipFlow, req *sip.Request, tx sip.ServerTransact
 	if err != nil {
 		reason := "点播协商失败：" + err.Error()
 		d.mu.Lock()
-		if d.status.State == "registered" && flow.ctx.Err() == nil && d.media[channelID] == nil {
+		if d.status.State == "registered" && flow.ctx.Err() == nil && !d.offline[channelID] && d.media[channelID] == nil {
 			d.newEvidence(channelID, req.CallID().Value(), "").mark("failed", reason, time.Now(), true)
 			*status = MediaStatus{MediaState: "failed", MediaError: reason}
 		}
@@ -65,7 +65,7 @@ func (d *device) onInvite(flow *sipFlow, req *sip.Request, tx sip.ServerTransact
 
 	flow.awaitRegistration()
 	d.mu.Lock()
-	if d.status.State != "registered" || flow.ctx.Err() != nil {
+	if d.status.State != "registered" || flow.ctx.Err() != nil || d.offline[channelID] {
 		d.mu.Unlock()
 		d.respond(req, tx, 480, "Temporarily Unavailable")
 		return
