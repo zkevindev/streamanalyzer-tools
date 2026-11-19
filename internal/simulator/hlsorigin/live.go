@@ -59,12 +59,15 @@ func (m *Manager) Freeze(frozen bool) (Status, error) {
 
 // Live reuses the VOD transport stream segments in a rolling list. Each
 // repetition starts a new timestamp period and receives unique media URLs.
-func livePlaylist(last uint64) []byte {
+func rollingPlaylist(last uint64, encrypted bool) []byte {
 	first := last - liveWindow + 1
 	var playlist bytes.Buffer
 	fmt.Fprintf(&playlist, "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:%d\n#EXT-X-DISCONTINUITY-SEQUENCE:%d\n",
 		first, (first-1)/SegmentCount)
 	for seq := first; seq <= last; seq++ {
+		if encrypted && (seq == first || seq == keyRotationSequence) {
+			fmt.Fprintf(&playlist, "#EXT-X-KEY:METHOD=AES-128,URI=\"key-%d.bin\"\n", keyIndex(seq)+1)
+		}
 		if seq > first && (seq-1)%SegmentCount == 0 {
 			playlist.WriteString("#EXT-X-DISCONTINUITY\n")
 		}

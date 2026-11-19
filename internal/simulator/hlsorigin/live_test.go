@@ -6,12 +6,12 @@ import (
 )
 
 func TestLivePlaylistTracksDiscontinuityAcrossFixtureWrap(t *testing.T) {
-	withWrap := string(livePlaylist(13))
+	withWrap := string(rollingPlaylist(13, false))
 	if !strings.Contains(withWrap, "#EXT-X-DISCONTINUITY-SEQUENCE:0\n") ||
 		!strings.Contains(withWrap, "#EXT-X-DISCONTINUITY\n#EXTINF:2.000,\nlive-13.ts") {
 		t.Fatal(withWrap)
 	}
-	afterWrap := string(livePlaylist(15))
+	afterWrap := string(rollingPlaylist(15, false))
 	if !strings.Contains(afterWrap, "#EXT-X-DISCONTINUITY-SEQUENCE:1\n") || strings.Contains(afterWrap, "#EXT-X-DISCONTINUITY\n") {
 		t.Fatal(afterWrap)
 	}

@@ -604,6 +604,13 @@
             player.attachMedia(video);
         }
 
+        reloadHLS() {
+            if (!this.active || !this.hlsPlayer) return;
+            this.releaseMedia();
+            this.canPlay = false;
+            this.attachHLS(this.source);
+        }
+
         hlsLatencyMS() {
             const latency = this.hlsPlayer?.latency;
             return Number.isFinite(latency) && latency > 0 ? Math.round(latency * 1000) : null;
