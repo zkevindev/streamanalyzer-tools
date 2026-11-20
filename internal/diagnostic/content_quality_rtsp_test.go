@@ -29,9 +29,22 @@ func TestRTSPContentQualityInputReusesVerifiedRTPReconstruction(t *testing.T) {
 	}
 }
 
-func TestRTSPContentQualityRequiresSameCaptureClock(t *testing.T) {
-	report := Report{Manifest: Manifest{Protocol: ProtocolRTSP}}
-	if _, err := contentQualityRTSPAnchor(report); err == nil {
-		t.Fatal("accepted RTSP source analysis without a same-capture media clock")
+func TestRTSPContentQualityDoesNotRequirePlayerRecording(t *testing.T) {
+	ffmpeg := rtspG711TestTool(t)
+	ffprobe, err := investigationMediaTool("ffprobe", filepath.Dir(ffmpeg))
+	if err != nil {
+		t.Skip("ffprobe missing")
+	}
+	dir, report, _ := investigationRTSPCaptureFixture(t, "h264")
+	report.Player = nil
+	report.Manifest.Player = nil
+	report.RTSP.Preview = nil
+	input, err := contentQualityInput(t.Context(), dir, t.TempDir(), report)
+	if err != nil {
+		t.Fatal(err)
+	}
+	probe, err := investigationMediaInspect(t.Context(), ffprobe, input)
+	if err != nil || !probe.hasVideo || probe.durationMS <= 0 {
+		t.Fatalf("playerless RTSP content was not reconstructed: %+v %v", probe, err)
 	}
 }
