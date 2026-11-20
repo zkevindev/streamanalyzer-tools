@@ -565,6 +565,8 @@ thead{color:#52657e;background:#f7f9fc}
 </dl></article>
 {{end}}
 {{end}}
+{{with .Report.Throughput}}<article><h2>网络吞吐与媒体码率</h2><dl><dt>平均网络吞吐</dt><dd>{{printf "%.1f" .AverageNetworkKbps}} kb/s</dd><dt>平均媒体码率</dt><dd>{{printf "%.1f" .AverageMediaKbps}} kb/s</dd><dt>视频 / 音频媒体码率</dt><dd>{{printf "%.1f" .AverageVideoKbps}} / {{printf "%.1f" .AverageAudioKbps}} kb/s</dd><dt>每秒吞吐最低 / 最高</dt><dd>{{printf "%.1f" .MinimumNetworkKbps}} / {{printf "%.1f" .MaximumNetworkKbps}} kb/s</dd></dl>
+<div class="scroll"><table><thead><tr><th>秒</th><th>有效时长 (ms)</th><th>网络字节</th><th>媒体字节</th><th>视频字节</th><th>音频字节</th><th>网络吞吐 (kb/s)</th></tr></thead><tbody>{{range .Samples}}<tr><td>{{.Second}}</td><td>{{.DurationMS}}</td><td>{{.NetworkBytes}}</td><td>{{.MediaBytes}}</td><td>{{.VideoBytes}}</td><td>{{.AudioBytes}}</td><td>{{printf "%.1f" .NetworkKbps}}</td></tr>{{end}}</tbody></table></div><p class="timing-note">{{.Boundary}}</p></article>{{end}}
 {{with .Report.ContentQuality}}<article><h2>源内容质量检测</h2><p class="timing-note">检测仅描述已保存源流的可解码内容，不代表本机播放器实际画面或声音。</p>
 <dl><dt>状态</dt><dd>{{.State}}</dd>{{with .Reason}}<dt>说明</dt><dd>{{.}}</dd>{{end}}<dt>可解码时长</dt><dd>{{.DurationMS}} ms</dd><dt>视频 / 音频轨道</dt><dd>{{if .HasVideo}}有{{else}}无{{end}} / {{if .HasAudio}}有{{else}}无{{end}}</dd>
 <dt>黑帧 / 冻结 / 静音区间</dt><dd>{{len .BlackIntervals}} / {{len .FreezeIntervals}} / {{len .SilenceIntervals}}</dd>

@@ -1814,6 +1814,21 @@ function renderReportAssessment(assessment, findings) {
     content.append(element('p', `排查规则 ${assessment.version}`, 'timing-note muted'));
 }
 
+function renderThroughput(report) {
+    const throughput = report.throughput;
+    node('throughput-report').hidden = !throughput;
+    if (!throughput) return;
+    renderMetrics('throughput-metrics', [
+        ['平均网络吞吐', throughput.average_network_kbps.toFixed(1) + ' kb/s'],
+        ['平均媒体码率', throughput.average_media_kbps.toFixed(1) + ' kb/s'],
+        ['视频 / 音频媒体码率', `${throughput.average_video_kbps.toFixed(1)} / ${throughput.average_audio_kbps.toFixed(1)} kb/s`],
+        ['每秒吞吐最低 / 最高', `${throughput.minimum_network_kbps.toFixed(1)} / ${throughput.maximum_network_kbps.toFixed(1)} kb/s`],
+    ]);
+    node('throughput-samples').replaceChildren(renderTable(['秒', '有效时长', '网络字节', '媒体字节', '视频字节', '音频字节', '网络吞吐'],
+        (throughput.samples || []).map(sample => [sample.second, time(sample.duration_ms), bytes(sample.network_bytes), bytes(sample.media_bytes), bytes(sample.video_bytes), bytes(sample.audio_bytes), sample.network_kbps.toFixed(1) + ' kb/s'])));
+    node('throughput-boundary').textContent = throughput.boundary;
+}
+
 function renderReport(report) {
     currentReport = report;
     const observed = report.manifest.observation;
@@ -1854,6 +1869,7 @@ function renderReport(report) {
         ['原始产物状态', observed.end_reason === 'size_limit' ? '达到上限，已保留可复盘前缀' : (endLabels[observed.end_reason] || observed.end_reason || '未记录')],
     );
     renderMetrics('metrics', values);
+    renderThroughput(report);
     renderAutomaticInvestigation(report);
     renderSamplingTiming(report, requests);
     renderRTSPReport(report);
