@@ -48,6 +48,7 @@ type Service struct {
 	cancelFLVReplays    context.CancelFunc
 	persistence         sync.RWMutex
 	players             map[string]*playerSessionState
+	batches             map[string]*diagnosticBatch
 	investigationJobs   map[string]context.CancelFunc
 	contentQualityJobs  map[string]context.CancelFunc
 	investigationSlots  chan struct{}

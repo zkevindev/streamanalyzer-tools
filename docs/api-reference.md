@@ -8,6 +8,9 @@
 | --- | --- |
 | `GET /api/diagnostics/config` | 返回当前模型配置状态及 `capture_limit_bytes` 原始产物上限 |
 | `POST /api/diagnostics/runs` | 发起采样。请求体示例：`{"protocol":"hls","url":"<stream-url>","seconds":60,"playback":true,"auto_investigate":true}`。`protocol` 可选 `http-flv` / `rtmp` / `rtsp` / `rtsps` / `hls` / `http-ts` / `udp-ts` / `rtp-ts`（默认 `http-flv`）；RTSP 可传 `"transport":"udp"`（默认 `tcp`）。HTTP-FLV、HLS、HTTP-TS 可附加 `headers`（字符串映射，最多 16 项）、`proxy_url` 和 `ca_certificate`（PEM）；RTMPS/RTSPS 也可附加 `ca_certificate`。这些配置仅用于本次连接且不会保存原始值 |
+| `POST /api/diagnostics/batches` | 创建 2–4 路批量采样，请求体 `{"samples":[<SampleRequest>,...]}`。批量模式不接受 `playback` / `auto_investigate`；批次只在本服务内存保存运行 ID，不保存访问条件 |
+| `GET /api/diagnostics/batches/:id` | 查询批次状态；全部结束后以第一路可用报告为基线，自动返回其余同协议线路的对比结果 |
+| `POST /api/diagnostics/batches/:id/stop` | 停止批次内所有运行中采样并保留已采集证据 |
 | `GET /api/diagnostics/runs` | 列出最近的采样与复盘记录，包含 `protected` 保护状态 |
 | `GET /api/diagnostics/storage` | 返回排障记录数、产物字节数及受保护证据占用 |
 | `POST /api/diagnostics/storage/prune` | 按 `{"retention_days":30,"max_total_bytes":1073741824}` 从最早记录开始清理；0 表示对应策略不启用，受保护和运行中记录始终跳过 |

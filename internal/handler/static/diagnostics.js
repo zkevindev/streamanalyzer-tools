@@ -220,6 +220,8 @@ let currentStatus = '';
 let currentMode = '';
 let currentAutomaticRunning = false;
 let activePoll;
+let activeBatchPoll;
+let activeBatchID = '';
 let runs = [];
 const selectedRunIDs = new Set();
 let currentModel = null;
@@ -2251,6 +2253,75 @@ function captureAccessOptions(protocol) {
         ca_certificate: node('http-ca-certificate').value.trim() || undefined,
     };
 }
+function renderBatchResult(batch) {
+    node('batch-results').hidden = false;
+    node('batch-status').textContent = `批次 ${batch.id} · ${statusLabels[batch.status] || batch.status} · ${batch.runs.length} 路`;
+    node('stop-batch').hidden = batch.status !== 'running';
+    const runsContent = node('batch-runs');
+    runsContent.replaceChildren();
+    for (const run of batch.runs) {
+        const row = element('div', '', 'batch-run');
+        const link = element('button', `${protocolLabel(run.protocol, run.origin)} · ${diagnosticOrigin(run.protocol, run.origin) || run.id}`, 'secondary');
+        link.type = 'button';
+        link.addEventListener('click', () => selectRun(run.id));
+        const state = element('span', statusLabels[run.status] || run.status, 'status');
+        state.dataset.status = run.status;
+        row.append(link, state, element('code', run.id));
+        runsContent.append(row);
+    }
+    const comparisons = node('batch-comparisons');
+    comparisons.replaceChildren();
+    for (const warning of batch.warnings || []) comparisons.append(element('p', warning, 'comparison-warnings'));
+    for (const item of batch.comparisons || []) {
+        const block = element('section', '', 'batch-comparison');
+        block.append(element('h3', `${item.current_id} 对比基线 ${item.baseline_id}`));
+        for (const warning of item.comparison.warnings || []) block.append(element('p', warning, 'comparison-warnings'));
+        const rows = (item.comparison.metrics || []).map(metric => [metric.label, comparisonValue(metric.baseline, metric.unit), comparisonValue(metric.current, metric.unit),
+            metric.delta == null ? '未观测' : (metric.delta > 0 ? '+' : '') + comparisonValue(metric.delta, metric.unit), comparisonStates[metric.state] || metric.state]);
+        block.append(renderTable(['指标', '基线', '当前', '差值', '判断'], rows));
+        comparisons.append(block);
+    }
+    if (batch.status !== 'running' && !(batch.comparisons || []).length) comparisons.append(element('p', '没有可自动对比的同协议报告。', 'muted'));
+}
+
+async function refreshBatch(id) {
+    clearTimeout(activeBatchPoll);
+    try {
+        const batch = await api('/batches/' + encodeURIComponent(id), { cache: 'no-store' });
+        if (activeBatchID !== id) return;
+        renderBatchResult(batch);
+        if (batch.status === 'running') activeBatchPoll = setTimeout(() => refreshBatch(id), 1000);
+        else await refreshHistory();
+    } catch (err) { message(err.message, true); }
+}
+
+node('batch-sample').addEventListener('submit', async event => {
+    event.preventDefault();
+    const button = event.currentTarget.querySelector('button[type="submit"]');
+    button.disabled = true;
+    try {
+        const protocol = node('batch-protocol').value;
+        const urls = node('batch-urls').value.split(/\r?\n/).map(value => value.trim()).filter(Boolean);
+        if (urls.length < 2 || urls.length > 4) throw new Error('请输入 2 至 4 路地址。');
+        const seconds = node('batch-seconds').valueAsNumber;
+        const access = captureAccessOptions(protocol);
+        const samples = urls.map(url => ({ protocol, url, seconds, ...access }));
+        const batch = await api('/batches', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ samples }) });
+        activeBatchID = batch.id;
+        renderBatchResult(batch);
+        await refreshHistory();
+        await refreshBatch(batch.id);
+    } catch (err) { message(err.message, true); }
+    finally { button.disabled = false; }
+});
+node('stop-batch').addEventListener('click', async () => {
+    if (!activeBatchID) return;
+    try {
+        await api('/batches/' + encodeURIComponent(activeBatchID) + '/stop', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        await refreshBatch(activeBatchID);
+    } catch (err) { message(err.message, true); }
+});
+
 bindForm('sample', async () => {
     const startedAt = Date.now();
     const startedAtPerformanceMS = performance.now();

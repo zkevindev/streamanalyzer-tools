@@ -91,6 +91,24 @@
                     <textarea id="http-ca-certificate" rows="4" autocomplete="off" spellcheck="false" placeholder="-----BEGIN CERTIFICATE-----"></textarea>
                 </details>
             </form>
+            <details id="batch-diagnostics" class="report-details panel-body">
+                <summary>多地址批量诊断与自动对比（2–4 路）</summary>
+                <p class="field-hint muted">每行一个地址，使用相同协议、采样时长及上方访问条件。批量模式不启用播放器观测；任务仅保存在本次服务内存中，单路报告仍持久化。</p>
+                <form id="batch-sample">
+                    <label for="batch-protocol">协议</label>
+                    <select id="batch-protocol">
+                        <option value="http-flv">HTTP-FLV</option><option value="rtmp">RTMP / RTMPS</option>
+                        <option value="rtsp">RTSP · TCP</option><option value="rtsps">RTSPS · TLS/TCP</option>
+                        <option value="hls">HLS</option><option value="http-ts">HTTP MPEG-TS</option>
+                        <option value="udp-ts">UDP MPEG-TS</option><option value="rtp-ts">RTP MPEG-TS</option>
+                    </select>
+                    <label for="batch-urls">播放或接收地址（每行一个）</label>
+                    <textarea id="batch-urls" rows="5" required spellcheck="false" placeholder="https://edge-a.example/live/stream.flv&#10;https://edge-b.example/live/stream.flv"></textarea>
+                    <label for="batch-seconds">采样时长（秒）</label>
+                    <input id="batch-seconds" type="number" min="1" max="300" value="30" required>
+                    <button type="submit">开始批量采样</button>
+                </form>
+            </details>
             <div id="hls-delivery-panel" class="panel-body hls-tool hls-embedded" hidden>
                 <form id="hls-form" aria-label="HLS 交付分析配置">
                     <fieldset id="hls-fields">
@@ -342,6 +360,10 @@
             </div>
         </section>
     </div>
+    <section id="batch-results" class="panel" aria-labelledby="batch-results-title" hidden>
+        <div class="panel-heading"><h2 id="batch-results-title">批量诊断结果</h2><button id="stop-batch" type="button" class="secondary" hidden>停止本批次</button></div>
+        <div class="panel-body"><p id="batch-status" class="muted" role="status"></p><div id="batch-runs"></div><div id="batch-comparisons"></div></div>
+    </section>
     <section id="hls-results" class="hls-tool hls-embedded-results" aria-labelledby="hls-results-title" hidden>
         <header class="hls-results-heading">
             <h2 id="hls-results-title">HLS 交付分析结果</h2>
