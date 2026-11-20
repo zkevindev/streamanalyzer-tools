@@ -1568,6 +1568,75 @@ function renderStallInvestigations(report) {
     }));
 }
 
+function selectedShareCaseIDs() {
+    return [...node('share-cases').querySelectorAll('input[type="checkbox"]:checked')].map(input => input.value);
+}
+
+function updateSharePreview() {
+    if (!currentReport) return;
+    const selected = new Set(selectedShareCaseIDs());
+    let mediaBytes = 0, assetCount = 0;
+    for (const item of currentReport.stall_investigations || []) {
+        if (!selected.has(item.id)) continue;
+        for (const asset of item.media?.assets || []) { mediaBytes += asset.bytes || 0; assetCount++; }
+    }
+    const includeStream = node('share-include-stream').checked;
+    const rawBytes = includeStream ? currentReport.manifest.stream.bytes : 0;
+    node('share-preview').textContent = `内容：report.json、report.html、share-manifest.json · ${selected.size} 个案例 / ${assetCount} 个媒体文件` +
+        (includeStream ? ` · 完整原始流 ${bytes(rawBytes)}` : ' · 不含完整原始流') + ` · 媒体与原始流合计约 ${bytes(mediaBytes + rawBytes)}`;
+}
+
+function prepareSharePanel(report) {
+    const cases = node('share-cases');
+    cases.replaceChildren();
+    const investigations = report.stall_investigations || [];
+    if (!investigations.length) cases.append(element('p', '当前没有异常补查产物，将只导出报告。', 'timing-note muted'));
+    for (const item of investigations) {
+        const label = element('label', '', 'playback-option');
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.value = item.id;
+        input.checked = true;
+        input.addEventListener('change', updateSharePreview);
+        const assets = item.media?.assets || [];
+        label.append(input, document.createTextNode(`${item.id} · ${assets.length} 个文件 · ${bytes(assets.reduce((sum, asset) => sum + (asset.bytes || 0), 0))}`));
+        cases.append(label);
+    }
+    const include = node('share-include-stream');
+    include.checked = false;
+    include.disabled = !report.manifest.stream.bytes;
+    include.onchange = updateSharePreview;
+    updateSharePreview();
+}
+
+node('share-report').addEventListener('click', () => {
+    const panel = node('share-panel');
+    panel.hidden = !panel.hidden;
+    if (!panel.hidden && currentReport) prepareSharePanel(currentReport);
+});
+node('export-share').addEventListener('click', async () => {
+    if (!currentID) return;
+    const button = node('export-share');
+    button.disabled = true;
+    try {
+        const response = await fetch(apiRoot + runPath(currentID) + '/share', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ case_ids: selectedShareCaseIDs(), include_stream: node('share-include-stream').checked }),
+        });
+        if (!response.ok) {
+            const result = await response.json().catch(() => ({}));
+            throw new Error(result.error || `分享包生成失败（HTTP ${response.status}）`);
+        }
+        const url = URL.createObjectURL(await response.blob());
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `share-${currentID}.zip`;
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (err) { message(err.message, true); }
+    finally { button.disabled = false; }
+});
+
 const comparisonStates = { improved: '改善', worse: '恶化', unchanged: '不变', changed: '有变化', unobserved: '未观测' };
 
 function comparisonValue(value, unit) {
@@ -1891,6 +1960,12 @@ function renderDetail(detail) {
     node('delete-run').hidden = protectedRun || currentStatus === 'running';
     node('report').hidden = !detail.report;
     node('compare-report').hidden = !detail.report;
+    node('share-report').hidden = !detail.report;
+    const share = node('share-panel');
+    if (share.dataset.run !== detail.id) {
+        share.dataset.run = detail.id;
+        share.hidden = true;
+    }
     const comparison = node('report-comparison');
     if (comparison.dataset.run !== detail.id) {
         comparison.dataset.run = detail.id;
