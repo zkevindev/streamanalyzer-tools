@@ -13,6 +13,7 @@
 | `POST /api/diagnostics/storage/prune` | 按 `{"retention_days":30,"max_total_bytes":1073741824}` 从最早记录开始清理；0 表示对应策略不启用，受保护和运行中记录始终跳过 |
 | `POST /api/diagnostics/runs/delete` | 批量删除已结束且未保护记录，请求体 `{"ids":["<run-id>"]}`，每次 1–100 条 |
 | `GET /api/diagnostics/runs/:id` | 查询任务状态、规则报告与已生成的模型解读 |
+| `GET /api/diagnostics/runs/:id/compare?baseline=<run-id>` | 对比当前报告与同协议基线，返回带观测状态的指标差值、新增/未再触发规则及来源、时长、编码和规则版本差异警告 |
 | `DELETE /api/diagnostics/runs/:id` | 永久删除已结束且未保护记录及其本地产物 |
 | `POST /api/diagnostics/runs/:id/protection` | 用 `{"protected":true}` 保护重要证据，或用 `false` 取消保护 |
 | `POST /api/diagnostics/runs/:id/stop` | 停止采样并保留已采集数据 |

@@ -237,6 +237,7 @@ const pendingStallExplanations = new Set();
 const pendingStallStops = new Set();
 const openPlayerNetworkDetails = new Set();
 let currentReport;
+let currentComparison = null;
 const investigationStates = { queued: '等待补查', running: '补查中', complete: '补查完成', partial: '保留部分结果', failed: '补查失败', canceled: '补查已停止' };
 const investigationMediaStates = { ready: '片段与截图已提取', partial: '媒体产物部分可用', unavailable: '媒体产物不可用', failed: '媒体提取失败' };
 const investigationModelStates = { not_requested: '未单独解读 · 见整体汇总', pending: '正在结合时序证据生成建议…', complete: '已生成建议', unconfigured: '尚未配置大模型，可在模型设置中配置后生成建议。', failed: '模型建议生成失败，可重试。', changed: '模型配置已变化，可使用当前模型重新生成建议。' };
@@ -507,7 +508,9 @@ function renderTable(columns, rows) {
     for (const values of rows) {
         const row = body.insertRow();
         for (const value of values) {
-            row.insertCell().textContent = value ?? '—';
+            const cell = row.insertCell();
+            if (value instanceof Node) cell.append(value);
+            else cell.textContent = value ?? '—';
         }
     }
     wrap.append(table);
@@ -1565,6 +1568,77 @@ function renderStallInvestigations(report) {
     }));
 }
 
+const comparisonStates = { improved: '改善', worse: '恶化', unchanged: '不变', changed: '有变化', unobserved: '未观测' };
+
+function comparisonValue(value, unit) {
+    if (value == null) return '未观测';
+    if (unit === 'ms') return time(value);
+    if (unit === 'bytes') return bytes(value);
+    return Number(value).toLocaleString();
+}
+
+function prepareReportComparison(report) {
+    const select = node('comparison-baseline');
+    select.replaceChildren();
+    const candidates = runs.filter(run => run.id !== currentID && run.report_ready && run.protocol === report.manifest.protocol);
+    for (const run of candidates) {
+        const when = new Date(run.created_at).toLocaleString();
+        select.append(new Option(`${when} · ${diagnosticOrigin(run.protocol, run.origin) || run.origin || run.id}`, run.id));
+    }
+    node('run-comparison').disabled = candidates.length === 0;
+    if (!candidates.length) select.append(new Option('没有同协议的历史报告', ''));
+    else {
+        const sameOrigin = candidates.find(run => run.origin === report.manifest.observation.origin);
+        if (sameOrigin) select.value = sameOrigin.id;
+    }
+}
+
+function renderComparison(result) {
+    currentComparison = result;
+    node('export-comparison').hidden = false;
+    const content = node('comparison-result');
+    content.replaceChildren();
+    const warnings = element('ul', '', 'comparison-warnings');
+    for (const warning of result.warnings || []) warnings.append(element('li', warning));
+    if (warnings.childElementCount) content.append(warnings);
+    const rows = (result.metrics || []).map(metric => {
+        const state = element('span', comparisonStates[metric.state] || metric.state, 'comparison-state');
+        state.dataset.state = metric.state;
+        return [metric.label, comparisonValue(metric.baseline, metric.unit), comparisonValue(metric.current, metric.unit),
+            metric.delta == null ? '未观测' : (metric.delta > 0 ? '+' : '') + comparisonValue(metric.delta, metric.unit), state];
+    });
+    content.append(renderTable(['指标', '基线', '当前', '差值（当前−基线）', '判断'], rows));
+    const changes = element('p', `新增规则：${(result.new_findings || []).join('、') || '无'} · 未再触发：${(result.resolved_findings || []).join('、') || '无'}`, 'timing-note muted');
+    content.append(changes);
+}
+
+node('compare-report').addEventListener('click', () => {
+    const section = node('report-comparison');
+    section.hidden = !section.hidden;
+    if (!section.hidden && currentReport) prepareReportComparison(currentReport);
+});
+node('run-comparison').addEventListener('click', async () => {
+    const baseline = node('comparison-baseline').value;
+    if (!currentID || !baseline) return;
+    const button = node('run-comparison');
+    button.disabled = true;
+    try {
+        const result = await api(runPath(currentID) + '/compare?baseline=' + encodeURIComponent(baseline), { cache: 'no-store' });
+        renderComparison(result);
+    } catch (err) { message(err.message, true); }
+    finally { button.disabled = false; }
+});
+node('export-comparison').addEventListener('click', () => {
+    if (!currentComparison) return;
+    const blob = new Blob([JSON.stringify(currentComparison, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `comparison-${currentComparison.baseline.id}-${currentComparison.current.id}.json`;
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+});
+
 function renderReportAssessment(assessment, findings) {
     const section = node('report-assessment');
     section.hidden = !assessment;
@@ -1816,6 +1890,15 @@ function renderDetail(detail) {
     node('protect-run').textContent = protectedRun ? '取消重要证据保护' : '保护当前证据';
     node('delete-run').hidden = protectedRun || currentStatus === 'running';
     node('report').hidden = !detail.report;
+    node('compare-report').hidden = !detail.report;
+    const comparison = node('report-comparison');
+    if (comparison.dataset.run !== detail.id) {
+        comparison.dataset.run = detail.id;
+        comparison.hidden = true;
+        node('comparison-result').replaceChildren();
+        node('export-comparison').hidden = true;
+        currentComparison = null;
+    }
     const observed = detail.report?.manifest.observation;
     const parts = [diagnosticOrigin(protocol, detail.origin), statusLabels[detail.status] || detail.status];
     if (observed) {
