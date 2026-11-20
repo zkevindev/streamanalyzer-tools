@@ -1889,6 +1889,10 @@ function renderReport(report) {
     }
     if (!protocols[protocol]?.nativeRTSP && m.video_codecs?.length) values.push(['视频编码', m.video_codecs.join(' / ')]);
     if (!protocols[protocol]?.nativeRTSP && m.audio_codecs?.length) values.push(['音频编码', m.audio_codecs.join(' / ')]);
+    if (report.manifest.analysis_thresholds) {
+        const thresholds = report.manifest.analysis_thresholds;
+        values.push(['诊断场景', report.manifest.analysis_profile || 'standard'], ['首帧 / 空洞 / DTS / GOP 阈值', `${thresholds.first_frame_warn_ms} / ${thresholds.video_gap_warn_ms} / ${thresholds.dts_gap_warn_ms} / ${thresholds.gop_warn_ms} ms`]);
+    }
     const streamLimit = report.manifest.stream_limit_bytes || 128 * 1024 * 1024;
     values.push(
         [protocols[protocol]?.dump || '原始流', bytes(report.manifest.stream.bytes)],
@@ -2177,6 +2181,7 @@ function bindForm(id, submit) {
 
 function updateAutomaticOption() { const playback = node('analyze-playback'); node('auto-investigate').disabled = playback.disabled || !playback.checked; }
 node('analyze-playback').addEventListener('change', updateAutomaticOption);
+node('analysis-profile').addEventListener('change', () => { node('custom-thresholds').hidden = node('analysis-profile').value !== 'custom'; });
 node('protocol').addEventListener('change', () => {
     const protocol = node('protocol').value;
     const selected = protocols[protocol];
@@ -2410,7 +2415,7 @@ bindForm('sample', async () => {
     const protocol = node('protocol').value;
     const run = await api('/runs', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ protocol, transport: protocols[protocol]?.nativeRTSP ? node('rtsp-transport').value : undefined, url, seconds, playback, auto_investigate: autoInvestigate, reconnect_attempts: ['http-flv', 'rtmp'].includes(protocol) ? node('reconnect-attempts').valueAsNumber : 0, reconnect_delay_ms: ['http-flv', 'rtmp'].includes(protocol) ? node('reconnect-delay').valueAsNumber : 0, hls_variant: protocol === 'hls' ? node('hls-variant').valueAsNumber : undefined, ...captureAccessOptions(protocol) }),
+        body: JSON.stringify({ protocol, transport: protocols[protocol]?.nativeRTSP ? node('rtsp-transport').value : undefined, url, seconds, playback, auto_investigate: autoInvestigate, reconnect_attempts: ['http-flv', 'rtmp'].includes(protocol) ? node('reconnect-attempts').valueAsNumber : 0, reconnect_delay_ms: ['http-flv', 'rtmp'].includes(protocol) ? node('reconnect-delay').valueAsNumber : 0, hls_variant: protocol === 'hls' ? node('hls-variant').valueAsNumber : undefined, profile: node('analysis-profile').value, custom_thresholds: node('analysis-profile').value === 'custom' ? { first_frame_warn_ms: node('threshold-first-frame').valueAsNumber, video_gap_warn_ms: node('threshold-video-gap').valueAsNumber, dts_gap_warn_ms: node('threshold-dts-gap').valueAsNumber, gop_warn_ms: node('threshold-gop').valueAsNumber } : undefined, ...captureAccessOptions(protocol) }),
     });
     stopPlayback(activePlayer);
     startPlayback(run, startedAt, startedAtPerformanceMS, seconds, hlsRecovery, hlsABR, hlsLowLatency);

@@ -131,6 +131,7 @@ func sample(ctx context.Context, client *http.Client, dir string, target *url.UR
 	}
 
 	manifest := Manifest{Version: multiProtocolSchemaVersion, Protocol: ProtocolHTTPFLV, Observation: observation, Stream: stream.artifact(), Timeline: timeline.artifact()}
+	applyAnalysisConfig(ctx, &manifest)
 	return analyze(manifest, events), nil
 }
 

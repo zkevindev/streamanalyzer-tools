@@ -325,6 +325,7 @@ thead{color:#52657e;background:#f7f9fc}
 <dt>开始时间</dt><dd>{{.StartedAt.Format "2006-01-02 15:04:05 UTC"}}</dd>
 <dt>采样时长</dt><dd>{{printf "%.3f" (seconds .ElapsedMS)}} 秒 / 计划 {{.RequestedSeconds}} 秒</dd>
 <dt>结束原因</dt><dd>{{finish .EndReason}}</dd>
+{{if $.Report.Manifest.AnalysisProfile}}<dt>诊断场景</dt><dd>{{$.Report.Manifest.AnalysisProfile}} · 首帧 {{$.Report.Manifest.AnalysisThresholds.FirstFrameWarnMS}} / 空洞 {{$.Report.Manifest.AnalysisThresholds.VideoGapWarnMS}} / DTS {{$.Report.Manifest.AnalysisThresholds.DTSGapWarnMS}} / GOP {{$.Report.Manifest.AnalysisThresholds.GOPWarnMS}} ms</dd>{{end}}
 {{if .HTTPStatus}}<dt>HTTP 状态</dt><dd>{{.HTTPStatus}}</dd>{{end}}
 {{if not $.HTTPRequests}}{{with .TTFBMS}}<dt>{{if eq $.Report.Manifest.Protocol "rtmp"}}RTMP 首字节{{else if isRTSP $.Report.Manifest.Protocol}}RTSP 首字节{{else}}响应首字节{{end}}</dt><dd>{{.}} ms</dd>{{end}}{{end}}
 </dl></article>

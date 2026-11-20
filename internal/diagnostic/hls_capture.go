@@ -92,6 +92,7 @@ func sampleHLS(ctx context.Context, client *http.Client, dir string, target *url
 		HLSVariant: capture.variant, HLSVariantBandwidth: capture.bandwidth,
 		Stream: stream.artifact(), Timeline: timeline.artifact(),
 	}
+	applyAnalysisConfig(ctx, &manifest)
 	return replayHLS(dir, manifest)
 }
 
