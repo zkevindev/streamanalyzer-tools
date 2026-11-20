@@ -28,6 +28,7 @@
 | `POST /api/diagnostics/runs/:id/share` | 生成仅用于外发查看的最小分享 ZIP。请求体 `{"case_ids":["S001"],"include_stream":false}`；默认包含报告、清单和所选案例媒体，只有显式设置 `include_stream` 才包含完整原始流。该 ZIP 不可导入重算 |
 | `POST /api/diagnostics/import` | 导入证据包（`Content-Type: application/zip`，请求体为 ZIP 原始字节） |
 | `POST /api/diagnostics/runs/:id/explain` | 请求整份报告的大模型汇总解读 |
+| `POST /api/diagnostics/runs/:id/content-quality` | 按需运行本机 FFmpeg 源内容检测，返回黑帧、冻结、静音完整区间及音画时间戳差/漂移；结果绑定原始流 SHA-256 并保存到 `report.content_quality`，相同原始流重复请求复用结果 |
 
 ### ONVIF 设备探测 API（`/api/diagnostics/onvif`）
 

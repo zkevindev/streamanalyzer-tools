@@ -223,6 +223,14 @@ func RegisterDiagnosticRoutes(r *gin.Engine, service *diagnostic.Service) {
 			diagnosticError(c, err)
 		}
 	})
+	api.POST("/runs/:id/content-quality", func(c *gin.Context) {
+		quality, err := service.AnalyzeContentQuality(c.Request.Context(), c.Param("id"))
+		if err != nil {
+			diagnosticError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, quality)
+	})
 	api.POST("/runs/:id/share", func(c *gin.Context) {
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16<<10)
 		var req diagnostic.ShareRequest

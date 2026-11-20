@@ -19,7 +19,7 @@
 ### 环境要求
 
 - **Go 1.26+**（macOS / Linux 构建需要 CGO 与 `libpcap` 开发环境）
-- **可选依赖**：本地安装 `ffmpeg` / `ffprobe`（放在程序同级目录、加入 `PATH` 或通过 Homebrew / MacPorts 安装），用于卡顿片段与截图提取、G.711 转码预览及模拟器本地视频推流
+- **可选依赖**：本地安装 `ffmpeg` / `ffprobe`（放在程序同级目录、加入 `PATH` 或通过 Homebrew / MacPorts 安装），用于卡顿片段与截图提取、源内容黑帧/冻结/静音检测、G.711 转码预览及模拟器本地视频推流
 
 ### 启动 Web 服务
 

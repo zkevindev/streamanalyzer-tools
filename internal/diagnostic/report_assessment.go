@@ -128,14 +128,13 @@ func importedReportAssessment(report *Report, entry *zip.File) error {
 	if err := json.NewDecoder(reader).Decode(&stored); err != nil {
 		return fmt.Errorf("%w: 报告 JSON 不可读", ErrInvalid)
 	}
-	if stored.Assessment == nil {
-		return nil
+	if stored.Assessment != nil {
+		if err := validReportAssessment(*stored.Assessment, *report); err != nil {
+			return err
+		}
+		report.Assessment = stored.Assessment
 	}
-	if err := validReportAssessment(*stored.Assessment, *report); err != nil {
-		return err
-	}
-	report.Assessment = stored.Assessment
-	return nil
+	return decodeStoredContentQuality(stored, report)
 }
 
 func validReportAssessment(assessment ReportAssessment, report Report) error {

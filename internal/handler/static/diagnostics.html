@@ -196,6 +196,7 @@
                         <a id="json" class="button secondary" download>报告 JSON</a>
                         <a id="dump" class="button secondary" download>原始流</a>
                         <a id="bundle" class="button secondary" download>证据包 ZIP</a>
+                        <button id="analyze-content-quality" class="secondary" type="button" hidden>源内容质量检测</button>
                         <button id="share-report" class="secondary" type="button" hidden>最小化分享包</button>
                         <button id="compare-report" class="secondary" type="button" hidden>历史基线对比</button>
                         <button id="flv-replay" class="secondary" type="button" hidden>使用本机回放源</button>
@@ -294,6 +295,14 @@
                             <summary id="pid-summary">PID 明细</summary>
                             <div id="pid-table"></div>
                         </details>
+                    </section>
+                    <section id="content-quality" class="report-details" aria-labelledby="content-quality-title" hidden>
+                        <div class="panel-heading">
+                            <h3 id="content-quality-title" class="report-title">源内容质量检测</h3>
+                            <button id="run-content-quality" type="button" class="secondary">开始本地检测</button>
+                        </div>
+                        <p class="timing-note muted">按需读取已保存源流并调用本机 FFmpeg，最多运行 90 秒。结果不表示本机播放器实际画面或声音。</p>
+                        <div id="content-quality-result"></div>
                     </section>
                     <section id="share-panel" class="report-details" aria-labelledby="share-panel-title" hidden>
                         <h3 id="share-panel-title" class="report-title">最小化分享包</h3>
