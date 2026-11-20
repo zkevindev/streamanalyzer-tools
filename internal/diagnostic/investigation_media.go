@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"streamanalyzer/internal/hlsdelivery/m3u8"
+	hlsmedia "streamanalyzer/internal/hlsdelivery/media"
 	"streamanalyzer/internal/rtmpraw"
 
 	"github.com/yutopp/go-rtmp"
@@ -661,7 +662,7 @@ func investigationMediaHLS(ctx context.Context, dir, stage string, report Report
 		}
 	}
 	input.anchorMS = anchor
-	if err := investigationMediaWriteHLS(ctx, stage, "main", selected, entries); err != nil {
+	if err := investigationMediaWriteHLS(ctx, stage, "main", selected, entries, report.Manifest.Observation.Origin); err != nil {
 		return input, err
 	}
 	input.path = filepath.Join(stage, "main.m3u8")
@@ -678,7 +679,7 @@ func investigationMediaHLS(ctx context.Context, dir, stage string, report Report
 			selectedAudio = selectedAudio[:12]
 		}
 		if len(selectedAudio) > 0 {
-			if err := investigationMediaWriteHLS(ctx, stage, "audio", selectedAudio, entries); err != nil {
+			if err := investigationMediaWriteHLS(ctx, stage, "audio", selectedAudio, entries, report.Manifest.Observation.Origin); err != nil {
 				return input, err
 			}
 			master := "#EXTM3U\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"audio\",NAME=\"audio\",DEFAULT=YES,AUTOSELECT=YES,URI=\"audio.m3u8\"\n#EXT-X-STREAM-INF:BANDWIDTH=2000000,AUDIO=\"audio\"\nmain.m3u8\n"
@@ -691,7 +692,7 @@ func investigationMediaHLS(ctx context.Context, dir, stage string, report Report
 	return input, nil
 }
 
-func investigationMediaWriteHLS(ctx context.Context, stage, prefix string, segments []investigationMediaHLSSegment, entries map[string]*zip.File) error {
+func investigationMediaWriteHLS(ctx context.Context, stage, prefix string, segments []investigationMediaHLSSegment, entries map[string]*zip.File, origin string) error {
 	var playlist strings.Builder
 	playlist.WriteString("#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:60\n#EXT-X-MEDIA-SEQUENCE:0\n")
 	lastInit := ""
@@ -699,8 +700,11 @@ func investigationMediaWriteHLS(ctx context.Context, stage, prefix string, segme
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if item.segment.Key != nil {
-			return errors.New("异常附近 HLS 分片已加密，证据包未保存解密密钥，无法生成片段或截图。")
+		if item.segment.Key != nil && item.segment.Key.Method != "AES-128" {
+			return errors.New("HLS 加密方式不是受支持的 AES-128。")
+		}
+		if item.segment.Key != nil && !hlsKeyFetchAllowed(ctx) {
+			return errors.New("HLS 分片已加密，当前离线流程未启用临时密钥分析。")
 		}
 		if item.segment.Discontinuity || index > 0 && item.segment.Sequence != segments[index-1].segment.Sequence+1 {
 			playlist.WriteString("#EXT-X-DISCONTINUITY\n")
@@ -728,14 +732,61 @@ func investigationMediaWriteHLS(ctx context.Context, stage, prefix string, segme
 		if entry == nil {
 			return errors.New("HLS 媒体分片缺失。")
 		}
-		if err := investigationMediaCopyZIP(entry, filepath.Join(stage, name)); err != nil {
-			return errors.New("HLS 媒体分片不可读。")
+		if err := investigationMediaCopyHLSSegment(ctx, entry, filepath.Join(stage, name), item.segment, origin); err != nil {
+			return err
 		}
 		fmt.Fprintf(&playlist, "#EXTINF:%.6f,\n%s\n", max(0.001, item.segment.Duration), name)
 	}
 	playlist.WriteString("#EXT-X-ENDLIST\n")
 	if err := os.WriteFile(filepath.Join(stage, prefix+".m3u8"), []byte(playlist.String()), 0o600); err != nil {
 		return errors.New("无法写入本地 HLS 媒体引用。")
+	}
+	return nil
+}
+
+func investigationMediaCopyHLSSegment(ctx context.Context, entry *zip.File, path string, segment m3u8.Segment, origin string) error {
+	if segment.Key == nil {
+		return investigationMediaCopyZIP(entry, path)
+	}
+	if !hlsKeyFetchAllowed(ctx) {
+		return errors.New("HLS 分片已加密，当前离线流程未启用临时密钥分析。")
+	}
+	target, err := resolveHLSKeyURL(origin, segment.Key.URI)
+	if err != nil {
+		return fmt.Errorf("无法解析 HLS 密钥地址：%w", err)
+	}
+	key, err := fetchHLSAnalysisKey(ctx, target)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		for index := range key {
+			key[index] = 0
+		}
+	}()
+	reader, err := entry.Open()
+	if err != nil {
+		return errors.New("HLS 加密分片不可读。")
+	}
+	ciphertext, err := io.ReadAll(io.LimitReader(reader, hlsSegmentLimit+1))
+	reader.Close()
+	if err != nil || len(ciphertext) == 0 || len(ciphertext) > hlsSegmentLimit {
+		return errors.New("HLS 加密分片大小无效。")
+	}
+	iv := segment.Key.IV
+	if len(iv) == 0 {
+		iv = make([]byte, 16)
+		binary.BigEndian.PutUint64(iv[8:], uint64(segment.Sequence))
+	}
+	plaintext, err := hlsmedia.DecryptAES128(ciphertext, key, iv)
+	if err != nil {
+		return errors.New("HLS AES-128 分片解密失败。")
+	}
+	if err := os.WriteFile(path, plaintext, 0o600); err != nil {
+		return errors.New("无法写入临时解密分片。")
+	}
+	for index := range plaintext {
+		plaintext[index] = 0
 	}
 	return nil
 }

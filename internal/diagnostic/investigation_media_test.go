@@ -334,7 +334,7 @@ func TestStallMediaUnavailableAndCanceledPreserveEvidence(t *testing.T) {
 func TestStallMediaEncryptedHLSDoesNotReadKeys(t *testing.T) {
 	stage := t.TempDir()
 	segments := []investigationMediaHLSSegment{{segment: m3u8.Segment{Key: &m3u8.Key{Method: "AES-128", URI: "https://private.example/key"}}}}
-	if err := investigationMediaWriteHLS(t.Context(), stage, "main", segments, map[string]*zip.File{}); err == nil || !strings.Contains(err.Error(), "加密") {
+	if err := investigationMediaWriteHLS(t.Context(), stage, "main", segments, map[string]*zip.File{}, ""); err == nil || !strings.Contains(err.Error(), "加密") {
 		t.Fatalf("encrypted HLS handling: %v", err)
 	}
 	entries, _ := os.ReadDir(stage)

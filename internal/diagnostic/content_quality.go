@@ -105,7 +105,7 @@ func contentQualityInput(ctx context.Context, dir, stage string, report Report) 
 		})
 		return path, errors.Join(err, writer.Flush(), file.Close())
 	case ProtocolHLS:
-		input, err := investigationMediaHLS(ctx, dir, stage, report, StallInvestigation{Stall: PlayerStall{StartMS: 0, EndMS: report.Manifest.Observation.ElapsedMS}})
+		input, err := investigationMediaHLS(withHLSKeyFetch(ctx), dir, stage, report, StallInvestigation{Stall: PlayerStall{StartMS: 0, EndMS: report.Manifest.Observation.ElapsedMS}})
 		return input.path, err
 	case ProtocolRTSP, ProtocolRTSPS:
 		input, err := investigationMediaRTSPContent(ctx, dir, stage, report)
