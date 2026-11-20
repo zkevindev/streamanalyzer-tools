@@ -9,67 +9,80 @@
   <style>
     :root {
       color-scheme: light;
-      --ink: #17273b;
-      --muted: #52657e;
-      --border: #d5deea;
-      --surface-inset: #f7f9fc;
-      --accent: #164d92;
-      --accent-hover: #123e77;
-      --error: #982a31;
+      --ink: #09090b;
+      --muted: #71717a;
+      --border: #e4e4e7;
+      --border-strong: #d4d4d8;
+      --surface-inset: #f4f4f5;
+      --primary: #18181b;
+      --primary-hover: #27272a;
+      --accent: #2563eb;
+      --error: #b91c1c;
     }
     * { box-sizing: border-box; }
     html, body, iframe { width: 100%; height: 100%; margin: 0; border: 0; }
-    body { display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; color: var(--ink); background: #f8fafc; font: 15px/1.55 system-ui, sans-serif; }
+    body {
+      display: grid; grid-template-rows: auto minmax(0, 1fr); overflow: hidden;
+      color: var(--ink); background: #fafafa;
+      font: 14.5px/1.55 -apple-system, BlinkMacSystemFont, "Inter", "SF Pro Text", "PingFang SC", sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
     [hidden], dialog:not([open]) { display: none !important; }
     #workbench { grid-row: 2; }
-    #settings-backdrop, #update-backdrop { position: fixed; z-index: 1; inset: 0; background: rgb(20 38 62 / .52); }
+    #settings-backdrop, #update-backdrop { position: fixed; z-index: 1; inset: 0; background: rgb(9 9 11 / .45); backdrop-filter: blur(4px); }
     dialog {
       position: fixed; z-index: 2; inset: 0; width: min(31rem, calc(100% - 2rem));
       max-width: none; max-height: calc(100% - 2rem); margin: auto; padding: 0;
-      border: 1px solid var(--border); border-radius: .75rem; color: var(--ink); background: white;
-      box-shadow: 0 18px 50px rgb(20 38 62 / .24);
+      border: 1px solid var(--border); border-radius: .75rem; color: var(--ink); background: #ffffff;
+      box-shadow: 0 20px 50px -12px rgb(9 9 11 / .22);
     }
-    dialog::backdrop { background: rgb(20 38 62 / .52); }
-    .settings-header { padding: 1rem 1.15rem .8rem; border-bottom: 1px solid var(--border); }
-    .settings-header h1 { margin: 0; font-size: 1.2rem; line-height: 1.3; }
-    fieldset { display: grid; gap: .78rem; min-inline-size: 0; margin: 0; padding: 1rem 1.15rem; border: 0; }
-    .field label { display: block; margin-bottom: .25rem; font-weight: 600; }
+    dialog::backdrop { background: rgb(9 9 11 / .45); backdrop-filter: blur(4px); }
+    .settings-header { padding: 1rem 1.2rem .85rem; border-bottom: 1px solid var(--border); }
+    .settings-header h1 { margin: 0; font-size: 1.05rem; font-weight: 660; letter-spacing: -.015em; line-height: 1.3; }
+    fieldset { display: grid; gap: .82rem; min-inline-size: 0; margin: 0; padding: 1.05rem 1.2rem; border: 0; }
+    .field label { display: block; margin-bottom: .3rem; font-size: .825rem; font-weight: 560; }
     .field input, .field select {
-      width: 100%; min-width: 0; min-height: 2.75rem; padding: .5rem .65rem;
-      border: 1px solid #bccadd; border-radius: .375rem; color: var(--ink);
-      background: var(--surface-inset); font: inherit;
+      width: 100%; min-width: 0; min-height: 2.45rem; padding: .45rem .7rem;
+      border: 1px solid var(--border-strong); border-radius: .5rem; color: var(--ink);
+      background: #ffffff; font: inherit; font-size: .875rem;
+      transition: border-color .15s ease, box-shadow .15s ease;
     }
+    .field input:focus, .field select:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px rgb(37 99 235 / .14); }
     #settings-endpoint, #settings-model, #settings-key { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
-    .hint { margin: .3rem 0 0; color: var(--muted); font-size: .83rem; }
-    .clear-key { display: flex; align-items: center; gap: .45rem; min-height: 2.75rem; font-size: .88rem; }
-    .clear-key input { flex: none; width: 1rem; height: 1rem; margin: 0; accent-color: var(--accent); }
-    .settings-status { margin: 0 1.15rem .85rem; min-height: 1.35em; color: var(--muted); overflow-wrap: anywhere; }
+    .hint { margin: .3rem 0 0; color: var(--muted); font-size: .8rem; }
+    .clear-key { display: flex; align-items: center; gap: .45rem; min-height: 2.3rem; font-size: .84rem; }
+    .clear-key input { flex: none; width: 1rem; height: 1rem; margin: 0; accent-color: var(--primary); }
+    .settings-status { margin: 0 1.2rem .85rem; min-height: 1.35em; color: var(--muted); font-size: .84rem; overflow-wrap: anywhere; }
     .settings-status.error { color: var(--error); }
     .settings-actions {
-      display: flex; flex-wrap: wrap; gap: .6rem; justify-content: flex-end; padding: .75rem 1.15rem;
-      border-top: 1px solid var(--border); background: var(--surface-inset);
+      display: flex; flex-wrap: wrap; gap: .55rem; justify-content: flex-end; padding: .8rem 1.2rem;
+      border-top: 1px solid var(--border); background: #fafafa;
     }
     #test-settings { margin-right: auto; }
     button {
-      min-height: 2.75rem; padding: .45rem .9rem; border: 1px solid var(--accent); border-radius: .375rem;
-      background: var(--accent); color: white; font: inherit; font-weight: 600; cursor: pointer;
+      min-height: 2.35rem; padding: .4rem .9rem; border: 1px solid var(--primary); border-radius: .5rem;
+      background: var(--primary); color: #ffffff; font: inherit; font-size: .84rem; font-weight: 580; cursor: pointer;
+      transition: background-color .15s ease, border-color .15s ease;
     }
-    button:hover { background: var(--accent-hover); }
-    button.secondary { color: var(--accent); border-color: #bdcde2; background: white; }
-    button.secondary:hover { background: #e9f1fc; }
-    button:disabled { cursor: wait; opacity: .6; }
-    button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid #2471c7; outline-offset: 2px; }
-    .desktop-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem 1rem; padding: .25rem .85rem; border-bottom: 1px solid var(--border); background: white; }
-    .desktop-navigation, .update-bar { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
-    .desktop-navigation button { padding: .35rem .75rem; font-size: .9rem; }
+    button:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
+    button.secondary { color: var(--ink); border-color: var(--border-strong); background: #ffffff; }
+    button.secondary:hover { background: var(--surface-inset); border-color: #a1a1aa; }
+    button:disabled { cursor: not-allowed; opacity: .55; }
+    button:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .desktop-toolbar {
+      display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+      gap: .5rem 1rem; padding: .38rem .9rem; border-bottom: 1px solid var(--border); background: #ffffff;
+    }
+    .desktop-navigation, .update-bar { display: flex; flex-wrap: wrap; align-items: center; gap: .45rem; }
+    .desktop-navigation button { min-height: 1.95rem; padding: .22rem .72rem; font-size: .82rem; }
     .desktop-navigation button:disabled { cursor: default; background: var(--surface-inset); }
     .update-bar { margin-inline-start: auto; }
-    .update-bar button { min-height: 1.8rem; padding: .15rem .62rem; font-size: .82rem; }
-    #desktop-version { color: var(--muted); font-size: .82rem; }
-    .update-content { padding: .8rem 1.15rem; }
+    .update-bar button { min-height: 1.95rem; padding: .22rem .68rem; font-size: .8rem; }
+    #desktop-version { color: var(--muted); font-size: .8rem; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+    .update-content { padding: .9rem 1.2rem; }
     .update-content p { margin: 0 0 .65rem; }
-    #update-notes { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 15rem; overflow: auto; padding: .7rem; border: 1px solid var(--border); border-radius: .375rem; background: var(--surface-inset); font: inherit; }
-    #update-progress { display: block; width: 100%; accent-color: var(--accent); }
+    #update-notes { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 15rem; overflow: auto; padding: .75rem; border: 1px solid var(--border); border-radius: .5rem; background: #fafafa; font: inherit; font-size: .84rem; }
+    #update-progress { display: block; width: 100%; accent-color: var(--primary); }
     #update-confirm-copy { margin: .6rem 0 0; }
   </style>
 </head>
@@ -205,7 +218,7 @@
       currentWorkbenchPath = path;
       const atHome = path === '/';
       const simulatorChild = path?.startsWith('/simulators/');
-      const diagnosticsChild = ['/diagnostics/onvif', '/diagnostics/review', '/realtime', '/offline', '/hls-stats'].includes(path);
+      const diagnosticsChild = ['/diagnostics/onvif', '/diagnostics/review', '/offline'].includes(path);
       // A document without the bridge, such as an exported report, returns to its workbench page.
       parentPath = atHome ? null : simulatorChild ? '/simulators' : diagnosticsChild ? '/diagnostics' : path ? '/' : lastWorkbenchPath;
       back.title = atHome ? '当前已在首页' : simulatorChild ? '返回模拟器入口' : diagnosticsChild ? '返回排障工作台' : path ? '返回首页' : '返回工作台页面';

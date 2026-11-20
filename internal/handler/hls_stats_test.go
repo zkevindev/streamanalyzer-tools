@@ -29,7 +29,7 @@ func TestHLSStatsAPI(t *testing.T) {
 	}))
 	defer media.Close()
 
-	h := NewHandler(nil, nil, nil)
+	h := NewHandler(nil)
 	r := gin.New()
 	h.RegisterRoutes(r)
 
@@ -137,7 +137,7 @@ func TestHLSStatsCancellationPreservesPartialReport(t *testing.T) {
 				}
 			}))
 			defer media.Close()
-			h := NewHandler(nil, nil, nil)
+			h := NewHandler(nil)
 			router := gin.New()
 			h.RegisterRoutes(router)
 			request := func(method, path, body string) *httptest.ResponseRecorder {
@@ -221,7 +221,7 @@ func TestHLSStatsCancelWinsFinalTransition(t *testing.T) {
 
 func TestHLSStatsRejectsFileURL(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	h := NewHandler(nil, nil, nil)
+	h := NewHandler(nil)
 	r := gin.New()
 	h.RegisterRoutes(r)
 	req := httptest.NewRequest(http.MethodPost, "/api/hls-stats/tasks", strings.NewReader(`{"command":"manifest","url":"file:///etc/passwd"}`))

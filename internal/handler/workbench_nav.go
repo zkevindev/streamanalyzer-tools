@@ -37,7 +37,7 @@ func renderWorkbenchPages(root fs.FS) map[string][]byte {
 		}{
 			Page:        page,
 			Simulator:   page == "simulators" || strings.HasPrefix(page, "simulator-"),
-			Diagnostics: page == "diagnostics" || page == "realtime" || page == "offline" || page == "hls-stats",
+			Diagnostics: page == "diagnostics" || page == "offline",
 		}
 		for _, section := range []struct{ marker, template string }{
 			{"<!-- workbench-header -->", "header"},
