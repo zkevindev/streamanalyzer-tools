@@ -28,6 +28,7 @@ type PlayTarget struct {
 type PlayOptions struct {
 	ChunkSize uint32
 	Start     int64
+	TLSConfig *tls.Config
 
 	// RecvTap, if set, receives a copy of every byte read from the connection,
 	// starting with the server handshake (S0+S1+S2).
@@ -134,7 +135,14 @@ func DialAndPlay(ctx context.Context, rawURL string, handler Handler, opts *Play
 	if target.Protocol == "rtmps" {
 		finishTLS := beginStage("tls")
 		serverName, _, _ := net.SplitHostPort(target.Host)
-		secure := tls.Client(socket, &tls.Config{ServerName: serverName})
+		config := &tls.Config{ServerName: serverName}
+		if opts != nil && opts.TLSConfig != nil {
+			config = opts.TLSConfig.Clone()
+			if config.ServerName == "" {
+				config.ServerName = serverName
+			}
+		}
+		secure := tls.Client(socket, config)
 		err = secure.HandshakeContext(ctx)
 		finishTLS(err)
 		if err != nil {

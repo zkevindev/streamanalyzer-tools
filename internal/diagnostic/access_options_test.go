@@ -2,15 +2,19 @@ package diagnostic
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"encoding/pem"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	"github.com/yutopp/go-rtmp"
 )
 
 func accessTestFLV() []byte {
@@ -128,4 +132,55 @@ func TestCaptureAccessRejectsUnsafeOrUnsupportedOptions(t *testing.T) {
 	if _, err := service.Start(SampleRequest{Protocol: ProtocolRTMP, URL: "rtmp://example.invalid/live/test", Seconds: 1, Headers: map[string]string{"X-Test": "value"}}); err == nil {
 		t.Fatal("accepted HTTP-only access options for RTMP")
 	}
+}
+
+func TestRTMPSAndRTSPSUsePerRunCustomCA(t *testing.T) {
+	serverTLS, _ := rtspIntegrationCertificate(t)
+	pemCertificate := string(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: serverTLS.Certificates[0].Certificate[0]}))
+	access, err := prepareCaptureAccess(captureClient(), SampleRequest{CACertificate: pemCertificate})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if access.tlsConfig == nil || access.tlsConfig.RootCAs == nil || access.tlsConfig.InsecureSkipVerify {
+		t.Fatalf("invalid custom CA configuration: %+v", access.tlsConfig)
+	}
+
+	t.Run("RTMPS", func(t *testing.T) {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer listener.Close()
+		server := tls.NewListener(listener, serverTLS)
+		handshake := make(chan error, 1)
+		go func() {
+			connection, err := server.Accept()
+			if err != nil {
+				handshake <- err
+				return
+			}
+			defer connection.Close()
+			handshake <- connection.(*tls.Conn).Handshake()
+		}()
+		ctx := withCaptureAccess(t.Context(), access)
+		target := "rtmps://" + listener.Addr().String() + "/live/test"
+		_, _, _, _ = rtmp.DialAndPlay(ctx, target, &rtmp.DefaultHandler{}, &rtmp.PlayOptions{TLSConfig: captureTLSConfig(ctx)})
+		if err := <-handshake; err != nil {
+			t.Fatalf("RTMPS custom CA handshake failed: %v", err)
+		}
+	})
+
+	t.Run("RTSPS", func(t *testing.T) {
+		packet := rtspIntegrationRTP(96, 0, 0, 999, []byte{0x65, 0x88, 0x84}, true)
+		fixture := newRTSPIntegrationFixture(t, rtspIntegrationConfig{tlsConfig: serverTLS, packets: []rtspIntegrationPacket{{raw: packet}}, closeAfterPlay: true})
+		target, _ := url.Parse(fixture.address())
+		ctx := withCaptureAccess(t.Context(), access)
+		report, err := sampleRTSPTransportWithTLS(ctx, t.TempDir(), target, 1, ProtocolRTSPS, "tcp", captureTLSConfig(ctx))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if report.RTSP == nil || report.RTSP.RTPPackets != 1 || report.Manifest.Observation.FailureCode == "tls_error" {
+			t.Fatalf("RTSPS custom CA capture failed: %+v", report)
+		}
+	})
 }
