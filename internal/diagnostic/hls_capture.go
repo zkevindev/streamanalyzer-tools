@@ -403,9 +403,12 @@ func (c *hlsCapture) fetch(ctx context.Context, target *url.URL, row hlsRecord, 
 	if err != nil {
 		return result, nil, nil
 	}
-	req.Header.Set("User-Agent", "StreamAnalyzer-Diagnostic/1.0")
+	applyCaptureHeaders(ctx, req)
+	if req.Header.Get("User-Agent") == "" {
+		req.Header.Set("User-Agent", "StreamAnalyzer-Diagnostic/1.0")
+	}
 	req.Header.Set("Accept-Encoding", "identity")
-	if row.Kind == hlsPlaylist {
+	if row.Kind == hlsPlaylist && req.Header.Get("Accept") == "" {
 		req.Header.Set("Accept", "application/vnd.apple.mpegurl, application/x-mpegURL, */*")
 	}
 	var rangeStart, rangeEnd int64

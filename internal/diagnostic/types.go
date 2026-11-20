@@ -53,12 +53,15 @@ var (
 )
 
 type SampleRequest struct {
-	AutoInvestigate bool   `json:"auto_investigate,omitempty"`
-	URL             string `json:"url"`
-	Seconds         int    `json:"seconds"`
-	Protocol        string `json:"protocol,omitempty"`
-	Transport       string `json:"transport,omitempty"`
-	Playback        bool   `json:"playback,omitempty"`
+	AutoInvestigate bool              `json:"auto_investigate,omitempty"`
+	URL             string            `json:"url"`
+	Seconds         int               `json:"seconds"`
+	Protocol        string            `json:"protocol,omitempty"`
+	Transport       string            `json:"transport,omitempty"`
+	Playback        bool              `json:"playback,omitempty"`
+	Headers         map[string]string `json:"headers,omitempty"`
+	ProxyURL        string            `json:"proxy_url,omitempty"`
+	CACertificate   string            `json:"ca_certificate,omitempty"`
 }
 
 type Run struct {

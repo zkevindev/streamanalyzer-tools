@@ -257,6 +257,14 @@ func (s *Service) Start(req SampleRequest) (Run, error) {
 	if seconds < 1 || seconds > maxSeconds {
 		return Run{}, fmt.Errorf("%w: 采样时长须为 1 至 %d 秒", ErrInvalid, maxSeconds)
 	}
+	if protocol != ProtocolHTTPFLV && protocol != ProtocolHLS && protocol != ProtocolHTTPTS &&
+		(len(req.Headers) > 0 || req.ProxyURL != "" || req.CACertificate != "") {
+		return Run{}, fmt.Errorf("%w: 自定义请求头、代理和 CA 仅适用于 HTTP-FLV、HLS 与 HTTP MPEG-TS", ErrInvalid)
+	}
+	access, err := prepareCaptureAccess(s.client, req)
+	if err != nil {
+		return Run{}, err
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -282,10 +290,12 @@ func (s *Service) Start(req SampleRequest) (Run, error) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	ctx = withCaptureLimit(ctx, s.streamLimitBytes)
+	ctx = withCaptureAccess(ctx, access)
 	var player *PlayerSession
 	if req.Playback {
-		session := newPlayerSession(context.Background(), protocol, target, s.client)
+		session := newPlayerSession(context.Background(), protocol, target, access.client)
 		if session.hls != nil {
+			session.hls.headers = access.headers
 			session.hls.network.setOrigin(run.CreatedAt)
 		}
 		player = session
@@ -299,6 +309,9 @@ func (s *Service) Start(req SampleRequest) (Run, error) {
 	s.workers.Add(1)
 	go func(run Run) {
 		defer s.workers.Done()
+		if access.client != s.client {
+			defer access.client.CloseIdleConnections()
+		}
 		defer func() {
 			cancel()
 			s.mu.Lock()
@@ -377,13 +390,13 @@ func sampleTransport(protocol, requested string) (string, error) {
 func (s *Service) sampleProtocolWithTransport(ctx context.Context, dir string, target *url.URL, seconds int, protocol, transport string) (Report, error) {
 	switch protocol {
 	case ProtocolHTTPFLV:
-		return sample(ctx, s.client, dir, target, seconds)
+		return sample(ctx, captureHTTPClient(ctx, s.client), dir, target, seconds)
 	case ProtocolRTMP:
 		return sampleRTMP(ctx, dir, target, seconds)
 	case ProtocolHLS:
-		return sampleHLS(ctx, s.client, dir, target, seconds)
+		return sampleHLS(ctx, captureHTTPClient(ctx, s.client), dir, target, seconds)
 	case ProtocolHTTPTS, ProtocolUDPTS, ProtocolRTPTS:
-		return sampleTS(ctx, s.client, dir, target, seconds, protocol)
+		return sampleTS(ctx, captureHTTPClient(ctx, s.client), dir, target, seconds, protocol)
 	case ProtocolRTSP, ProtocolRTSPS:
 		return sampleRTSPTransport(ctx, dir, target, seconds, protocol, transport)
 	default:
