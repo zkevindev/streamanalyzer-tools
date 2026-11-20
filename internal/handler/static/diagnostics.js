@@ -1568,6 +1568,70 @@ function renderStallInvestigations(report) {
     }));
 }
 
+function contentQualityIntervalsTable(intervals) {
+    return renderTable(['开始', '结束', '时长'], (intervals || []).map(interval => [time(interval.start_ms), time(interval.end_ms), time(interval.duration_ms)]));
+}
+
+function renderContentQuality(quality) {
+    const content = node('content-quality-result');
+    content.replaceChildren();
+    node('run-content-quality').textContent = quality ? '重新检测（如有新原始流）' : '开始本地检测';
+    if (!quality) return;
+    const entries = [
+        ['状态', { complete: '检测完成', partial: '部分完成', unavailable: '暂不可用' }[quality.state] || quality.state],
+        ['可解码时长', time(quality.duration_ms)],
+        ['视频 / 音频轨道', `${quality.has_video ? '有' : '无'} / ${quality.has_audio ? '有' : '无'}`],
+        ['黑帧 / 冻结 / 静音区间', `${quality.black_intervals?.length || 0} / ${quality.freeze_intervals?.length || 0} / ${quality.silence_intervals?.length || 0}`],
+    ];
+    if (quality.reason) entries.push(['说明', quality.reason]);
+    if (quality.av_sync?.state === 'complete') entries.push(
+        ['音画时间戳样本对', quality.av_sync.sample_pairs],
+        ['初始 / 末尾 AV 差', `${time(quality.av_sync.initial_delta_ms)} / ${time(quality.av_sync.final_delta_ms)}`],
+        ['AV 差漂移 / 最大绝对差', `${time(quality.av_sync.drift_ms)} / ${time(quality.av_sync.max_abs_delta_ms)}`],
+    );
+    else if (quality.av_sync?.reason) entries.push(['音画时间戳', quality.av_sync.reason]);
+    content.append(renderMetricsFragment(entries));
+    const groups = [['黑帧区间', quality.black_intervals], ['画面冻结区间', quality.freeze_intervals], ['音频静音区间', quality.silence_intervals]];
+    for (const [title, intervals] of groups) {
+        if (!intervals?.length) continue;
+        content.append(element('h4', title), contentQualityIntervalsTable(intervals));
+    }
+    if (quality.truncated) content.append(element('p', '部分检测区间已达到保存上限。', 'timing-note muted'));
+    const limits = element('ul', '', 'stall-assessment-limitations');
+    for (const limitation of quality.limitations || []) limits.append(element('li', limitation));
+    content.append(element('h4', '证据限制'), limits,
+        element('p', `检测规则 ${quality.version} · 源流 SHA-256 ${quality.source_artifact?.sha256 || '未记录'}`, 'timing-note muted'));
+}
+
+function renderMetricsFragment(entries) {
+    const list = document.createElement('dl');
+    list.className = 'metrics';
+    for (const [label, value] of entries) {
+        const item = document.createElement('div');
+        const term = element('dt', label);
+        const description = element('dd', value);
+        item.append(term, description);
+        list.append(item);
+    }
+    return list;
+}
+
+node('analyze-content-quality').addEventListener('click', () => {
+    node('content-quality').hidden = !node('content-quality').hidden;
+});
+node('run-content-quality').addEventListener('click', async () => {
+    if (!currentID) return;
+    const button = node('run-content-quality');
+    button.disabled = true;
+    button.textContent = '正在本地解码检测…';
+    try {
+        const quality = await api(runPath(currentID) + '/content-quality', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        if (currentReport) currentReport.content_quality = quality;
+        renderContentQuality(quality);
+    } catch (err) { message(err.message, true); }
+    finally { button.disabled = false; renderContentQuality(currentReport?.content_quality); }
+});
+
 function selectedShareCaseIDs() {
     return [...node('share-cases').querySelectorAll('input[type="checkbox"]:checked')].map(input => input.value);
 }
@@ -1796,6 +1860,7 @@ function renderReport(report) {
     renderStallInvestigations(report);
     renderTransport(protocol, report.mpegts);
     renderTrace(report.findings, observed.elapsed_ms);
+    renderContentQuality(report.content_quality);
     renderReportAssessment(report.assessment, report.findings);
     const findings = report.findings.map((finding) => {
         const item = element('details', '', 'finding');
@@ -1961,6 +2026,12 @@ function renderDetail(detail) {
     node('report').hidden = !detail.report;
     node('compare-report').hidden = !detail.report;
     node('share-report').hidden = !detail.report;
+    node('analyze-content-quality').hidden = !detail.report;
+    const quality = node('content-quality');
+    if (quality.dataset.run !== detail.id) {
+        quality.dataset.run = detail.id;
+        quality.hidden = !detail.report?.content_quality;
+    }
     const share = node('share-panel');
     if (share.dataset.run !== detail.id) {
         share.dataset.run = detail.id;

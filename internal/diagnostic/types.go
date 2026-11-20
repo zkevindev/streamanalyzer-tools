@@ -198,6 +198,7 @@ type Finding struct {
 type Report struct {
 	AutomaticInvestigation *AutomaticInvestigation `json:"automatic_investigation,omitempty"`
 	Assessment             *ReportAssessment       `json:"assessment,omitempty"`
+	ContentQuality         *ContentQualityReport   `json:"content_quality,omitempty"`
 	modelScope             string
 	Requests               []HTTPRequestTiming  `json:"requests,omitempty"`
 	RequestsTruncated      int                  `json:"requests_truncated,omitempty"`

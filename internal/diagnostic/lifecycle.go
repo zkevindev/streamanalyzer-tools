@@ -101,7 +101,7 @@ func (s *Service) Delete(id string) error {
 		return fmt.Errorf("%w: 重要证据已保护，请先取消保护", ErrInvalid)
 	}
 	s.mu.Lock()
-	busy := s.active[id] != nil || s.automaticJobs[id] != nil || s.investigationJobs[id] != nil
+	busy := s.active[id] != nil || s.automaticJobs[id] != nil || s.investigationJobs[id] != nil || s.contentQualityJobs[id] != nil
 	player := s.players[id]
 	if !busy && player != nil {
 		player.session.Close()

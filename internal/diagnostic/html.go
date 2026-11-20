@@ -565,6 +565,12 @@ thead{color:#52657e;background:#f7f9fc}
 </dl></article>
 {{end}}
 {{end}}
+{{with .Report.ContentQuality}}<article><h2>源内容质量检测</h2><p class="timing-note">检测仅描述已保存源流的可解码内容，不代表本机播放器实际画面或声音。</p>
+<dl><dt>状态</dt><dd>{{.State}}</dd>{{with .Reason}}<dt>说明</dt><dd>{{.}}</dd>{{end}}<dt>可解码时长</dt><dd>{{.DurationMS}} ms</dd><dt>视频 / 音频轨道</dt><dd>{{if .HasVideo}}有{{else}}无{{end}} / {{if .HasAudio}}有{{else}}无{{end}}</dd>
+<dt>黑帧 / 冻结 / 静音区间</dt><dd>{{len .BlackIntervals}} / {{len .FreezeIntervals}} / {{len .SilenceIntervals}}</dd>
+{{if eq .AVSync.State "complete"}}<dt>音画时间戳样本对</dt><dd>{{.AVSync.SamplePairs}}</dd><dt>初始 / 末尾 AV 差</dt><dd>{{.AVSync.InitialDeltaMS}} / {{.AVSync.FinalDeltaMS}} ms</dd><dt>AV 差漂移 / 最大绝对差</dt><dd>{{.AVSync.DriftMS}} / {{.AVSync.MaxAbsDeltaMS}} ms</dd>{{end}}</dl>
+{{range .BlackIntervals}}<p>黑帧 {{.StartMS}}–{{.EndMS}} ms · {{.DurationMS}} ms</p>{{end}}{{range .FreezeIntervals}}<p>冻结 {{.StartMS}}–{{.EndMS}} ms · {{.DurationMS}} ms</p>{{end}}{{range .SilenceIntervals}}<p>静音 {{.StartMS}}–{{.EndMS}} ms · {{.DurationMS}} ms</p>{{end}}
+<ul>{{range .Limitations}}<li>{{.}}</li>{{end}}</ul><p class="timing-note">检测规则 {{.Version}} · 源流 SHA-256 <code>{{.SourceArtifact.SHA256}}</code></p></article>{{end}}
 {{with .Report.Assessment}}<article class="stall-assessment"><h2>整报告分层排查</h2>
 <p class="stall-assessment-conclusion">{{.Conclusion}}</p><p class="timing-note">无需大模型即可生成；方向只引用本次规则证据，仍需按建议验证根因。</p>
 {{range .Directions}}<section class="stall-direction" data-state="{{.Status}}"><h3>{{.Title}} <span class="direction-state">{{assessmentState .Status}}</span></h3><p>{{.Message}}</p>

@@ -49,6 +49,7 @@ type Service struct {
 	persistence         sync.RWMutex
 	players             map[string]*playerSessionState
 	investigationJobs   map[string]context.CancelFunc
+	contentQualityJobs  map[string]context.CancelFunc
 	investigationSlots  chan struct{}
 	investigationModel  sync.Mutex
 	automaticJobs       map[string]*automaticInvestigationJob
@@ -88,7 +89,7 @@ func OpenWithCaptureLimit(baseDir string, model Explainer, streamLimitBytes int6
 		active: make(map[string]context.CancelFunc), imports: make(chan struct{}, 2), flvReplaySlots: make(chan struct{}, 8),
 		players:           make(map[string]*playerSessionState),
 		automaticJobs:     make(map[string]*automaticInvestigationJob),
-		investigationJobs: make(map[string]context.CancelFunc), investigationSlots: make(chan struct{}, 2),
+		investigationJobs: make(map[string]context.CancelFunc), contentQualityJobs: make(map[string]context.CancelFunc), investigationSlots: make(chan struct{}, 2),
 	}
 	s.SetModel(model)
 	if err := s.recoverRuns(); err != nil {
@@ -166,6 +167,9 @@ func (s *Service) Close() error {
 			state.session.Close()
 		}
 		for _, cancel := range s.investigationJobs {
+			cancel()
+		}
+		for _, cancel := range s.contentQualityJobs {
 			cancel()
 		}
 		for _, job := range s.automaticJobs {
