@@ -3,7 +3,7 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>历史记录 · Stream Analyzer</title>
+    <title>任务记录 · Stream Analyzer</title>
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
     <style>
         *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -76,12 +76,11 @@
 <body class="workbench-tool-page">
   <!-- workbench-header -->
     <div class="container">
-    <!-- diagnostic-tools -->
-        <h1 class="workbench-page-title">历史记录</h1>
+        <h1 class="workbench-page-title">任务记录</h1>
 
         <div class="card">
-            <form id="history-filters" class="history-filters" aria-label="筛选历史记录">
-                <div><label for="history-source">任务来源</label><select id="history-source"><option value="all">全部来源</option><option value="diagnostic">排障采样</option><option value="realtime">实时分析</option><option value="offline">离线解析</option></select></div>
+            <form id="history-filters" class="history-filters" aria-label="筛选任务记录">
+                <div><label for="history-source">任务来源</label><select id="history-source"><option value="all">全部来源</option><option value="diagnostic">排障采样</option><option value="realtime">实时分析</option><option value="offline">离线解析</option><option value="hls">HLS 交付</option><option value="simulator">模拟器回归</option></select></div>
                 <div><label for="history-state">任务状态</label><select id="history-state"><option value="all">全部状态</option><option value="active">进行中</option><option value="finished">已结束</option><option value="error">失败或部分完成</option></select></div>
                 <div class="history-search"><label for="history-query">搜索记录</label><input type="search" id="history-query" placeholder="地址、文件名或任务 ID"></div>
                 <button type="button" class="btn secondary" id="refresh-history">刷新</button>
@@ -255,10 +254,12 @@
             diagnostic: { title: '排障采样', path: '/api/diagnostics/runs', rows: value => value || [] },
             realtime: { title: '实时分析', path: '/api/task/all', rows: value => value.tasks || [] },
             offline: { title: '离线解析', path: '/api/offline/tasks', rows: value => value.tasks || [] },
+            hls: { title: 'HLS 交付', path: '/api/hls-stats/tasks', rows: value => value || [] },
+            simulator: { title: '模拟器回归', path: '/api/simulators/runs?summary=1', rows: value => value.map(task => ({...task, status: task.passed ? 'passed' : 'failed'})) },
         };
         const historyStates = {
             queued: '排队中', pending: '待处理', running: '进行中', stopping: '正在停止',
-            done: '已完成', stopped: '已停止', partial: '部分完成', failed: '失败',
+            done: '已完成', stopped: '已停止', partial: '部分完成', passed: '通过', failed: '失败',
             canceled: '已取消', cancelled: '已取消',
         };
         const historyActive = new Set(['queued', 'pending', 'running', 'stopping']);
@@ -330,6 +331,10 @@
                     actions.append(historyLink('查看记录', '/diagnostics#' + encodedID));
                 } else if (kind === 'offline') {
                     actions.append(historyLink('查看解析', '/offline?task=' + encodedID));
+                } else if (kind === 'hls') {
+                    actions.append(historyLink('查看分析', '/hls-stats?task=' + encodedID));
+                } else if (kind === 'simulator') {
+                    actions.append(historyLink('查看回归', '/simulators/scenarios#run-' + encodedID));
                 } else if (state === 'running') {
                     actions.append(historyButton('停止', () => stopTask(task.id), 'btn stop'));
                 } else {
@@ -340,7 +345,8 @@
             empty.textContent = historyRows.length ? '没有符合筛选条件的记录。' : '暂无历史记录。';
             empty.hidden = shown > 0 || (historyRows.length === 0 && historyUnavailable.length > 0);
             const available = historyUnavailable.length ? ` · 暂时无法读取${historyUnavailable.join('、')}` : '';
-            document.getElementById('history-status').textContent = `显示 ${shown} 条，共 ${historyRows.length} 条${available}`;
+            const scope = source === 'hls' ? ' · HLS 交付仅显示本次应用运行的任务' : '';
+            document.getElementById('history-status').textContent = `显示 ${shown} 条，共 ${historyRows.length} 条${available}${scope}`;
         }
         async function loadAllTasks() {
             const refresh = document.getElementById('refresh-history');
@@ -351,9 +357,9 @@
                 const res = await fetch(source.path, {cache: 'no-store'});
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
                 return source.rows(await res.json()).filter(task => typeof task.id === 'string').map(task => ({
-                    kind, task, date: Date.parse(task.start_time || task.created_at),
-                    input: kind === 'offline' ? task.input_name || '—' : readableAddress(task.url || task.origin),
-                    format: (task.type || task.protocol || task.mode || '').toUpperCase(),
+                    kind, task, date: Date.parse(task.start_time || task.created_at || task.started_at),
+                    input: task.preset?.name || task.input_name || readableAddress(task.url || task.origin),
+                    format: (task.type || task.protocol || task.mode || task.command || '').toUpperCase(),
                 }));
             }));
             if (request !== historyRequest) return;

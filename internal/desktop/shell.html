@@ -205,7 +205,7 @@
       currentWorkbenchPath = path;
       const atHome = path === '/';
       const simulatorChild = path?.startsWith('/simulators/');
-      const diagnosticsChild = ['/diagnostics/onvif', '/realtime', '/offline', '/hls-stats', '/history'].includes(path);
+      const diagnosticsChild = ['/diagnostics/onvif', '/diagnostics/review', '/realtime', '/offline', '/hls-stats'].includes(path);
       // A document without the bridge, such as an exported report, returns to its workbench page.
       parentPath = atHome ? null : simulatorChild ? '/simulators' : diagnosticsChild ? '/diagnostics' : path ? '/' : lastWorkbenchPath;
       back.title = atHome ? '当前已在首页' : simulatorChild ? '返回模拟器入口' : diagnosticsChild ? '返回排障工作台' : path ? '返回首页' : '返回工作台页面';
@@ -218,7 +218,7 @@
     }
 
     back.addEventListener('click', () => {
-      if (currentWorkbenchPath === '/diagnostics/onvif') postToWorkbench({ kind: 'workbench-return-to-capture' });
+      if (currentWorkbenchPath?.startsWith('/diagnostics/')) postToWorkbench({ kind: 'workbench-return-to-capture' });
       else navigateWorkbench(parentPath);
     });
     home.addEventListener('click', () => navigateWorkbench('/'));

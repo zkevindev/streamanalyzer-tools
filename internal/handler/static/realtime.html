@@ -125,16 +125,17 @@
   <!-- workbench-header -->
     <div class="container">
     <!-- diagnostic-tools -->
-        <h1 class="workbench-page-title">实时分析</h1>
+        <h1 class="workbench-page-title">实时曲线</h1>
+        <!-- stream-modes -->
 
         <div class="card">
             <div class="form-grid">
                 <div class="form-group">
-                    <label>Stream URL</label>
+                    <label for="streamUrl">播放地址</label>
                     <input type="text" id="streamUrl" placeholder="rtmp://... / http://...flv / https://...m3u8">
                 </div>
                 <div class="form-group">
-                    <label>Type</label>
+                    <label for="streamType">协议</label>
                     <select id="streamType">
                         <option value="http-flv">HTTP-FLV</option>
                         <option value="rtmp">RTMP</option>
@@ -142,7 +143,7 @@
                     </select>
                 </div>
                 <div class="form-group">
-                    <label>Dump</label>
+                    <label for="dumpEnabled">原始流</label>
                     <label class="check-inline" title="将拉流收到的原始数据原样存盘（不做 demux）：RTMP 存为 .rtmp（含握手，可直接用于离线 raw 分析），HTTP-FLV 存为 .flv，HLS 存为 .ts">
                         <input type="checkbox" id="dumpEnabled">
                         <span>同时 dump 原始码流</span>
@@ -334,6 +335,19 @@
         if (['rtmp', 'http-flv', 'hls'].includes(requestedProtocol)) {
             document.getElementById('streamType').value = requestedProtocol;
         }
+
+        try {
+            const storageKey = 'streamanalyzer.realtime-input';
+            const pending = sessionStorage.getItem(storageKey);
+            if (pending) {
+                sessionStorage.removeItem(storageKey);
+                const input = JSON.parse(pending);
+                if (Date.now() < input.expires && ['rtmp', 'http-flv', 'hls'].includes(input.protocol) && typeof input.url === 'string') {
+                    document.getElementById('streamType').value = input.protocol;
+                    document.getElementById('streamUrl').value = input.url;
+                }
+            }
+        } catch { /* A standalone realtime page works without session storage. */ }
 
         async function startTask() {
             const url = document.getElementById('streamUrl').value;

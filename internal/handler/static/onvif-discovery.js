@@ -2,8 +2,6 @@
 (() => {
     const node = id => document.getElementById(id), base = '/api/diagnostics/onvif';
     const discovery = node('onvif-discovery'), opener = node('open-onvif-discovery');
-    const capture = node('capture-workbench');
-    const captureLink = node('capture-tool-link'), discoveryLink = node('onvif-tool-link');
     const isOpen = () => !discovery.hidden;
     const searchButton = node('onvif-search-button'), stopButton = node('onvif-stop');
     const interfaceField = node('onvif-interface'), manualField = node('onvif-manual');
@@ -218,7 +216,7 @@
         node('url').value = address.href;
         node('analyze-playback').checked = false;
         node('url').dispatchEvent(new Event('input'));
-        switchTool(captureLink);
+        window.dispatchEvent(new CustomEvent('open-diagnostic-tool', {detail: '/diagnostics'}));
         prefillStatus.textContent = `已回填 ${result.protocol.toUpperCase()} / ${result.transport.toUpperCase()} 地址，请核对后开始采样。${result.different_host ? '流主机与设备服务不同，未复制凭据。' : ''}${result.removed_userinfo ? '已移除设备返回的内嵌凭据。' : ''}`;
         node('url').focus();
     });
@@ -287,47 +285,23 @@
         updateDevice();
         status('网卡已切换，请重新搜索或填写服务地址。');
     };
-    function showTool() {
-        const showDiscovery = location.pathname === discoveryLink.pathname;
-        if (!showDiscovery && isOpen()) endSession();
-        discovery.hidden = !showDiscovery;
-        capture.hidden = showDiscovery;
-        const active = showDiscovery ? discoveryLink : captureLink;
-        const inactive = showDiscovery ? captureLink : discoveryLink;
-        active.setAttribute('aria-current', 'page');
-        inactive.removeAttribute('aria-current');
-        document.querySelector('.workbench-tab[href="/diagnostics"]')?.setAttribute('aria-current', showDiscovery ? 'true' : 'page');
-        if (!showDiscovery) return;
+    let previouslyOpen = false;
+    function toolChanged() {
+        if (!isOpen() && previouslyOpen) endSession();
+        previouslyOpen = isOpen();
+        if (!previouslyOpen) return;
         if (!interfacesLoaded) loadingInterfaces ??= loadInterfaces().finally(() => { loadingInterfaces = undefined; });
         else if (!interfaceField.value) status('没有可用的 IPv4 网卡。', true);
     }
-    function switchTool(link) {
-        if (link.pathname === location.pathname) return;
-        history.pushState(null, '', link.pathname + location.search + location.hash);
-        showTool();
-        window.dispatchEvent(new Event('workbench-location-change'));
-    }
-    for (const link of [captureLink, discoveryLink]) {
-        link.addEventListener('click', event => {
-            if (event.button !== 0 || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
-            event.preventDefault();
-            switchTool(link);
-        });
-    }
     opener.addEventListener('click', () => {
-        switchTool(discoveryLink);
+        window.dispatchEvent(new CustomEvent('open-diagnostic-tool', {detail: '/diagnostics/onvif'}));
         node('onvif-title').focus();
     });
-    window.addEventListener('popstate', showTool);
-    window.addEventListener('message', event => {
-        if (event.source !== window.parent || event.data?.kind !== 'workbench-return-to-capture') return;
-        switchTool(captureLink);
-        captureLink.focus();
-    });
+    window.addEventListener('diagnostic-tool-change', toolChanged);
     window.addEventListener('pagehide', endSession);
     node('url').addEventListener('input', () => { prefillStatus.textContent = ''; });
     node('protocol').addEventListener('change', () => { prefillStatus.textContent = ''; });
     updateDevice();
-    showTool();
+    toolChanged();
     opener.hidden = false;
 })();

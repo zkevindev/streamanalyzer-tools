@@ -363,13 +363,14 @@ go build -o bin/server ./cmd/server
 
 路由说明：
 - `GET /`：入口页
-- `GET /diagnostics`：排障工作台
+- `GET /diagnostics`：流媒体排障，采样与实时曲线可切换。
+- `GET /diagnostics/review`：离线复盘，可在证据包导入和媒体文件解析之间切换。
 - `GET /simulators`：协议模拟器工作台，默认打开 GB28181
 - `GET /simulators/onvif`：ONVIF 模拟器
 - `GET /simulators/sip`：通用 SIP 模拟器
 - `GET /realtime`：实时拉流分析（标题 **实时拉流分析 · Stream Analyzer**）
 - `GET /offline`：离线文件解析（标题 **离线文件解析 · Stream Analyzer**；支持 raw/pcap/flv/ts/mp4 等）
-- `GET /history`：查看排障采样、实时分析与离线解析记录，可按来源、状态和关键词筛选。
+- `GET /history`：任务记录可按来源、状态和关键词筛选，包含排障采样、实时分析、离线解析、HLS 交付和模拟器回归。场景回归保存最近 50 条到应用数据目录，HLS 交付任务按应用运行会话保留。
 - `GET /hls-stats`：HLS 分析（标题 **HLS 分析 · Stream Analyzer**）
 
 ## 桌面 GUI（Wails v3）

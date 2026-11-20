@@ -12,6 +12,7 @@
     <script src="/static/hls.min.js" defer></script>
     <script src="/static/player-diagnostics.js" defer></script>
     <script src="/static/diagnostics.js" defer></script>
+    <script src="/static/diagnostics-navigation.js" defer></script>
     <script src="/static/onvif-discovery.js" defer></script>
     <script src="/static/workbench-navigation.js" defer></script>
 </head>
@@ -22,11 +23,13 @@
     <!-- diagnostic-tools -->
     <div id="capture-workbench">
     <div class="page-heading">
-        <h1>排障工作台</h1>
-        <p class="muted">采样 1–300 秒 · 单次原始流上限 128 MiB</p>
+        <h1 id="diagnostics-title">流媒体排障</h1>
+        <p id="capture-duration-hint" class="muted">采样 1–300 秒 · 单次原始流上限 128 MiB</p>
     </div>
+    <!-- stream-modes -->
+    <!-- review-modes -->
     <div class="actions">
-        <section class="panel" aria-labelledby="capture-heading">
+        <section id="capture-panel" class="panel" aria-labelledby="capture-heading">
             <div class="panel-heading"><h2 id="capture-heading">流媒体采样</h2></div>
             <form class="panel-body" id="sample">
                 <div class="sample-source">
@@ -66,6 +69,7 @@
                         <input id="seconds" type="number" min="1" max="300" value="60" required>
                     </div>
                     <button type="submit">采样并保存原始流</button>
+                    <a href="/realtime" id="realtime-prefill" class="button secondary" hidden>用此地址查看实时曲线</a>
                 </div>
                 <label class="playback-option"><input id="analyze-playback" type="checkbox" aria-describedby="playback-capability-note"> 同时分析播放器体验</label>
                 <label class="playback-option automatic-option"><input id="auto-investigate" type="checkbox" checked disabled aria-describedby="auto-investigate-hint"> 采样后自动补查并汇总</label>
@@ -73,7 +77,7 @@
                 <p id="playback-capability-note" class="field-hint muted" hidden>RTSP 预览复用同次采样的 RTP，在本机转封装 H.264 / H.265 / AAC-LC 后播放，H.265 需要浏览器和系统解码支持。其他编码仍可采样和 dump；不支持的音轨将明确标记并静音，不进行转码。Opus 优先使用 MP4 音频缓冲；桌面 WebKit 不支持时使用 WebM 音频缓冲，保留原始 Opus 编码与时序。</p>
             </form>
         </section>
-        <section class="panel" aria-labelledby="import-heading">
+        <section id="evidence-import-panel" class="panel" aria-labelledby="import-heading" hidden>
             <div class="panel-heading"><h2 id="import-heading">导入证据包</h2></div>
             <form class="panel-body" id="import">
                 <label for="archive">Stream Analyzer 证据包（ZIP）</label>

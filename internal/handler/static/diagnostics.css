@@ -13,7 +13,7 @@ p { margin: 0; }
 .page-heading { display: flex; align-items: end; justify-content: space-between; flex-wrap: wrap; gap: .45rem 1rem; margin-bottom: 1.2rem; }
 .page-heading p { font-size: .875rem; }
 .actions, .workspace { display: grid; gap: 1rem; align-items: start; }
-.actions { grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); align-items: stretch; margin-bottom: 1rem; }
+.actions { max-width: 64rem; margin-bottom: 1rem; }
 .workspace { grid-template-columns: minmax(15rem, 25%) minmax(0, 1fr); }
 .panel { background: var(--surface); min-width: 0; border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); }
 .panel-heading { display: flex; align-items: center; justify-content: space-between; gap: .75rem; min-height: 3.2rem; padding: .75rem 1rem; border-bottom: 1px solid var(--border); }

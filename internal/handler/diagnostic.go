@@ -20,6 +20,7 @@ func RegisterDiagnosticRoutes(r *gin.Engine, service *diagnostic.Service) {
 	workbench := func(c *gin.Context) { serveEmbeddedStaticFile(c, "diagnostics.html") }
 	r.GET("/diagnostics", localDiagnostics, workbench)
 	r.GET("/diagnostics/onvif", localDiagnostics, workbench)
+	r.GET("/diagnostics/review", localDiagnostics, workbench)
 	api := r.Group("/api/diagnostics", localDiagnostics)
 	RegisterDiagnosticPlayerMedia(api, service)
 	RegisterStallInvestigationRoutes(api, service)
