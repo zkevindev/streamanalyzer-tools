@@ -49,6 +49,7 @@ type Service struct {
 	persistence         sync.RWMutex
 	players             map[string]*playerSessionState
 	batches             map[string]*diagnosticBatch
+	sessionGroups       map[string]*diagnosticSessionGroup
 	investigationJobs   map[string]context.CancelFunc
 	contentQualityJobs  map[string]context.CancelFunc
 	investigationSlots  chan struct{}
@@ -89,6 +90,7 @@ func OpenWithCaptureLimit(baseDir string, model Explainer, streamLimitBytes int6
 		root: root, db: db, client: captureClient(), streamLimitBytes: streamLimitBytes, rtspReplays: make(map[string]*rtspReplayOrigin),
 		active: make(map[string]context.CancelFunc), imports: make(chan struct{}, 2), flvReplaySlots: make(chan struct{}, 8),
 		players:           make(map[string]*playerSessionState),
+		sessionGroups:     make(map[string]*diagnosticSessionGroup),
 		automaticJobs:     make(map[string]*automaticInvestigationJob),
 		investigationJobs: make(map[string]context.CancelFunc), contentQualityJobs: make(map[string]context.CancelFunc), investigationSlots: make(chan struct{}, 2),
 	}
@@ -257,6 +259,10 @@ func (s *Service) Start(req SampleRequest) (Run, error) {
 	if protocol == "" {
 		protocol = ProtocolHTTPFLV
 	}
+	req.Protocol = protocol
+	if err := validateReconnect(req); err != nil {
+		return Run{}, err
+	}
 	transport, err := sampleTransport(protocol, req.Transport)
 	if err != nil {
 		return Run{}, err
@@ -291,6 +297,10 @@ func (s *Service) Start(req SampleRequest) (Run, error) {
 		return Run{}, ErrBusy
 	}
 	run := newRun("sample", protocol, origin(target))
+	if req.ReconnectAttempts > 0 && req.SessionGroupID == "" {
+		req.SessionGroupID = newRun("session", "", "").ID
+	}
+	run.SessionGroupID = req.SessionGroupID
 	dir := s.runDir(run.ID)
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		return Run{}, err
@@ -305,6 +315,9 @@ func (s *Service) Start(req SampleRequest) (Run, error) {
 		_ = os.Remove(filepath.Join(dir, automaticRequestName))
 		_ = os.Remove(dir)
 		return Run{}, err
+	}
+	if req.SessionGroupID != "" && req.SessionAttempt == 0 {
+		s.sessionGroups[req.SessionGroupID] = &diagnosticSessionGroup{id: req.SessionGroupID, createdAt: run.CreatedAt, runIDs: []string{run.ID}, status: "running"}
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -336,6 +349,7 @@ func (s *Service) Start(req SampleRequest) (Run, error) {
 			s.mu.Lock()
 			delete(s.active, run.ID)
 			s.mu.Unlock()
+			s.finishSession(req, run.ID)
 			if req.AutoInvestigate {
 				s.maybeStartAutomaticInvestigation(run.ID)
 			}

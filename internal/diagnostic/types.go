@@ -53,28 +53,33 @@ var (
 )
 
 type SampleRequest struct {
-	AutoInvestigate bool              `json:"auto_investigate,omitempty"`
-	URL             string            `json:"url"`
-	Seconds         int               `json:"seconds"`
-	Protocol        string            `json:"protocol,omitempty"`
-	Transport       string            `json:"transport,omitempty"`
-	Playback        bool              `json:"playback,omitempty"`
-	Headers         map[string]string `json:"headers,omitempty"`
-	ProxyURL        string            `json:"proxy_url,omitempty"`
-	CACertificate   string            `json:"ca_certificate,omitempty"`
+	AutoInvestigate   bool              `json:"auto_investigate,omitempty"`
+	URL               string            `json:"url"`
+	Seconds           int               `json:"seconds"`
+	Protocol          string            `json:"protocol,omitempty"`
+	Transport         string            `json:"transport,omitempty"`
+	Playback          bool              `json:"playback,omitempty"`
+	Headers           map[string]string `json:"headers,omitempty"`
+	ProxyURL          string            `json:"proxy_url,omitempty"`
+	CACertificate     string            `json:"ca_certificate,omitempty"`
+	ReconnectAttempts int               `json:"reconnect_attempts,omitempty"`
+	ReconnectDelayMS  int               `json:"reconnect_delay_ms,omitempty"`
+	SessionGroupID    string            `json:"-"`
+	SessionAttempt    int               `json:"-"`
 }
 
 type Run struct {
-	ID          string       `json:"id"`
-	Mode        string       `json:"mode"`
-	Protocol    string       `json:"protocol"`
-	Status      string       `json:"status"`
-	Origin      string       `json:"origin,omitempty"`
-	CreatedAt   time.Time    `json:"created_at"`
-	Error       string       `json:"error,omitempty"`
-	ReportReady bool         `json:"report_ready"`
-	Protected   bool         `json:"protected"`
-	Player      *PlayerStart `json:"player,omitempty"`
+	ID             string       `json:"id"`
+	Mode           string       `json:"mode"`
+	Protocol       string       `json:"protocol"`
+	Status         string       `json:"status"`
+	Origin         string       `json:"origin,omitempty"`
+	CreatedAt      time.Time    `json:"created_at"`
+	Error          string       `json:"error,omitempty"`
+	ReportReady    bool         `json:"report_ready"`
+	Protected      bool         `json:"protected"`
+	SessionGroupID string       `json:"session_group_id,omitempty"`
+	Player         *PlayerStart `json:"player,omitempty"`
 }
 
 type Artifact struct {
