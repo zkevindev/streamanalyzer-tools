@@ -2145,6 +2145,7 @@ node('protocol').addEventListener('change', () => {
     node('playback-capability-note').hidden = !selected.nativeRTSP;
     const httpAccess = ['http-flv', 'hls', 'http-ts'].includes(protocol);
     node('http-access-options').hidden = !httpAccess && !['rtmp', 'rtsps'].includes(protocol);
+    node('reconnect-options').hidden = !['http-flv', 'rtmp'].includes(protocol);
     for (const id of ['http-headers', 'http-proxy-url']) {
         node(id).hidden = !httpAccess;
         document.querySelector(`label[for="${id}"]`).hidden = !httpAccess;
@@ -2255,6 +2256,7 @@ function captureAccessOptions(protocol) {
 }
 function renderBatchResult(batch) {
     node('batch-results').hidden = false;
+    node('batch-results-title').textContent = '批量诊断结果';
     node('batch-status').textContent = `批次 ${batch.id} · ${statusLabels[batch.status] || batch.status} · ${batch.runs.length} 路`;
     node('stop-batch').hidden = batch.status !== 'running';
     const runsContent = node('batch-runs');
@@ -2322,6 +2324,31 @@ node('stop-batch').addEventListener('click', async () => {
     } catch (err) { message(err.message, true); }
 });
 
+async function refreshSessionGroup(id) {
+    try {
+        const group = await api('/sessions/' + encodeURIComponent(id), { cache: 'no-store' });
+        node('batch-results').hidden = false;
+        node('batch-results-title').textContent = '重连会话组';
+        node('stop-batch').hidden = true;
+        node('batch-status').textContent = `会话 ${group.id} · ${group.status === 'running' ? '采样中' : '已结束'} · ${group.runs.length} 段`;
+        const content = node('batch-runs');
+        content.replaceChildren();
+        node('batch-comparisons').replaceChildren();
+        group.runs.forEach((run, index) => {
+            const row = element('div', '', 'batch-run');
+            const button = element('button', `第 ${index + 1} 段 · ${run.id}`, 'secondary');
+            button.type = 'button';
+            button.addEventListener('click', () => selectRun(run.id));
+            const state = element('span', statusLabels[run.status] || run.status, 'status');
+            state.dataset.status = run.status;
+            row.append(button, state);
+            content.append(row);
+        });
+        if (group.status === 'running') setTimeout(() => refreshSessionGroup(id), 1000);
+        else await refreshHistory();
+    } catch (err) { message(err.message, true); }
+}
+
 bindForm('sample', async () => {
     const startedAt = Date.now();
     const startedAtPerformanceMS = performance.now();
@@ -2337,10 +2364,11 @@ bindForm('sample', async () => {
     const protocol = node('protocol').value;
     const run = await api('/runs', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ protocol, transport: protocols[protocol]?.nativeRTSP ? node('rtsp-transport').value : undefined, url, seconds, playback, auto_investigate: autoInvestigate, ...captureAccessOptions(protocol) }),
+        body: JSON.stringify({ protocol, transport: protocols[protocol]?.nativeRTSP ? node('rtsp-transport').value : undefined, url, seconds, playback, auto_investigate: autoInvestigate, reconnect_attempts: ['http-flv', 'rtmp'].includes(protocol) ? node('reconnect-attempts').valueAsNumber : 0, reconnect_delay_ms: ['http-flv', 'rtmp'].includes(protocol) ? node('reconnect-delay').valueAsNumber : 0, ...captureAccessOptions(protocol) }),
     });
     stopPlayback(activePlayer);
     startPlayback(run, startedAt, startedAtPerformanceMS, seconds, hlsRecovery, hlsABR, hlsLowLatency);
+    if (run.session_group_id) void refreshSessionGroup(run.session_group_id);
     return run;
 });
 bindForm('import', () => {

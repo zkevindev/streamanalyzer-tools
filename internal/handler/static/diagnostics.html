@@ -74,6 +74,12 @@
                         <label for="seconds">时长（秒）</label>
                         <input id="seconds" type="number" min="1" max="300" value="60" required>
                     </div>
+                    <div id="reconnect-options" hidden>
+                        <label for="reconnect-attempts">异常重连次数</label>
+                        <input id="reconnect-attempts" type="number" min="0" max="3" value="0">
+                        <label for="reconnect-delay">间隔（ms）</label>
+                        <input id="reconnect-delay" type="number" min="0" max="5000" value="500">
+                    </div>
                     <button type="submit">采样并保存原始流</button>
                 </div>
                 <label class="playback-option"><input id="analyze-playback" type="checkbox" aria-describedby="playback-capability-note"> 同时分析播放器体验</label>
