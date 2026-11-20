@@ -308,6 +308,9 @@ func readBundle(dir string, source io.Reader) (Report, error) {
 	if err := importedPlayerNetwork(dir, &report, entries); err != nil {
 		return Report{}, err
 	}
+	if err := importedReportAssessment(&report, entries[reportName]); err != nil {
+		return Report{}, err
+	}
 	if err := importedStallEvidence(dir, &report, entries); err != nil {
 		return Report{}, err
 	}

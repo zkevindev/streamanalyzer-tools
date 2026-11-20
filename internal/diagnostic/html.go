@@ -565,6 +565,11 @@ thead{color:#52657e;background:#f7f9fc}
 </dl></article>
 {{end}}
 {{end}}
+{{with .Report.Assessment}}<article class="stall-assessment"><h2>整报告分层排查</h2>
+<p class="stall-assessment-conclusion">{{.Conclusion}}</p><p class="timing-note">无需大模型即可生成；方向只引用本次规则证据，仍需按建议验证根因。</p>
+{{range .Directions}}<section class="stall-direction" data-state="{{.Status}}"><h3>{{.Title}} <span class="direction-state">{{assessmentState .Status}}</span></h3><p>{{.Message}}</p>
+<p>关联证据 {{range .EvidenceIDs}}<a href="#{{.}}">{{.}}</a> {{end}}</p>{{with .NextChecks}}<p><strong>建议验证</strong></p><ul>{{range .}}<li>{{.}}</li>{{end}}</ul>{{end}}</section>{{end}}
+<h3>证据限制</h3><ul>{{range .Limitations}}<li>{{.}}</li>{{end}}</ul><p class="timing-note">排查规则 {{.Version}}</p></article>{{end}}
 <h2>规则诊断</h2>
 {{range .Report.Findings}}
 <article id="{{.ID}}" data-severity="{{.Severity}}">

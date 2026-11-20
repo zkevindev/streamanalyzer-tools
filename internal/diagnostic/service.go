@@ -348,6 +348,7 @@ func (s *Service) Start(req SampleRequest) (Run, error) {
 				err = attachAutomaticInvestigation(dir, &report, state)
 			}
 			if err == nil {
+				report.Assessment = assessReport(report)
 				err = persistReport(dir, report)
 				if err == nil && report.Player != nil {
 					cleanupPlayerVersions(dir, report.Player.Revision)

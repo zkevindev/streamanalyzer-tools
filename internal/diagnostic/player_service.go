@@ -156,6 +156,7 @@ func (s *Service) SavePlayerRecording(id, token string, record PlayerRecording) 
 	if err := os.Remove(filepath.Join(dir, explanationName)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return nil, err
 	}
+	report.Assessment = assessReport(report)
 	if err := persistReport(dir, report); err != nil {
 		return nil, err
 	}
