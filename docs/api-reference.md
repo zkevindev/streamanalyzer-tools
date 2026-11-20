@@ -25,6 +25,7 @@
 | `POST /api/diagnostics/runs/:id/stalls/:caseID/stop` | 停止进行中的补查任务 |
 | `GET /api/diagnostics/runs/:id/stall-assets/:caseID/:filename` | 访问补查生成的 MP4（支持 Range）或 JPEG 产物 |
 | `GET /api/diagnostics/runs/:id/{dump,report.html,report.json,evidence.zip}` | 下载原始流、HTML/JSON 报告或证据包 ZIP |
+| `POST /api/diagnostics/runs/:id/share` | 生成仅用于外发查看的最小分享 ZIP。请求体 `{"case_ids":["S001"],"include_stream":false}`；默认包含报告、清单和所选案例媒体，只有显式设置 `include_stream` 才包含完整原始流。该 ZIP 不可导入重算 |
 | `POST /api/diagnostics/import` | 导入证据包（`Content-Type: application/zip`，请求体为 ZIP 原始字节） |
 | `POST /api/diagnostics/runs/:id/explain` | 请求整份报告的大模型汇总解读 |
 

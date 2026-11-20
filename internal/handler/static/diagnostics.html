@@ -196,6 +196,7 @@
                         <a id="json" class="button secondary" download>报告 JSON</a>
                         <a id="dump" class="button secondary" download>原始流</a>
                         <a id="bundle" class="button secondary" download>证据包 ZIP</a>
+                        <button id="share-report" class="secondary" type="button" hidden>最小化分享包</button>
                         <button id="compare-report" class="secondary" type="button" hidden>历史基线对比</button>
                         <button id="flv-replay" class="secondary" type="button" hidden>使用本机回放源</button>
                         <button id="rtsp-replay" class="secondary" type="button" hidden>使用本机 RTSP 回放源</button>
@@ -293,6 +294,15 @@
                             <summary id="pid-summary">PID 明细</summary>
                             <div id="pid-table"></div>
                         </details>
+                    </section>
+                    <section id="share-panel" class="report-details" aria-labelledby="share-panel-title" hidden>
+                        <h3 id="share-panel-title" class="report-title">最小化分享包</h3>
+                        <p class="timing-note muted">用于外发查看，不可作为 evidence.zip 导入重算。默认只含脱敏报告和所选异常产物，不包含完整原始流、播放器原始记录或完整时间线。</p>
+                        <div id="share-cases"></div>
+                        <label class="playback-option"><input id="share-include-stream" type="checkbox"> 显式包含完整原始流</label>
+                        <p id="share-preview" class="timing-note"></p>
+                        <p class="timing-note muted">SHA-256 用于文件完整性校验，不代表加密。原始媒体、SDP、截图和片段可能含敏感内容，下载前请核对。</p>
+                        <button id="export-share" type="button" class="secondary">生成并下载分享 ZIP</button>
                     </section>
                     <section id="report-comparison" class="report-details" aria-labelledby="report-comparison-title" hidden>
                         <h3 id="report-comparison-title" class="report-title">历史基线对比</h3>

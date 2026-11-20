@@ -223,6 +223,19 @@ func RegisterDiagnosticRoutes(r *gin.Engine, service *diagnostic.Service) {
 			diagnosticError(c, err)
 		}
 	})
+	api.POST("/runs/:id/share", func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16<<10)
+		var req diagnostic.ShareRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			diagnosticError(c, diagnostic.ErrInvalid)
+			return
+		}
+		c.Header("Content-Type", "application/zip")
+		c.Header("Content-Disposition", `attachment; filename="stream-share.zip"`)
+		if err := service.WriteShareBundle(c.Param("id"), req, c.Writer); err != nil {
+			diagnosticError(c, err)
+		}
+	})
 	api.GET("/runs/:id/evidence.zip", func(c *gin.Context) {
 		c.Header("Content-Type", "application/zip")
 		c.Header("Content-Disposition", `attachment; filename="stream-evidence.zip"`)
