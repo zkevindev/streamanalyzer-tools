@@ -127,6 +127,14 @@ input::file-selector-button:hover { background: var(--surface-inset); }
     cursor: pointer;
 }
 .playback-option input { width: 1rem; min-height: 1rem; margin: 0; accent-color: var(--primary); }
+#http-access-options { margin-top: 0.8rem; }
+#http-access-options label { display: block; margin-top: 0.65rem; }
+#http-access-options textarea {
+    width: 100%; min-height: 5rem; resize: vertical; color: var(--text); background: var(--surface);
+    border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 0.55rem 0.72rem;
+    font: 0.8rem/1.45 var(--font-data);
+}
+#http-access-options textarea:focus { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
 
 button, .button {
     display: inline-flex;

@@ -132,7 +132,10 @@ func (c *tsCapture) http(ctx context.Context, client *http.Client, target *url.U
 		c.observation.EndReason = "request_error"
 		return nil
 	}
-	req.Header.Set("User-Agent", "StreamAnalyzer-Diagnostic/1.0")
+	applyCaptureHeaders(ctx, req)
+	if req.Header.Get("User-Agent") == "" {
+		req.Header.Set("User-Agent", "StreamAnalyzer-Diagnostic/1.0")
+	}
 	req.Header.Set("Accept-Encoding", "identity")
 	resp, err := doObservedRequest(client, req, c.observation, c.start)
 	if err != nil {

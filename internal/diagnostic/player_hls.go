@@ -32,6 +32,7 @@ type playerHLSResource struct {
 
 type playerHLS struct {
 	client  *http.Client
+	headers http.Header
 	fetch   chan struct{}
 	mu      sync.Mutex
 	byID    map[string]playerHLSResource
@@ -99,8 +100,11 @@ func (h *playerHLS) serve(w http.ResponseWriter, r *http.Request, resource strin
 		hlsPlaybackError(w)
 		return
 	}
+	applyPlayerCaptureHeaders(upstream, h.headers)
 	upstream.Header.Set("Accept-Encoding", "identity")
-	upstream.Header.Set("User-Agent", hlsorigin.PlayerUserAgent)
+	if upstream.Header.Get("User-Agent") == "" {
+		upstream.Header.Set("User-Agent", hlsorigin.PlayerUserAgent)
+	}
 	if entry.playlist {
 		upstream.Header.Set("Accept", "application/vnd.apple.mpegurl, application/x-mpegURL, */*")
 		appendPlayerReloadQuery(upstream.URL, query)

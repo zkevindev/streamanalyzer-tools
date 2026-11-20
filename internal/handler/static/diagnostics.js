@@ -1846,6 +1846,7 @@ node('protocol').addEventListener('change', () => {
     const playback = node('analyze-playback');
     playback.disabled = false;
     node('playback-capability-note').hidden = !selected.nativeRTSP;
+    node('http-access-options').hidden = !['http-flv', 'hls', 'http-ts'].includes(protocol);
     updateRTSPTransport();
     updateAutomaticOption();
 });
@@ -1932,6 +1933,22 @@ async function changeRTSPReplay(start) {
 }
 node('rtsp-replay').addEventListener('click', () => { void changeRTSPReplay(true); });
 node('rtsp-replay-stop').addEventListener('click', () => { void changeRTSPReplay(false); });
+function captureAccessOptions(protocol) {
+    if (!['http-flv', 'hls', 'http-ts'].includes(protocol)) return {};
+    const headers = {};
+    for (const line of node('http-headers').value.split(/\r?\n/)) {
+        if (!line.trim()) continue;
+        const separator = line.indexOf(':');
+        if (separator <= 0) throw new Error('自定义请求头须使用 Name: value 格式。');
+        headers[line.slice(0, separator).trim()] = line.slice(separator + 1).trim();
+    }
+    if (Object.keys(headers).length > 16) throw new Error('自定义请求头最多 16 个。');
+    return {
+        headers,
+        proxy_url: node('http-proxy-url').value.trim() || undefined,
+        ca_certificate: node('http-ca-certificate').value.trim() || undefined,
+    };
+}
 bindForm('sample', async () => {
     const startedAt = Date.now();
     const startedAtPerformanceMS = performance.now();
@@ -1944,9 +1961,10 @@ bindForm('sample', async () => {
     const hlsRecovery = localSimulator && launchOptions.get('hls_recovery') === '1';
     const hlsABR = localSimulator && launchOptions.get('hls_abr') === '1';
     const hlsLowLatency = localSimulator && launchOptions.get('hls_ll') === '1';
+    const protocol = node('protocol').value;
     const run = await api('/runs', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ protocol: node('protocol').value, transport: protocols[node('protocol').value]?.nativeRTSP ? node('rtsp-transport').value : undefined, url, seconds, playback, auto_investigate: autoInvestigate }),
+        body: JSON.stringify({ protocol, transport: protocols[protocol]?.nativeRTSP ? node('rtsp-transport').value : undefined, url, seconds, playback, auto_investigate: autoInvestigate, ...captureAccessOptions(protocol) }),
     });
     stopPlayback(activePlayer);
     startPlayback(run, startedAt, startedAtPerformanceMS, seconds, hlsRecovery, hlsABR, hlsLowLatency);

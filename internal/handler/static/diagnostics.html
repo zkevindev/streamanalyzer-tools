@@ -80,6 +80,16 @@
                 <label class="playback-option automatic-option"><input id="auto-investigate" type="checkbox" checked disabled aria-describedby="auto-investigate-hint"> 采样后自动补查并汇总</label>
                 <p id="auto-investigate-hint" class="field-hint muted">启用播放器分析后，自动补查最多 3 个同期关键异常，再按模型设置生成一次整体汇总；也可关闭后手动补查。</p>
                 <p id="playback-capability-note" class="field-hint muted" hidden>RTSP 预览复用同次采样的 RTP，在本机转封装 H.264 / H.265 / AAC-LC / Opus 后播放，H.265 需要浏览器和系统解码支持。无 AAC/Opus 原码音轨时，可经本机 FFmpeg 将 G.711 PCMA/PCMU 转为 AAC；其他编码仍可采样和保存原始流，不支持的音轨会明确标记并静音。Opus 按浏览器能力使用 MP4 或 WebM 音频缓冲，保留原始编码与时序。</p>
+                <details id="http-access-options" class="report-details">
+                    <summary>访问条件（请求头、代理与 CA）</summary>
+                    <p class="field-hint muted">仅用于 HTTP-FLV、HLS 和 HTTP MPEG-TS 本次采样；HLS 实际播放请求使用相同配置。凭据不会写入任务记录，报告中的敏感头字段仍会脱敏。</p>
+                    <label for="http-headers">自定义请求头（每行一个，格式为 <code>Name: value</code>，最多 16 个）</label>
+                    <textarea id="http-headers" rows="4" autocomplete="off" spellcheck="false" placeholder="Authorization: Bearer ...&#10;Cookie: session=...&#10;Referer: https://example.com/player"></textarea>
+                    <label for="http-proxy-url">HTTP / HTTPS 代理地址（可选）</label>
+                    <input id="http-proxy-url" type="url" autocomplete="off" placeholder="http://127.0.0.1:8080">
+                    <label for="http-ca-certificate">附加 PEM CA 证书（可选，与系统证书共同校验）</label>
+                    <textarea id="http-ca-certificate" rows="4" autocomplete="off" spellcheck="false" placeholder="-----BEGIN CERTIFICATE-----"></textarea>
+                </details>
             </form>
             <div id="hls-delivery-panel" class="panel-body hls-tool hls-embedded" hidden>
                 <form id="hls-form" aria-label="HLS 交付分析配置">
