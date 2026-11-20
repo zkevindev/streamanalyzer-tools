@@ -8,7 +8,6 @@ import (
 	"net/http"
 	"sync"
 
-	"streamanalyzer/internal/analyzer"
 	"streamanalyzer/internal/diagnostic"
 	"streamanalyzer/internal/handler"
 	"streamanalyzer/internal/offline"
@@ -19,7 +18,6 @@ import (
 	"streamanalyzer/internal/simulator/onvif"
 	"streamanalyzer/internal/simulator/sipphone"
 	"streamanalyzer/internal/simulator/whep"
-	"streamanalyzer/internal/storage"
 
 	"github.com/gin-gonic/gin"
 )
@@ -50,7 +48,6 @@ func (s *simulators) Close() {
 
 type Server struct {
 	httpServer  *http.Server
-	storage     *storage.CSVStorage
 	diagnostics *diagnostic.Service
 	simulators  *simulators
 	addr        string
@@ -58,30 +55,17 @@ type Server struct {
 	closeErr    error
 }
 
-func newEngine(cfg *Config, model diagnostic.Explainer, sim *simulators) (*gin.Engine, *storage.CSVStorage, *diagnostic.Service, error) {
+func newEngine(cfg *Config, model diagnostic.Explainer, sim *simulators) (*gin.Engine, *diagnostic.Service, error) {
 	ApplyDefaults(cfg)
-
-	xlsxStorage, err := storage.NewCSVStorage(cfg.Server.DataDir)
-	if err != nil {
-		return nil, nil, nil, err
-	}
 
 	diagnostics, err := diagnostic.Open(cfg.Server.DataDir, model)
 	if err != nil {
-		xlsxStorage.Close()
-		return nil, nil, nil, err
-	}
-
-	streamAnalyzer := analyzer.NewStreamAnalyzer(xlsxStorage, *cfg.Server.MaxDumpMB)
-	if *cfg.Server.MaxDumpMB > 0 {
-		log.Printf("Dump limit: %d MB per task", *cfg.Server.MaxDumpMB)
-	} else {
-		log.Printf("Dump limit: unlimited")
+		return nil, nil, err
 	}
 
 	offlineMgr := offline.NewManager(cfg.Server.DataDir)
 	offlineMgr.LoadExisting()
-	h := handler.NewHandler(streamAnalyzer, xlsxStorage, offlineMgr)
+	h := handler.NewHandler(offlineMgr)
 
 	r := gin.Default()
 	h.RegisterRoutes(r)
@@ -89,7 +73,7 @@ func newEngine(cfg *Config, model diagnostic.Explainer, sim *simulators) (*gin.E
 	handler.RegisterONVIFDiscoveryRoutes(r, &sim.discovery)
 	handler.RegisterSimulatorHistoryRoutes(r, cfg.Server.DataDir)
 	handler.RegisterSimulatorRoutes(r, &sim.gb28181, &sim.onvif, &sim.sip, &sim.hls, &sim.gbPlatform, &sim.media, &sim.rtmp, &sim.whep)
-	return r, xlsxStorage, diagnostics, nil
+	return r, diagnostics, nil
 }
 
 func Run(addr string, cfg *Config) error {
@@ -98,11 +82,10 @@ func Run(addr string, cfg *Config) error {
 		return err
 	}
 	sim := &simulators{}
-	engine, xlsxStorage, diagnostics, err := newEngine(cfg, model, sim)
+	engine, diagnostics, err := newEngine(cfg, model, sim)
 	if err != nil {
 		return err
 	}
-	defer xlsxStorage.Close()
 	defer diagnostics.Close()
 	defer sim.Close()
 
@@ -120,7 +103,7 @@ func Start(ctx context.Context, addr string, cfg *Config) (*Server, error) {
 
 func StartWithModel(ctx context.Context, addr string, cfg *Config, model diagnostic.Explainer) (*Server, error) {
 	sim := &simulators{}
-	engine, xlsxStorage, diagnostics, err := newEngine(cfg, model, sim)
+	engine, diagnostics, err := newEngine(cfg, model, sim)
 	if err != nil {
 		return nil, err
 	}
@@ -128,13 +111,11 @@ func StartWithModel(ctx context.Context, addr string, cfg *Config, model diagnos
 	ln, err := net.Listen("tcp", addr)
 	if err != nil {
 		diagnostics.Close()
-		xlsxStorage.Close()
 		return nil, err
 	}
 
 	s := &Server{
 		httpServer:  &http.Server{Handler: engine},
-		storage:     xlsxStorage,
 		diagnostics: diagnostics,
 		simulators:  sim,
 		addr:        ln.Addr().String(),
@@ -175,7 +156,6 @@ func (s *Server) Shutdown(ctx context.Context) error {
 		s.closeErr = s.httpServer.Shutdown(ctx)
 		s.simulators.Close()
 		_ = s.diagnostics.Close()
-		_ = s.storage.Close()
 	})
 	return s.closeErr
 }

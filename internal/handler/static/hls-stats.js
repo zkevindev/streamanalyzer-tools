@@ -57,6 +57,10 @@
   }
   function taskURL(id) {
     const url = new URL(location.href);
+    if (url.pathname === '/diagnostics') {
+      url.searchParams.set('protocol', 'hls');
+      url.searchParams.set('hls_mode', 'delivery');
+    }
     if (id) url.searchParams.set('task', id);
     else url.searchParams.delete('task');
     history.replaceState(null, '', url);

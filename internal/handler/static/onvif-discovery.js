@@ -1,7 +1,7 @@
 'use strict';
 (() => {
     const node = id => document.getElementById(id), base = '/api/diagnostics/onvif';
-    const discovery = node('onvif-discovery'), opener = node('open-onvif-discovery');
+    const discovery = node('onvif-discovery');
     const isOpen = () => !discovery.hidden;
     const searchButton = node('onvif-search-button'), stopButton = node('onvif-stop');
     const interfaceField = node('onvif-interface'), manualField = node('onvif-manual');
@@ -293,15 +293,10 @@
         if (!interfacesLoaded) loadingInterfaces ??= loadInterfaces().finally(() => { loadingInterfaces = undefined; });
         else if (!interfaceField.value) status('没有可用的 IPv4 网卡。', true);
     }
-    opener.addEventListener('click', () => {
-        window.dispatchEvent(new CustomEvent('open-diagnostic-tool', {detail: '/diagnostics/onvif'}));
-        node('onvif-title').focus();
-    });
     window.addEventListener('diagnostic-tool-change', toolChanged);
     window.addEventListener('pagehide', endSession);
     node('url').addEventListener('input', () => { prefillStatus.textContent = ''; });
     node('protocol').addEventListener('change', () => { prefillStatus.textContent = ''; });
     updateDevice();
     toolChanged();
-    opener.hidden = false;
 })();

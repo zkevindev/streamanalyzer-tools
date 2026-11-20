@@ -22,9 +22,9 @@ function privacy(value,model=false){const text=JSON.stringify(value);for(const s
   await until(()=>evaluate('document.querySelector("#onvif-tool-link")?.getAttribute("aria-current")==="page" && document.querySelector("#capture-workbench").hidden').catch(()=>false),'direct ONVIF URL');
   await evaluate('document.querySelector("#capture-tool-link").click()');
   assert.equal(await evaluate('location.pathname'),'/diagnostics');
-  await until(()=>evaluate('document.querySelector("#open-onvif-discovery:not([hidden])") !== null').catch(()=>false),'discovery entry');
-  assert.ok(await evaluate('document.querySelector("#onvif-discovery").hidden && document.querySelector("#sample").contains(document.querySelector("#open-onvif-discovery"))'));
-  const openDiscovery=()=>evaluate('document.querySelector("#open-onvif-discovery").focus();document.querySelector("#open-onvif-discovery").click()');
+  await until(()=>evaluate('document.querySelector("#onvif-tool-link") !== null').catch(()=>false),'discovery entry');
+  assert.ok(await evaluate('document.querySelector("#onvif-discovery").hidden'));
+  const openDiscovery=()=>evaluate('document.querySelector("#onvif-tool-link").focus();document.querySelector("#onvif-tool-link").click()');
   await openDiscovery();
   assert.ok(await evaluate('location.pathname==="/diagnostics/onvif" && document.querySelector("#capture-workbench").hidden && document.querySelector("#onvif-credentials").hidden'));
   await until(()=>evaluate('Array.from(document.querySelector("#onvif-interface").options).some(option=>option.value==="127.0.0.1")'),'interfaces');

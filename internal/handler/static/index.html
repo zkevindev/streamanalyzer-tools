@@ -14,24 +14,49 @@
   <main class="home-width home-main">
     <section class="home-hero" aria-labelledby="home-title">
       <div class="home-intro">
+        <div class="home-kicker">
+          <span class="home-kicker-dot" aria-hidden="true"></span>
+          音视频流排障与协议联调工作台
+        </div>
         <h1 id="home-title">流媒体排障与协议联调</h1>
-        <p>从线上采样到本地复盘，查看码流、请求时序与播放器体验。</p>
-        <div class="home-signal" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
+        <p>从线上实时采样到本地证据包复盘，一站式查看码流结构、请求时序、播放器体验与协议模拟回归。</p>
+        <ul class="home-protocols" aria-label="支持协议">
+          <li>HTTP-FLV</li>
+          <li>RTMP / RTMPS</li>
+          <li>RTSP / RTSPS</li>
+          <li>HLS</li>
+          <li>MPEG-TS</li>
+          <li>GB28181</li>
+          <li>ONVIF</li>
+          <li>SIP</li>
+          <li>WHEP</li>
+        </ul>
       </div>
+
       <nav class="home-workflows" aria-label="主要工具">
         <a class="home-workflow home-workflow-primary" href="/diagnostics">
+          <div class="home-card-top">
+            <span class="home-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+            </span>
+            <span class="home-arrow" aria-hidden="true">→</span>
+          </div>
           <span class="home-tool-copy">
             <strong>排障工作台</strong>
-            <span>采集真实流、探测 ONVIF 设备并生成证据报告</span>
+            <span>采集真实音视频流、探测 ONVIF 设备、执行 HLS 交付与 A/B 对比并生成离线证据包</span>
           </span>
-          <span class="home-arrow" aria-hidden="true">→</span>
         </a>
         <a class="home-workflow" href="/simulators">
+          <div class="home-card-top">
+            <span class="home-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+            </span>
+            <span class="home-arrow" aria-hidden="true">→</span>
+          </div>
           <span class="home-tool-copy">
-            <strong>模拟器</strong>
-            <span>模拟 GB28181、ONVIF、SIP 等协议，复现场景</span>
+            <strong>协议模拟器</strong>
+            <span>模拟 GB28181、ONVIF、SIP、HLS、RTMP、MPEG-TS 与 WHEP 故障源，执行自动化场景回归</span>
           </span>
-          <span class="home-arrow" aria-hidden="true">→</span>
         </a>
       </nav>
     </section>
@@ -40,26 +65,24 @@
       <h2 id="analysis-title">分析与回看</h2>
       <ul class="home-tool-list">
         <li>
-          <a href="/realtime">
-            <span class="home-tool-copy"><strong>实时曲线</strong><span>查看直播码率、帧率与 PTS／DTS</span></span>
-            <span class="home-arrow" aria-hidden="true">→</span>
-          </a>
-        </li>
-        <li>
           <a href="/diagnostics/review">
-            <span class="home-tool-copy"><strong>离线复盘</strong><span>导入证据包，或解析抓包及媒体文件</span></span>
-            <span class="home-arrow" aria-hidden="true">→</span>
-          </a>
-        </li>
-        <li>
-          <a href="/hls-stats">
-            <span class="home-tool-copy"><strong>HLS 交付</strong><span>检查播放列表、分片耗时与缓存命中</span></span>
+            <span class="home-tool-lead">
+              <span class="home-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8M16 17H8M10 9H8"/></svg>
+              </span>
+              <span class="home-tool-copy"><strong>离线复盘</strong><span>导入排障证据包，或解析 PCAP / FLV / TS / MP4 文件</span></span>
+            </span>
             <span class="home-arrow" aria-hidden="true">→</span>
           </a>
         </li>
         <li>
           <a href="/history">
-            <span class="home-tool-copy"><strong>任务记录</strong><span>回看排障、分析与模拟器回归结果</span></span>
+            <span class="home-tool-lead">
+              <span class="home-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>
+              </span>
+              <span class="home-tool-copy"><strong>任务记录</strong><span>集中回看排障采样、实时分析、离线解析与回归结果</span></span>
+            </span>
             <span class="home-arrow" aria-hidden="true">→</span>
           </a>
         </li>

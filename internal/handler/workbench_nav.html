@@ -19,19 +19,13 @@
 
 {{define "diagnostic-tools" -}}
 <nav class="workbench-subnav diagnostic-tools" aria-label="排障工具">
-  <a id="capture-tool-link" href="/diagnostics"{{if eq .Page "diagnostics"}} aria-current="page"{{else if eq .Page "realtime"}} aria-current="true"{{end}}>流媒体排障</a>
+  <a id="capture-tool-link" href="/diagnostics"{{if eq .Page "diagnostics"}} aria-current="page"{{end}}>流媒体排障</a>
   <a id="onvif-tool-link" href="/diagnostics/onvif">ONVIF 设备探测</a>
   <a id="review-tool-link" href="/diagnostics/review"{{if eq .Page "offline"}} aria-current="true"{{end}}>离线复盘</a>
-  <a href="/hls-stats"{{if eq .Page "hls-stats"}} aria-current="page"{{end}}>HLS 交付</a>
 </nav>
 {{- end}}
 
-{{define "stream-modes" -}}
-<nav id="stream-modes" class="workbench-modes" aria-label="流媒体排障方式">
-  <a id="capture-mode-link" href="/diagnostics"{{if eq .Page "diagnostics"}} aria-current="page"{{end}}>采样与证据</a>
-  <a id="realtime-mode-link" href="/realtime"{{if eq .Page "realtime"}} aria-current="page"{{end}}>实时曲线</a>
-</nav>
-{{- end}}
+{{define "stream-modes" -}}{{end}}
 
 {{define "review-modes" -}}
 <nav id="review-modes" class="workbench-modes" aria-label="离线复盘方式"{{if eq .Page "diagnostics"}} hidden{{end}}>
