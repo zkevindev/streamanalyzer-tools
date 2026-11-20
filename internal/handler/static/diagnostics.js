@@ -221,6 +221,7 @@ let currentMode = '';
 let currentAutomaticRunning = false;
 let activePoll;
 let runs = [];
+const selectedRunIDs = new Set();
 let currentModel = null;
 let currentExplanation;
 let modelConfigRequest = 0;
@@ -460,17 +461,37 @@ function renderHistory() {
         const status = element('span', statusLabels[run.status] || run.status, 'status');
         status.dataset.status = run.status;
         meta.append(status, element('span', protocol), element('span', mode), element('span', when));
+        if (run.protected) meta.append(element('span', '重要证据'));
         button.append(meta);
         button.addEventListener('click', () => selectRun(run.id));
-        row.append(button);
+        const selected = document.createElement('input');
+        selected.type = 'checkbox';
+        selected.setAttribute('aria-label', '选择删除 ' + run.id);
+        selected.disabled = run.protected || run.status === 'running';
+        selected.checked = selectedRunIDs.has(run.id) && !selected.disabled;
+        selected.addEventListener('change', () => {
+            if (selected.checked) selectedRunIDs.add(run.id); else selectedRunIDs.delete(run.id);
+            node('delete-selected').hidden = selectedRunIDs.size === 0;
+        });
+        row.append(selected, button);
         return row;
     });
     node('runs').replaceChildren(...items);
+    const available = new Set(runs.filter(run => !run.protected && run.status !== 'running').map(run => run.id));
+    for (const id of selectedRunIDs) if (!available.has(id)) selectedRunIDs.delete(id);
+    node('delete-selected').hidden = selectedRunIDs.size === 0;
+}
+
+async function refreshStorage() {
+    const storage = await api('/storage', { cache: 'no-store' });
+    const protectedText = storage.protected_count ? ` · ${storage.protected_count} 条重要证据 ${bytes(storage.protected_bytes)}` : '';
+    node('storage-summary').textContent = `${storage.run_count} 条记录 · 排障产物 ${bytes(storage.total_bytes)}${protectedText}`;
 }
 
 async function refreshHistory() {
     runs = await api('/runs');
     renderHistory();
+    await refreshStorage();
 }
 
 function renderTable(columns, rows) {
@@ -1749,6 +1770,10 @@ function renderDetail(detail) {
     currentMode = detail.mode || '';
     currentAutomaticRunning = detail.automatic_running === true;
     node('stop').hidden = currentStatus !== 'running';
+    const protectedRun = detail.protected === true;
+    node('protect-run').hidden = false;
+    node('protect-run').textContent = protectedRun ? '取消重要证据保护' : '保护当前证据';
+    node('delete-run').hidden = protectedRun || currentStatus === 'running';
     node('report').hidden = !detail.report;
     const observed = detail.report?.manifest.observation;
     const parts = [diagnosticOrigin(protocol, detail.origin), statusLabels[detail.status] || detail.status];
@@ -1976,6 +2001,71 @@ bindForm('import', () => {
         method: 'POST', headers: { 'Content-Type': 'application/zip' }, body: node('archive').files[0],
     });
 });
+node('protect-run').addEventListener('click', async () => {
+    const run = runs.find(item => item.id === currentID);
+    if (!run) return;
+    try {
+        await api(runPath(currentID) + '/protection', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ protected: !run.protected }),
+        });
+        await refreshHistory();
+        await refreshDetail(currentID);
+    } catch (err) { message(err.message, true); }
+});
+
+async function finishEvidenceDeletion(deletedIDs) {
+    selectedRunIDs.clear();
+    await refreshHistory();
+    if (deletedIDs.has(currentID)) {
+        currentID = '';
+        node('report').hidden = true;
+        node('protect-run').hidden = node('delete-run').hidden = true;
+        node('summary').textContent = '选择一条记录查看报告。';
+        history.replaceState(null, '', location.pathname + location.search);
+        if (runs.length) await selectRun(runs[0].id);
+    }
+}
+
+node('delete-run').addEventListener('click', async () => {
+    if (!currentID || !confirm('确定删除当前排障记录及全部本地产物？此操作不可撤销。')) return;
+    try {
+        await api(runPath(currentID), { method: 'DELETE' });
+        const deleted = currentID;
+        message('排障记录已删除。');
+        await finishEvidenceDeletion(new Set([deleted]));
+    } catch (err) { message(err.message, true); }
+});
+
+node('delete-selected').addEventListener('click', async () => {
+    const ids = [...selectedRunIDs];
+    if (!ids.length || !confirm(`确定删除所选 ${ids.length} 条排障记录及全部本地产物？此操作不可撤销。`)) return;
+    try {
+        await api('/runs/delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) });
+        message(`已删除 ${ids.length} 条排障记录。`);
+        await finishEvidenceDeletion(new Set(ids));
+    } catch (err) { message(err.message, true); }
+});
+
+node('storage-prune').addEventListener('submit', async event => {
+    event.preventDefault();
+    const button = event.currentTarget.querySelector('button[type="submit"]');
+    button.disabled = true;
+    try {
+        const retentionDays = node('retention-days').valueAsNumber || 0;
+        const budgetMiB = node('storage-budget').valueAsNumber || 0;
+        if (!retentionDays && !budgetMiB) throw new Error('请至少设置保留天数或磁盘预算。');
+        if (!confirm('将按策略永久删除符合条件的未保护证据，是否继续？')) return;
+        const result = await api('/storage/prune', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ retention_days: retentionDays, max_total_bytes: budgetMiB > 0 ? Math.round(budgetMiB * 1024 * 1024) : 0 }),
+        });
+        message(`清理完成：删除 ${result.deleted} 条记录，释放 ${bytes(result.deleted_bytes)}。`);
+        await refreshHistory();
+        if (!runs.some(run => run.id === currentID)) await finishEvidenceDeletion(new Set([currentID]));
+    } catch (err) { message(err.message, true); }
+    finally { button.disabled = false; }
+});
+
 node('stop').addEventListener('click', async () => {
     const id = currentID;
     node('stop').disabled = true;

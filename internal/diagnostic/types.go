@@ -73,6 +73,7 @@ type Run struct {
 	CreatedAt   time.Time    `json:"created_at"`
 	Error       string       `json:"error,omitempty"`
 	ReportReady bool         `json:"report_ready"`
+	Protected   bool         `json:"protected"`
 	Player      *PlayerStart `json:"player,omitempty"`
 }
 

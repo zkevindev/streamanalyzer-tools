@@ -124,7 +124,8 @@ func initRunIndex(db *sql.DB) error {
 		origin TEXT NOT NULL,
 		created_at INTEGER NOT NULL,
 		error TEXT NOT NULL,
-		report_ready INTEGER NOT NULL
+		report_ready INTEGER NOT NULL,
+		protected INTEGER NOT NULL DEFAULT 0
 	);
 	CREATE INDEX IF NOT EXISTS runs_created_at ON runs(created_at DESC);`); err != nil {
 		return err
@@ -135,6 +136,15 @@ func initRunIndex(db *sql.DB) error {
 	}
 	if !hasProtocol {
 		if _, err := tx.Exec(`ALTER TABLE runs ADD COLUMN protocol TEXT NOT NULL DEFAULT 'http-flv'`); err != nil {
+			return err
+		}
+	}
+	var hasProtected bool
+	if err := tx.QueryRow(`SELECT EXISTS(SELECT 1 FROM pragma_table_info('runs') WHERE name = 'protected')`).Scan(&hasProtected); err != nil {
+		return err
+	}
+	if !hasProtected {
+		if _, err := tx.Exec(`ALTER TABLE runs ADD COLUMN protected INTEGER NOT NULL DEFAULT 0`); err != nil {
 			return err
 		}
 	}
@@ -669,7 +679,7 @@ func (s *Service) recoverRuns() error {
 	return nil
 }
 
-const runColumns = "SELECT id, mode, protocol, status, origin, created_at, error, report_ready FROM runs"
+const runColumns = "SELECT id, mode, protocol, status, origin, created_at, error, report_ready, protected FROM runs"
 
 func (s *Service) getRun(id string) (Run, error) {
 	run, err := scanRun(s.db.QueryRow(runColumns+" WHERE id = ?", id))
@@ -686,7 +696,7 @@ type rowScanner interface {
 func scanRun(row rowScanner) (Run, error) {
 	var run Run
 	var created int64
-	err := row.Scan(&run.ID, &run.Mode, &run.Protocol, &run.Status, &run.Origin, &created, &run.Error, &run.ReportReady)
+	err := row.Scan(&run.ID, &run.Mode, &run.Protocol, &run.Status, &run.Origin, &created, &run.Error, &run.ReportReady, &run.Protected)
 	run.CreatedAt = time.UnixMilli(created).UTC()
 	return run, err
 }
@@ -705,8 +715,8 @@ func scanRuns(rows *sql.Rows) ([]Run, error) {
 }
 
 func (s *Service) insertRun(run Run) error {
-	_, err := s.db.Exec(`INSERT INTO runs(id, mode, protocol, status, origin, created_at, error, report_ready)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, run.ID, run.Mode, run.Protocol, run.Status, run.Origin, run.CreatedAt.UnixMilli(), run.Error, run.ReportReady)
+	_, err := s.db.Exec(`INSERT INTO runs(id, mode, protocol, status, origin, created_at, error, report_ready, protected)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, run.ID, run.Mode, run.Protocol, run.Status, run.Origin, run.CreatedAt.UnixMilli(), run.Error, run.ReportReady, run.Protected)
 	return err
 }
 
