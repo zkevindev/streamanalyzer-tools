@@ -2141,7 +2141,12 @@ node('protocol').addEventListener('change', () => {
     const playback = node('analyze-playback');
     playback.disabled = false;
     node('playback-capability-note').hidden = !selected.nativeRTSP;
-    node('http-access-options').hidden = !['http-flv', 'hls', 'http-ts'].includes(protocol);
+    const httpAccess = ['http-flv', 'hls', 'http-ts'].includes(protocol);
+    node('http-access-options').hidden = !httpAccess && !['rtmp', 'rtsps'].includes(protocol);
+    for (const id of ['http-headers', 'http-proxy-url']) {
+        node(id).hidden = !httpAccess;
+        document.querySelector(`label[for="${id}"]`).hidden = !httpAccess;
+    }
     updateRTSPTransport();
     updateAutomaticOption();
 });
@@ -2229,7 +2234,9 @@ async function changeRTSPReplay(start) {
 node('rtsp-replay').addEventListener('click', () => { void changeRTSPReplay(true); });
 node('rtsp-replay-stop').addEventListener('click', () => { void changeRTSPReplay(false); });
 function captureAccessOptions(protocol) {
-    if (!['http-flv', 'hls', 'http-ts'].includes(protocol)) return {};
+    const httpAccess = ['http-flv', 'hls', 'http-ts'].includes(protocol);
+    const tlsAccess = httpAccess || ['rtmp', 'rtsps'].includes(protocol);
+    if (!tlsAccess) return {};
     const headers = {};
     for (const line of node('http-headers').value.split(/\r?\n/)) {
         if (!line.trim()) continue;
@@ -2239,8 +2246,8 @@ function captureAccessOptions(protocol) {
     }
     if (Object.keys(headers).length > 16) throw new Error('自定义请求头最多 16 个。');
     return {
-        headers,
-        proxy_url: node('http-proxy-url').value.trim() || undefined,
+        headers: httpAccess ? headers : undefined,
+        proxy_url: httpAccess ? node('http-proxy-url').value.trim() || undefined : undefined,
         ca_certificate: node('http-ca-certificate').value.trim() || undefined,
     };
 }

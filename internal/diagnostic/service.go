@@ -271,9 +271,13 @@ func (s *Service) Start(req SampleRequest) (Run, error) {
 	if seconds < 1 || seconds > maxSeconds {
 		return Run{}, fmt.Errorf("%w: 采样时长须为 1 至 %d 秒", ErrInvalid, maxSeconds)
 	}
-	if protocol != ProtocolHTTPFLV && protocol != ProtocolHLS && protocol != ProtocolHTTPTS &&
-		(len(req.Headers) > 0 || req.ProxyURL != "" || req.CACertificate != "") {
-		return Run{}, fmt.Errorf("%w: 自定义请求头、代理和 CA 仅适用于 HTTP-FLV、HLS 与 HTTP MPEG-TS", ErrInvalid)
+	httpAccess := protocol == ProtocolHTTPFLV || protocol == ProtocolHLS || protocol == ProtocolHTTPTS
+	tlsAccess := httpAccess || protocol == ProtocolRTMP && target.Scheme == "rtmps" || protocol == ProtocolRTSPS
+	if !httpAccess && (len(req.Headers) > 0 || req.ProxyURL != "") {
+		return Run{}, fmt.Errorf("%w: 自定义请求头和代理仅适用于 HTTP-FLV、HLS 与 HTTP MPEG-TS", ErrInvalid)
+	}
+	if req.CACertificate != "" && !tlsAccess {
+		return Run{}, fmt.Errorf("%w: 自定义 CA 仅适用于 HTTPS、RTMPS 与 RTSPS", ErrInvalid)
 	}
 	access, err := prepareCaptureAccess(s.client, req)
 	if err != nil {
@@ -413,7 +417,7 @@ func (s *Service) sampleProtocolWithTransport(ctx context.Context, dir string, t
 	case ProtocolHTTPTS, ProtocolUDPTS, ProtocolRTPTS:
 		return sampleTS(ctx, captureHTTPClient(ctx, s.client), dir, target, seconds, protocol)
 	case ProtocolRTSP, ProtocolRTSPS:
-		return sampleRTSPTransport(ctx, dir, target, seconds, protocol, transport)
+		return sampleRTSPTransportWithTLS(ctx, dir, target, seconds, protocol, transport, captureTLSConfig(ctx))
 	default:
 		return Report{}, fmt.Errorf("%w: 不支持的采样协议", ErrInvalid)
 	}

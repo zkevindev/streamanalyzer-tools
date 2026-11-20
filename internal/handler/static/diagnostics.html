@@ -82,7 +82,7 @@
                 <p id="playback-capability-note" class="field-hint muted" hidden>RTSP 预览复用同次采样的 RTP，在本机转封装 H.264 / H.265 / AAC-LC / Opus 后播放，H.265 需要浏览器和系统解码支持。无 AAC/Opus 原码音轨时，可经本机 FFmpeg 将 G.711 PCMA/PCMU 转为 AAC；其他编码仍可采样和保存原始流，不支持的音轨会明确标记并静音。Opus 按浏览器能力使用 MP4 或 WebM 音频缓冲，保留原始编码与时序。</p>
                 <details id="http-access-options" class="report-details">
                     <summary>访问条件（请求头、代理与 CA）</summary>
-                    <p class="field-hint muted">仅用于 HTTP-FLV、HLS 和 HTTP MPEG-TS 本次采样；HLS 实际播放请求使用相同配置。凭据不会写入任务记录，报告中的敏感头字段仍会脱敏。</p>
+                    <p class="field-hint muted">请求头与代理由 HTTP-FLV、HLS、HTTP MPEG-TS 使用；附加 CA 还可用于 RTMPS/RTSPS。HLS 实际播放请求使用相同配置。凭据不会写入任务记录，报告中的敏感头字段仍会脱敏。</p>
                     <label for="http-headers">自定义请求头（每行一个，格式为 <code>Name: value</code>，最多 16 个）</label>
                     <textarea id="http-headers" rows="4" autocomplete="off" spellcheck="false" placeholder="Authorization: Bearer ...&#10;Cookie: session=...&#10;Referer: https://example.com/player"></textarea>
                     <label for="http-proxy-url">HTTP / HTTPS 代理地址（可选）</label>

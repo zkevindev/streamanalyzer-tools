@@ -13,8 +13,9 @@ import (
 const maxCustomHeaderCount = 16
 
 type captureAccess struct {
-	headers http.Header
-	client  *http.Client
+	headers   http.Header
+	client    *http.Client
+	tlsConfig *tls.Config
 }
 
 type captureAccessContextKey struct{}
@@ -57,6 +58,7 @@ func prepareCaptureAccess(base *http.Client, req SampleRequest) (captureAccess, 
 			return result, fmt.Errorf("%w: 自定义 CA 证书不是有效的 PEM 证书", ErrInvalid)
 		}
 		transport.TLSClientConfig = &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12}
+		result.tlsConfig = transport.TLSClientConfig
 	}
 	client.Transport = transport
 	result.client = &client
@@ -102,4 +104,8 @@ func captureHTTPClient(ctx context.Context, fallback *http.Client) *http.Client 
 		return client
 	}
 	return fallback
+}
+
+func captureTLSConfig(ctx context.Context) *tls.Config {
+	return captureAccessFromContext(ctx).tlsConfig
 }

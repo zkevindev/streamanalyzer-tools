@@ -110,7 +110,7 @@ func captureRTMP(ctx context.Context, target *url.URL, tap *rtmpTap, obs *Observ
 		player.publish([]byte{'F', 'L', 'V', 1, 5, 0, 0, 0, 9, 0, 0, 0, 0})
 		handler = &rtmpPlayerHandler{player: player}
 	}
-	client, _, _, err := rtmp.DialAndPlay(ctx, target.String(), handler, &rtmp.PlayOptions{Start: -2, RecvTap: tap, OnStage: setup.completed})
+	client, _, _, err := rtmp.DialAndPlay(ctx, target.String(), handler, &rtmp.PlayOptions{Start: -2, RecvTap: tap, TLSConfig: captureTLSConfig(ctx), OnStage: setup.completed})
 	playEnd := time.Since(tap.start).Milliseconds()
 	setup.finish(obs, err)
 	if err != nil && ctx.Err() != nil {
