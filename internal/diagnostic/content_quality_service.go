@@ -46,6 +46,7 @@ func (s *Service) AnalyzeContentQuality(parent context.Context, id string) (Cont
 	if current.Manifest.Stream != detail.Report.Manifest.Stream {
 		return ContentQualityReport{}, ErrReportChanged
 	}
+	applyContentCorrelations(current, &quality)
 	current.ContentQuality = &quality
 	if err := persistReport(s.runDir(id), current); err != nil {
 		return ContentQualityReport{}, err

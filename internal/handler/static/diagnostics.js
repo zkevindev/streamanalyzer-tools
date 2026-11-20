@@ -1598,6 +1598,12 @@ function renderContentQuality(quality) {
         if (!intervals?.length) continue;
         content.append(element('h4', title), contentQualityIntervalsTable(intervals));
     }
+    if (quality.correlations?.length) {
+        content.append(element('h4', '跨层时间关联'), renderTable(['内容异常', '内容时间', '估算采样时间', '网络证据', '播放器卡顿', 'RTMP 控制', '低吞吐秒', '说明'],
+            quality.correlations.map(item => [item.content_kind, `${time(item.content_start_ms)}–${time(item.content_end_ms)}`, `${time(item.aligned_start_ms)}–${time(item.aligned_end_ms)}`,
+                (item.network_finding_ids || []).join('、') || '无', (item.player_stalls || []).join('、') || '无', (item.rtmp_controls || []).join('、') || '无', (item.low_throughput_seconds || []).join('、') || '无', item.message])));
+        content.append(element('p', `对齐方式 ${quality.correlation_alignment || '未记录'}；同期关系不是确定根因。`, 'timing-note muted'));
+    }
     if (quality.truncated) content.append(element('p', '部分检测区间已达到保存上限。', 'timing-note muted'));
     const limits = element('ul', '', 'stall-assessment-limitations');
     for (const limitation of quality.limitations || []) limits.append(element('li', limitation));

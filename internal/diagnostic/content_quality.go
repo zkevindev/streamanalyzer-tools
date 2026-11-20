@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
@@ -45,22 +46,38 @@ type ContentAVSync struct {
 	Reason         string `json:"reason,omitempty"`
 }
 
+type LayerCorrelation struct {
+	ContentKind       string   `json:"content_kind"`
+	ContentStartMS    int64    `json:"content_start_ms"`
+	ContentEndMS      int64    `json:"content_end_ms"`
+	AlignedStartMS    int64    `json:"aligned_start_ms"`
+	AlignedEndMS      int64    `json:"aligned_end_ms"`
+	NetworkFindingIDs []string `json:"network_finding_ids,omitempty"`
+	PlayerStalls      []int    `json:"player_stalls,omitempty"`
+	RTMPControls      []int    `json:"rtmp_controls,omitempty"`
+	LowThroughputSecs []int    `json:"low_throughput_seconds,omitempty"`
+	Status            string   `json:"status"`
+	Message           string   `json:"message"`
+}
+
 type ContentQualityReport struct {
-	Version          string                   `json:"version"`
-	State            string                   `json:"state"`
-	Reason           string                   `json:"reason,omitempty"`
-	SourceArtifact   Artifact                 `json:"source_artifact"`
-	CreatedAt        time.Time                `json:"created_at"`
-	DurationMS       int64                    `json:"duration_ms"`
-	HasVideo         bool                     `json:"has_video"`
-	HasAudio         bool                     `json:"has_audio"`
-	Thresholds       ContentQualityThresholds `json:"thresholds"`
-	BlackIntervals   []ContentQualityInterval `json:"black_intervals"`
-	FreezeIntervals  []ContentQualityInterval `json:"freeze_intervals"`
-	SilenceIntervals []ContentQualityInterval `json:"silence_intervals"`
-	Truncated        bool                     `json:"truncated"`
-	AVSync           ContentAVSync            `json:"av_sync"`
-	Limitations      []string                 `json:"limitations"`
+	Version              string                   `json:"version"`
+	State                string                   `json:"state"`
+	Reason               string                   `json:"reason,omitempty"`
+	SourceArtifact       Artifact                 `json:"source_artifact"`
+	CreatedAt            time.Time                `json:"created_at"`
+	DurationMS           int64                    `json:"duration_ms"`
+	HasVideo             bool                     `json:"has_video"`
+	HasAudio             bool                     `json:"has_audio"`
+	Thresholds           ContentQualityThresholds `json:"thresholds"`
+	BlackIntervals       []ContentQualityInterval `json:"black_intervals"`
+	FreezeIntervals      []ContentQualityInterval `json:"freeze_intervals"`
+	SilenceIntervals     []ContentQualityInterval `json:"silence_intervals"`
+	Truncated            bool                     `json:"truncated"`
+	AVSync               ContentAVSync            `json:"av_sync"`
+	CorrelationAlignment string                   `json:"correlation_alignment,omitempty"`
+	Correlations         []LayerCorrelation       `json:"correlations,omitempty"`
+	Limitations          []string                 `json:"limitations"`
 }
 
 func defaultContentQualityThresholds() ContentQualityThresholds {
@@ -384,6 +401,13 @@ func decodeStoredContentQuality(stored Report, report *Report) error {
 		return ErrInvalid
 	}
 	value := *stored.ContentQuality
+	if value.CorrelationAlignment != "" || value.Correlations != nil {
+		expected := value
+		applyContentCorrelations(*report, &expected)
+		if expected.CorrelationAlignment != value.CorrelationAlignment || !reflect.DeepEqual(expected.Correlations, value.Correlations) {
+			return ErrInvalid
+		}
+	}
 	report.ContentQuality = &value
 	return nil
 }
