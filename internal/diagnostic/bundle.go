@@ -431,6 +431,10 @@ func readManifest(entry *zip.File) (Manifest, error) {
 		(manifest.Version == rtspPlayerSchemaVersion && (manifest.Protocol != ProtocolRTSP && manifest.Protocol != ProtocolRTSPS || manifest.Player == nil || manifest.PlayerNetwork != nil)) {
 		return manifest, fmt.Errorf("%w: 证据包版本或协议不受支持", ErrInvalid)
 	}
+	if manifest.StreamLimitBytes < 0 || manifest.StreamLimitBytes > MaxCaptureLimitBytes ||
+		manifest.StreamLimitBytes > 0 && manifest.Stream.Bytes > manifest.StreamLimitBytes {
+		return manifest, fmt.Errorf("%w: 原始流上限记录无效", ErrInvalid)
+	}
 	obs := manifest.Observation
 	if obs.StartedAt.IsZero() || obs.RequestedSeconds < 1 || obs.RequestedSeconds > maxSeconds ||
 		obs.ElapsedMS < 0 || obs.ElapsedMS > 3_600_000 || endReasonText(obs.EndReason) == "" ||

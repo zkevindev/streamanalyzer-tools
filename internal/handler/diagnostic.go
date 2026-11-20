@@ -44,7 +44,7 @@ func RegisterDiagnosticRoutes(r *gin.Engine, service *diagnostic.Service) {
 	api.GET("/config", func(c *gin.Context) {
 		identity := service.ModelIdentity()
 		configured := identity != (diagnostic.ModelIdentity{})
-		config := gin.H{"model_configured": configured}
+		config := gin.H{"model_configured": configured, "capture_limit_bytes": service.CaptureLimitBytes()}
 		if configured {
 			config["model_provider"] = identity.Provider
 			config["model_name"] = identity.Model

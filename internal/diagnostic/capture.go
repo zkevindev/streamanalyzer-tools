@@ -169,7 +169,7 @@ func capture(ctx context.Context, client *http.Client, target *url.URL, start ti
 		recordHTTPBody(observation, observation.Stages[stage])
 	}()
 
-	body := io.LimitReader(resp.Body, maxStreamBytes)
+	body := io.LimitReader(resp.Body, captureLimit(ctx))
 	var output io.Writer = stream
 	if player := capturePlayer(ctx); player != nil {
 		output = playerMediaWriter{output, player}
@@ -207,7 +207,7 @@ func bodyEnd(ctx context.Context, bytes int64, err error) string {
 	switch {
 	case ctx.Err() != nil:
 		return captureEnd(ctx, "")
-	case bytes >= maxStreamBytes:
+	case bytes >= captureLimit(ctx):
 		return "size_limit"
 	case errors.Is(err, errFLV):
 		return "invalid_flv"

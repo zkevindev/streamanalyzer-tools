@@ -1,6 +1,12 @@
 # 端到端回归测试指南
 
-仓库内置多组基于真实 Chrome 浏览器与本地固定素材（Fixture）的端到端（E2E）回归脚本，位于 `internal/handler/testdata/`。执行前需准备 Node.js、Chrome 浏览器，部分用例需要本机 `ffmpeg` 与 `ffprobe`。
+先运行标准 Go 回归：
+
+```bash
+go test ./...
+```
+
+仓库另有多组基于真实 Chrome 浏览器与本地固定素材（Fixture）的端到端（E2E）回归脚本，位于 `internal/handler/testdata/`。执行前需准备 Node.js、Chrome 浏览器，部分用例需要本机 `ffmpeg` 与 `ffprobe`。
 
 ## 1. H.265 RTSP 预览回归
 

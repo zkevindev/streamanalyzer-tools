@@ -1,6 +1,7 @@
 package appserver
 
 import (
+	"fmt"
 	"os"
 	"strings"
 
@@ -13,15 +14,13 @@ type Config struct {
 	Server struct {
 		Addr    string `yaml:"addr"`
 		DataDir string `yaml:"data_dir"`
-		// MaxDumpMB caps the raw dump of a single task. A live pull dumps
-		// indefinitely otherwise (a 4 Mbps stream is ~1.8 GB/hour).
-		// Omit for the default; set to 0 for unlimited. It is a pointer so an
-		// explicit 0 is distinguishable from the field being absent.
+		// MaxDumpMB caps the portable raw evidence for one task. Capture and
+		// offline bundle validation share the same upper bound.
 		MaxDumpMB *int `yaml:"max_dump_mb"`
 	} `yaml:"server"`
 }
 
-const defaultMaxDumpMB = 2048
+const defaultMaxDumpMB = 128
 
 func LoadConfig(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
@@ -35,7 +34,18 @@ func LoadConfig(path string) (*Config, error) {
 	}
 
 	ApplyDefaults(&cfg)
+	if err := ValidateConfig(&cfg); err != nil {
+		return nil, err
+	}
 	return &cfg, nil
+}
+
+func ValidateConfig(cfg *Config) error {
+	limit := cfg.Server.MaxDumpMB
+	if limit == nil || *limit < 1 || int64(*limit)<<20 > diagnostic.MaxCaptureLimitBytes {
+		return fmt.Errorf("server.max_dump_mb 须为 1 至 %d MiB", diagnostic.MaxCaptureLimitBytes>>20)
+	}
+	return nil
 }
 
 func ApplyDefaults(cfg *Config) {
@@ -48,8 +58,6 @@ func ApplyDefaults(cfg *Config) {
 	if cfg.Server.MaxDumpMB == nil {
 		def := defaultMaxDumpMB
 		cfg.Server.MaxDumpMB = &def
-	} else if *cfg.Server.MaxDumpMB < 0 {
-		*cfg.Server.MaxDumpMB = 0
 	}
 }
 

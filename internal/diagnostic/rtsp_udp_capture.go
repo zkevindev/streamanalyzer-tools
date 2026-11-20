@@ -109,7 +109,7 @@ func (capture *rtspCapture) keepUDP(data []byte, socket int, source *net.UDPAddr
 		capture.cancel()
 		return io.EOF
 	}
-	if int64(len(data)+len(line)) > maxStreamBytes-(1<<20)-capture.wire.bytes-capture.udpData.bytes-capture.udpIndex.bytes {
+	if int64(len(data)+len(line)) > capture.limitBytes()-min(int64(1<<20), capture.limitBytes()/8)-capture.wire.bytes-capture.udpData.bytes-capture.udpIndex.bytes {
 		capture.reason = "size_limit"
 		capture.cancel()
 		return io.EOF

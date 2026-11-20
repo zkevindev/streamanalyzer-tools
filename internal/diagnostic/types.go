@@ -134,6 +134,7 @@ type Manifest struct {
 	AutomaticInvestigation *Artifact   `json:"automatic_investigation,omitempty"`
 	Version                int         `json:"version"`
 	Protocol               string      `json:"protocol"`
+	StreamLimitBytes       int64       `json:"stream_limit_bytes,omitempty"`
 	Observation            Observation `json:"observation"`
 	Stream                 Artifact    `json:"stream"`
 	Timeline               Artifact    `json:"timeline"`

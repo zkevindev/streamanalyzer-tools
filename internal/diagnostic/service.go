@@ -31,6 +31,7 @@ type Service struct {
 	root             string
 	db               *sql.DB
 	client           *http.Client
+	streamLimitBytes int64
 
 	modelMu sync.Mutex
 	model   *modelSelection
@@ -61,6 +62,13 @@ type modelSelection struct {
 }
 
 func Open(baseDir string, model Explainer) (*Service, error) {
+	return OpenWithCaptureLimit(baseDir, model, MaxCaptureLimitBytes)
+}
+
+func OpenWithCaptureLimit(baseDir string, model Explainer, streamLimitBytes int64) (*Service, error) {
+	if streamLimitBytes < 1 || streamLimitBytes > MaxCaptureLimitBytes {
+		return nil, fmt.Errorf("%w: 原始流上限须为 1 至 %d 字节", ErrInvalid, MaxCaptureLimitBytes)
+	}
 	root := filepath.Join(baseDir, "diagnostics")
 	if err := os.MkdirAll(filepath.Join(root, "runs"), 0o700); err != nil {
 		return nil, err
@@ -76,7 +84,7 @@ func Open(baseDir string, model Explainer) (*Service, error) {
 	}
 
 	s := &Service{
-		root: root, db: db, client: captureClient(), rtspReplays: make(map[string]*rtspReplayOrigin),
+		root: root, db: db, client: captureClient(), streamLimitBytes: streamLimitBytes, rtspReplays: make(map[string]*rtspReplayOrigin),
 		active: make(map[string]context.CancelFunc), imports: make(chan struct{}, 2), flvReplaySlots: make(chan struct{}, 8),
 		players:           make(map[string]*playerSessionState),
 		automaticJobs:     make(map[string]*automaticInvestigationJob),
@@ -213,6 +221,10 @@ func (s *Service) ModelConfigured() bool {
 	return s.model != nil
 }
 
+func (s *Service) CaptureLimitBytes() int64 {
+	return s.streamLimitBytes
+}
+
 func (s *Service) ModelIdentity() ModelIdentity {
 	s.modelMu.Lock()
 	defer s.modelMu.Unlock()
@@ -269,6 +281,7 @@ func (s *Service) Start(req SampleRequest) (Run, error) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
+	ctx = withCaptureLimit(ctx, s.streamLimitBytes)
 	var player *PlayerSession
 	if req.Playback {
 		session := newPlayerSession(context.Background(), protocol, target, s.client)
@@ -301,6 +314,7 @@ func (s *Service) Start(req SampleRequest) (Run, error) {
 		}
 		report, err := s.sampleProtocolWithTransport(ctx, dir, target, seconds, run.Protocol, transport)
 		if err == nil {
+			report.Manifest.StreamLimitBytes = s.streamLimitBytes
 			s.persistence.Lock()
 			err = s.attachPlayerReport(dir, &report, run.ID)
 			if err == nil && req.AutoInvestigate {

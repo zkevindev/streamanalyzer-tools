@@ -1577,7 +1577,12 @@ function renderReport(report) {
     }
     if (!protocols[protocol]?.nativeRTSP && m.video_codecs?.length) values.push(['视频编码', m.video_codecs.join(' / ')]);
     if (!protocols[protocol]?.nativeRTSP && m.audio_codecs?.length) values.push(['音频编码', m.audio_codecs.join(' / ')]);
-    values.push([protocols[protocol]?.dump || '原始流', bytes(report.manifest.stream.bytes)]);
+    const streamLimit = report.manifest.stream_limit_bytes || 128 * 1024 * 1024;
+    values.push(
+        [protocols[protocol]?.dump || '原始流', bytes(report.manifest.stream.bytes)],
+        ['本次原始流上限', bytes(streamLimit)],
+        ['原始产物状态', observed.end_reason === 'size_limit' ? '达到上限，已保留可复盘前缀' : (endLabels[observed.end_reason] || observed.end_reason || '未记录')],
+    );
     renderMetrics('metrics', values);
     renderAutomaticInvestigation(report);
     renderSamplingTiming(report, requests);
@@ -1635,6 +1640,9 @@ async function refreshModelConfiguration() {
     currentModel = config.model_configured
         ? { provider: config.model_provider || 'openai-compatible', model: config.model_name || '', image_input: config.model_image_input === 'text' ? 'text' : 'auto' }
         : null;
+    if (Number.isSafeInteger(config.capture_limit_bytes) && config.capture_limit_bytes > 0) {
+        node('capture-duration-hint').textContent = `采样 1–300 秒 · 单次原始流上限 ${bytes(config.capture_limit_bytes)} · 达到上限保留可复盘前缀`;
+    }
     if (!node('report').hidden) renderModelStatus();
 }
 
