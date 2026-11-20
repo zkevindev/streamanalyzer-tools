@@ -8,8 +8,13 @@
 | --- | --- |
 | `GET /api/diagnostics/config` | 返回当前模型配置状态及 `capture_limit_bytes` 原始产物上限 |
 | `POST /api/diagnostics/runs` | 发起采样。请求体示例：`{"protocol":"hls","url":"<stream-url>","seconds":60,"playback":true,"auto_investigate":true}`。`protocol` 可选 `http-flv` / `rtmp` / `rtsp` / `rtsps` / `hls` / `http-ts` / `udp-ts` / `rtp-ts`（默认 `http-flv`）；RTSP 可传 `"transport":"udp"`（默认 `tcp`）。HTTP-FLV、HLS、HTTP-TS 可附加 `headers`（字符串映射，最多 16 项）、`proxy_url` 和 `ca_certificate`（PEM），仅用于本次连接且不会保存原始配置 |
-| `GET /api/diagnostics/runs` | 列出最近的采样与复盘记录 |
+| `GET /api/diagnostics/runs` | 列出最近的采样与复盘记录，包含 `protected` 保护状态 |
+| `GET /api/diagnostics/storage` | 返回排障记录数、产物字节数及受保护证据占用 |
+| `POST /api/diagnostics/storage/prune` | 按 `{"retention_days":30,"max_total_bytes":1073741824}` 从最早记录开始清理；0 表示对应策略不启用，受保护和运行中记录始终跳过 |
+| `POST /api/diagnostics/runs/delete` | 批量删除已结束且未保护记录，请求体 `{"ids":["<run-id>"]}`，每次 1–100 条 |
 | `GET /api/diagnostics/runs/:id` | 查询任务状态、规则报告与已生成的模型解读 |
+| `DELETE /api/diagnostics/runs/:id` | 永久删除已结束且未保护记录及其本地产物 |
+| `POST /api/diagnostics/runs/:id/protection` | 用 `{"protected":true}` 保护重要证据，或用 `false` 取消保护 |
 | `POST /api/diagnostics/runs/:id/stop` | 停止采样并保留已采集数据 |
 | `POST /api/diagnostics/runs/:id/player` | 使用授权头 `X-StreamAnalyzer-Player` 追加播放器事件与缓冲样本（`complete` 后锁定） |
 | `POST /api/diagnostics/runs/:id/automatic/retry` | 用 `{}` 显式重新运行自动补查与汇总流程 |

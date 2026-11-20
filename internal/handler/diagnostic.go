@@ -52,6 +52,27 @@ func RegisterDiagnosticRoutes(r *gin.Engine, service *diagnostic.Service) {
 		}
 		c.JSON(http.StatusOK, config)
 	})
+	api.GET("/storage", func(c *gin.Context) {
+		storage, err := service.Storage()
+		if err != nil {
+			diagnosticError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, storage)
+	})
+	api.POST("/storage/prune", func(c *gin.Context) {
+		var req diagnostic.PruneRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			diagnosticError(c, diagnostic.ErrInvalid)
+			return
+		}
+		result, err := service.Prune(req)
+		if err != nil {
+			diagnosticError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, result)
+	})
 	api.GET("/runs", func(c *gin.Context) {
 		runs, err := service.List()
 		if err != nil {
@@ -74,6 +95,20 @@ func RegisterDiagnosticRoutes(r *gin.Engine, service *diagnostic.Service) {
 		}
 		c.JSON(http.StatusAccepted, run)
 	})
+	api.POST("/runs/delete", func(c *gin.Context) {
+		var req struct {
+			IDs []string `json:"ids"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			diagnosticError(c, diagnostic.ErrInvalid)
+			return
+		}
+		if err := service.DeleteMany(req.IDs); err != nil {
+			diagnosticError(c, err)
+			return
+		}
+		c.Status(http.StatusNoContent)
+	})
 	api.POST("/import", func(c *gin.Context) {
 		if c.Request.ContentLength > diagnostic.MaxBundleBytes {
 			c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "证据包超出大小上限"})
@@ -94,6 +129,28 @@ func RegisterDiagnosticRoutes(r *gin.Engine, service *diagnostic.Service) {
 			return
 		}
 		c.JSON(http.StatusOK, detail)
+	})
+	api.DELETE("/runs/:id", func(c *gin.Context) {
+		if err := service.Delete(c.Param("id")); err != nil {
+			diagnosticError(c, err)
+			return
+		}
+		c.Status(http.StatusNoContent)
+	})
+	api.POST("/runs/:id/protection", func(c *gin.Context) {
+		var req struct {
+			Protected bool `json:"protected"`
+		}
+		if err := c.ShouldBindJSON(&req); err != nil {
+			diagnosticError(c, diagnostic.ErrInvalid)
+			return
+		}
+		run, err := service.SetProtected(c.Param("id"), req.Protected)
+		if err != nil {
+			diagnosticError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, run)
 	})
 	api.POST("/runs/:id/stop", func(c *gin.Context) {
 		run, err := service.Stop(c.Param("id"))

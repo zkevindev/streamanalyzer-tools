@@ -151,6 +151,23 @@
     <div class="workspace">
         <section class="panel history" aria-labelledby="history-heading">
             <div class="panel-heading"><h2 id="history-heading">排障记录</h2><span id="run-count" class="history-count" hidden></span></div>
+            <div class="storage-panel">
+                <p id="storage-summary" class="muted">正在计算存储占用…</p>
+                <div class="storage-actions">
+                    <button id="protect-run" type="button" class="secondary" hidden>保护当前证据</button>
+                    <button id="delete-run" type="button" class="secondary" hidden>删除当前记录</button>
+                    <button id="delete-selected" type="button" class="secondary" hidden>删除所选</button>
+                </div>
+                <details id="storage-policy">
+                    <summary>按保留策略清理</summary>
+                    <p class="field-hint muted">从最早记录开始清理，仅处理未保护且已结束的证据。两项均填 0 不会删除记录。</p>
+                    <form id="storage-prune" class="storage-prune">
+                        <label>保留天数<input id="retention-days" type="number" min="0" max="3650" value="0"></label>
+                        <label>磁盘预算（MiB）<input id="storage-budget" type="number" min="0" value="0"></label>
+                        <button type="submit" class="secondary">应用并清理</button>
+                    </form>
+                </details>
+            </div>
             <ul id="runs"></ul>
             <p id="empty-history" class="muted">正在加载记录…</p>
         </section>
