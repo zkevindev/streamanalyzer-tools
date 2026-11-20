@@ -115,7 +115,7 @@ func assessReport(report Report) *ReportAssessment {
 	return result
 }
 
-func importedReportAssessment(report *Report, entry *zip.File) error {
+func importedReportAssessment(dir string, report *Report, entry *zip.File) error {
 	if entry == nil {
 		return nil
 	}
@@ -134,7 +134,15 @@ func importedReportAssessment(report *Report, entry *zip.File) error {
 		}
 		report.Assessment = stored.Assessment
 	}
-	return decodeStoredContentQuality(stored, report)
+	if err := decodeStoredContentQuality(stored, report); err != nil {
+		return err
+	}
+	throughput, err := validateStoredThroughput(dir, stored, *report)
+	if err != nil {
+		return err
+	}
+	report.Throughput = throughput
+	return nil
 }
 
 func validReportAssessment(assessment ReportAssessment, report Report) error {

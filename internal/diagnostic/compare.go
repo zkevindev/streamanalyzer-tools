@@ -155,6 +155,18 @@ func compareReports(current, baseline Detail) ReportComparison {
 		add("ts_sync_loss_bytes", "TS 同步丢失字节", "bytes", tsComparisonNumber(b.MPEGTS, func(v *MPEGTSMetrics) int64 { return v.SyncLossBytes }), tsComparisonNumber(a.MPEGTS, func(v *MPEGTSMetrics) int64 { return v.SyncLossBytes }), true)
 	}
 
+	if b.Throughput != nil || a.Throughput != nil {
+		var beforeNetwork, afterNetwork, beforeMedia, afterMedia *float64
+		if b.Throughput != nil {
+			beforeNetwork, beforeMedia = &b.Throughput.AverageNetworkKbps, &b.Throughput.AverageMediaKbps
+		}
+		if a.Throughput != nil {
+			afterNetwork, afterMedia = &a.Throughput.AverageNetworkKbps, &a.Throughput.AverageMediaKbps
+		}
+		add("average_network_kbps", "平均网络吞吐", "kbps", beforeNetwork, afterNetwork, false)
+		add("average_media_kbps", "平均媒体码率", "kbps", beforeMedia, afterMedia, false)
+	}
+
 	beforeCodes := findingCodeSet(b.Findings)
 	afterCodes := findingCodeSet(a.Findings)
 	for code := range afterCodes {
