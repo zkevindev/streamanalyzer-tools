@@ -1814,6 +1814,21 @@ function renderReportAssessment(assessment, findings) {
     content.append(element('p', `排查规则 ${assessment.version}`, 'timing-note muted'));
 }
 
+function renderRTMPControl(control) {
+    node('rtmp-control-report').hidden = !control;
+    if (!control) return;
+    renderMetrics('rtmp-control-metrics', [
+        ['控制消息总数', control.total_messages], ['Chunk Size 变更', control.chunk_size_changes],
+        ['ACK / Window 更新', `${control.acknowledgements} / ${control.window_updates}`],
+        ['Peer Bandwidth 更新', control.peer_bandwidth_updates],
+        ['User Control / AMF 命令', `${control.user_control_events} / ${control.command_messages}`],
+        ['未展示消息', control.truncated || 0],
+    ]);
+    node('rtmp-control-messages').replaceChildren(renderTable(['到达', '类型', '名称', '值', '事件', 'Level', 'Code'],
+        (control.messages || []).map(message => [time(message.arrival_ms), message.type, message.name || '—', message.value ?? '—', message.event ?? '—', message.level || '—', message.code || '—'])));
+    node('rtmp-control-boundary').textContent = control.boundary;
+}
+
 function renderThroughput(report) {
     const throughput = report.throughput;
     node('throughput-report').hidden = !throughput;
@@ -1870,6 +1885,7 @@ function renderReport(report) {
     );
     renderMetrics('metrics', values);
     renderThroughput(report);
+    renderRTMPControl(report.rtmp_control);
     renderAutomaticInvestigation(report);
     renderSamplingTiming(report, requests);
     renderRTSPReport(report);
