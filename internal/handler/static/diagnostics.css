@@ -135,6 +135,11 @@ input::file-selector-button:hover { background: var(--surface-inset); }
     font: 0.8rem/1.45 var(--font-data);
 }
 #http-access-options textarea:focus { outline: none; border-color: var(--accent); box-shadow: var(--ring); }
+#batch-sample { display: grid; gap: 0.55rem; margin-top: 0.75rem; }
+#batch-urls { width: 100%; resize: vertical; color: var(--text); background: var(--surface); border: 1px solid var(--border-strong); border-radius: var(--radius-sm); padding: 0.55rem 0.72rem; font: 0.8rem/1.45 var(--font-data); }
+#batch-results { margin-top: 1rem; }
+.batch-run { display: flex; flex-wrap: wrap; gap: 0.45rem; align-items: center; padding: 0.45rem 0; border-bottom: 1px solid var(--border); }
+.batch-comparison { margin-top: 1rem; }
 
 button, .button {
     display: inline-flex;

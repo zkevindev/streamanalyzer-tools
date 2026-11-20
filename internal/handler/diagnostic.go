@@ -81,6 +81,36 @@ func RegisterDiagnosticRoutes(r *gin.Engine, service *diagnostic.Service) {
 		}
 		c.JSON(http.StatusOK, runs)
 	})
+	api.POST("/batches", func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 128<<10)
+		var req diagnostic.BatchRequest
+		if err := c.ShouldBindJSON(&req); err != nil {
+			diagnosticError(c, diagnostic.ErrInvalid)
+			return
+		}
+		batch, err := service.StartBatch(req)
+		if err != nil {
+			diagnosticError(c, err)
+			return
+		}
+		c.JSON(http.StatusAccepted, batch)
+	})
+	api.GET("/batches/:id", func(c *gin.Context) {
+		batch, err := service.Batch(c.Param("id"))
+		if err != nil {
+			diagnosticError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, batch)
+	})
+	api.POST("/batches/:id/stop", func(c *gin.Context) {
+		batch, err := service.StopBatch(c.Param("id"))
+		if err != nil {
+			diagnosticError(c, err)
+			return
+		}
+		c.JSON(http.StatusAccepted, batch)
+	})
 	api.POST("/runs", func(c *gin.Context) {
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16<<10)
 		var req diagnostic.SampleRequest
