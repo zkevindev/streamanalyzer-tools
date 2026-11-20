@@ -130,6 +130,14 @@ func RegisterDiagnosticRoutes(r *gin.Engine, service *diagnostic.Service) {
 		}
 		c.JSON(http.StatusOK, detail)
 	})
+	api.GET("/runs/:id/compare", func(c *gin.Context) {
+		comparison, err := service.Compare(c.Param("id"), c.Query("baseline"))
+		if err != nil {
+			diagnosticError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, comparison)
+	})
 	api.DELETE("/runs/:id", func(c *gin.Context) {
 		if err := service.Delete(c.Param("id")); err != nil {
 			diagnosticError(c, err)

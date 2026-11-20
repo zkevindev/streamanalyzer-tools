@@ -189,6 +189,12 @@ button:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
 .storage-actions { display: flex; flex-wrap: wrap; gap: 0.4rem; margin-bottom: 0.55rem; }
 .storage-actions button { min-height: 2rem; padding: 0.3rem 0.55rem; font-size: 0.76rem; }
 .storage-prune { display: grid; gap: 0.55rem; margin-top: 0.6rem; }
+.comparison-controls { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 0.55rem; align-items: end; margin-bottom: 0.75rem; }
+.comparison-controls label { grid-column: 1 / -1; }
+.comparison-state { font-weight: 650; }
+.comparison-state[data-state="improved"] { color: var(--success); }
+.comparison-state[data-state="worse"] { color: var(--danger); }
+.comparison-warnings { color: var(--warn); }
 #storage-summary { margin-block: 0.4rem; }
 #runs { padding: 0.45rem; margin: 0; list-style: none; max-height: 38rem; overflow: auto; }
 #runs li { display: flex; align-items: center; gap: 0.25rem; }

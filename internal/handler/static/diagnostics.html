@@ -196,6 +196,7 @@
                         <a id="json" class="button secondary" download>报告 JSON</a>
                         <a id="dump" class="button secondary" download>原始流</a>
                         <a id="bundle" class="button secondary" download>证据包 ZIP</a>
+                        <button id="compare-report" class="secondary" type="button" hidden>历史基线对比</button>
                         <button id="flv-replay" class="secondary" type="button" hidden>使用本机回放源</button>
                         <button id="rtsp-replay" class="secondary" type="button" hidden>使用本机 RTSP 回放源</button>
                         <button id="rtsp-replay-stop" class="secondary" type="button" hidden>停止 RTSP 回放源</button>
@@ -292,6 +293,16 @@
                             <summary id="pid-summary">PID 明细</summary>
                             <div id="pid-table"></div>
                         </details>
+                    </section>
+                    <section id="report-comparison" class="report-details" aria-labelledby="report-comparison-title" hidden>
+                        <h3 id="report-comparison-title" class="report-title">历史基线对比</h3>
+                        <div class="comparison-controls">
+                            <label for="comparison-baseline">基线记录</label>
+                            <select id="comparison-baseline"></select>
+                            <button id="run-comparison" type="button" class="secondary">开始对比</button>
+                            <button id="export-comparison" type="button" class="secondary" hidden>保存对比 JSON</button>
+                        </div>
+                        <div id="comparison-result"></div>
                     </section>
                     <section id="report-assessment" class="stall-assessment" aria-labelledby="report-assessment-title" hidden>
                         <h3 id="report-assessment-title" class="report-title">整报告分层排查</h3>
