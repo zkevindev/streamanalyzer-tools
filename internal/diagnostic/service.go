@@ -371,6 +371,9 @@ func (s *Service) Start(req SampleRequest) (Run, error) {
 				err = attachAutomaticInvestigation(dir, &report, state)
 			}
 			if err == nil {
+				report.RTMPControl, err = analyzeRTMPControl(dir, report.Manifest)
+			}
+			if err == nil {
 				report.Throughput, err = buildThroughput(dir, report)
 			}
 			if err == nil {

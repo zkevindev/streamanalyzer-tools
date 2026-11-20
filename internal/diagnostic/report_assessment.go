@@ -142,6 +142,11 @@ func importedReportAssessment(dir string, report *Report, entry *zip.File) error
 		return err
 	}
 	report.Throughput = throughput
+	control, err := validateStoredRTMPControl(dir, stored, *report)
+	if err != nil {
+		return err
+	}
+	report.RTMPControl = control
 	return nil
 }
 

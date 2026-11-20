@@ -124,3 +124,10 @@
 - 平均网络吞吐使用原始流总字节及采样时长；FLV/RTMP 的握手、封装和非媒体协议开销计入首个网络样本，不计入媒体码率。
 - 媒体码率包含 FLV 标签、RTMP 消息、HLS 分片或 TS/RTP 封装开销，不是纯编码 payload 码率。报告明确展示此统计边界。
 - 吞吐数据在完整证据包导入时根据原始时间线重算并逐字段校验，历史报告缺少该字段时保持原样；平均吞吐和平均媒体码率也加入历史基线对比。
+
+## 15. RTMP 控制面诊断
+
+- 新 RTMP/RTMPS 报告包含 `rtmp_control`，从原始消息流统计 Set Chunk Size、Abort、Acknowledgement、Window Acknowledgement Size、Set Peer Bandwidth、User Control 和 AMF0/AMF3 命令。
+- 逐条记录保留到达时间、受控类型、名称和数值，最多展示 64 条；超过上限后仍继续统计总数并记录未展示数量。User Control 区分 Stream Begin/EOF/Dry、Set Buffer Length、Ping Request/Response 等事件。
+- `onStatus` 仅保留 `status` / `error` / `warning` level 和 `NetStream.*` code。connect/play 参数、URL、description 和其他 AMF 属性不会写入报告或模型输入。
+- 完整证据包导入时重新解析原始 RTMP 消息并校验控制面字段，旧证据包没有该字段时保持原样。RTMPS 仍在 TLS 解密后的 RTMP 协议层分析。
