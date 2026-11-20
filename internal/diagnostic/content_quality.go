@@ -107,13 +107,39 @@ func contentQualityInput(ctx context.Context, dir, stage string, report Report) 
 	case ProtocolHLS:
 		input, err := investigationMediaHLS(ctx, dir, stage, report, StallInvestigation{Stall: PlayerStall{StartMS: 0, EndMS: report.Manifest.Observation.ElapsedMS}})
 		return input.path, err
+	case ProtocolRTSP, ProtocolRTSPS:
+		item, err := contentQualityRTSPAnchor(report)
+		if err != nil {
+			return "", err
+		}
+		input, err := investigationMediaRTSP(ctx, dir, stage, report, item)
+		return input.path, err
 	default:
-		return "", errors.New("当前协议暂不支持整段源内容检测；RTSP 请先使用现有 RTP 补查重建媒体")
+		return "", errors.New("当前协议暂不支持整段源内容检测")
 	}
+}
+
+func contentQualityRTSPAnchor(report Report) (StallInvestigation, error) {
+	if report.Player == nil || report.Player.Source != "same_capture" || report.Manifest.Player == nil {
+		return StallInvestigation{}, errors.New("RTSP 整段检测需要同次播放器记录作为 RTP 媒体时钟锚点，请重新采样并启用播放器分析")
+	}
+	for _, sample := range report.Player.BufferSamples {
+		if sample.OffsetMS < 0 || sample.CurrentMS < 0 || sample.Paused || sample.Seeking || sample.Hidden || sample.ReadyState < 2 {
+			continue
+		}
+		item := StallInvestigation{PlayerRevision: report.Player.Revision, Stall: PlayerStall{StartMS: sample.OffsetMS, EndMS: sample.OffsetMS}}
+		if _, err := investigationRTSPAnchor(report, item); err == nil {
+			return item, nil
+		}
+	}
+	return StallInvestigation{}, errors.New("RTSP 播放器记录缺少可用的前台媒体时钟锚点，未按收包时间猜测源内容位置")
 }
 
 func analyzeContentQuality(ctx context.Context, dir string, report Report) (ContentQualityReport, error) {
 	result := newContentQualityReport(report.Manifest.Stream)
+	if isRTSPProtocol(report.Manifest.Protocol) {
+		result.Limitations = append(result.Limitations, "RTSP 内容由原始 RTP 离线重建，媒体时间使用同次播放器样本与接收端 RTP 时钟对齐；丢包导致的不完整访问单元会被丢弃。")
+	}
 	ffmpeg, err := investigationMediaTool("ffmpeg", "")
 	if err != nil {
 		result.Reason = "未找到 FFmpeg，无法执行源内容检测"
