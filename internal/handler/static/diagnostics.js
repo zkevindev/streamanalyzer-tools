@@ -1565,6 +1565,46 @@ function renderStallInvestigations(report) {
     }));
 }
 
+function renderReportAssessment(assessment, findings) {
+    const section = node('report-assessment');
+    section.hidden = !assessment;
+    const content = node('report-assessment-content');
+    content.replaceChildren();
+    if (!assessment) return;
+    if (assessment.conclusion) content.append(element('p', assessment.conclusion, 'stall-assessment-conclusion'));
+    content.append(element('p', '无需大模型即可生成；方向只引用本次已保存的规则证据，仍需按建议验证根因。', 'timing-note muted'));
+    const known = new Set((findings || []).map(finding => finding.id));
+    for (const direction of assessment.directions || []) {
+        const block = element('section', '', 'stall-direction');
+        block.dataset.state = direction.status;
+        const title = element('h4', direction.title || '待核对方向');
+        title.append(element('span', stallDirectionStates[direction.status] || '待核对', 'status direction-state'));
+        block.append(title, element('p', direction.message || ''));
+        const evidence = element('p', '关联证据 ');
+        for (const id of direction.evidence_ids || []) {
+            if (known.has(id)) {
+                const link = element('a', id + ' ');
+                link.href = '#' + encodeURIComponent(id);
+                link.addEventListener('click', event => { event.preventDefault(); showFinding(id); });
+                evidence.append(link);
+            } else evidence.append(document.createTextNode(id + '（未找到记录） '));
+        }
+        block.append(evidence);
+        if (direction.next_checks?.length) {
+            const checks = element('ul', '', 'stall-next-checks');
+            for (const check of direction.next_checks) checks.append(element('li', check));
+            block.append(element('p', '建议验证', 'timing-note muted'), checks);
+        }
+        content.append(block);
+    }
+    if (assessment.limitations?.length) {
+        const limits = element('ul', '', 'stall-assessment-limitations');
+        for (const limitation of assessment.limitations) limits.append(element('li', limitation));
+        content.append(element('h4', '证据限制'), limits);
+    }
+    content.append(element('p', `排查规则 ${assessment.version}`, 'timing-note muted'));
+}
+
 function renderReport(report) {
     currentReport = report;
     const observed = report.manifest.observation;
@@ -1613,6 +1653,7 @@ function renderReport(report) {
     renderStallInvestigations(report);
     renderTransport(protocol, report.mpegts);
     renderTrace(report.findings, observed.elapsed_ms);
+    renderReportAssessment(report.assessment, report.findings);
     const findings = report.findings.map((finding) => {
         const item = element('details', '', 'finding');
         item.id = finding.id;

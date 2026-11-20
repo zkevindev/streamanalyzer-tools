@@ -56,7 +56,8 @@ func TestConfiguredCaptureLimitPersistsReplayablePrefix(t *testing.T) {
 	}
 	imported, err := service.Detail(replay.ID)
 	if err != nil || imported.Report == nil || imported.Report.Manifest.StreamLimitBytes != limit ||
-		imported.Report.Manifest.Stream.Bytes != limit || imported.Report.Manifest.Observation.EndReason != "size_limit" {
+		imported.Report.Manifest.Stream.Bytes != limit || imported.Report.Manifest.Observation.EndReason != "size_limit" ||
+		imported.Report.Assessment == nil || detail.Report.Assessment == nil || imported.Report.Assessment.Conclusion != detail.Report.Assessment.Conclusion {
 		t.Fatalf("replay lost the configured limit or saved prefix: %+v, %v", imported.Report, err)
 	}
 }
