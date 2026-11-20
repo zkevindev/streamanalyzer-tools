@@ -48,6 +48,38 @@ type investigationRTSPAU struct {
 	video    bool
 }
 
+func investigationRTSPContentPreview(desc *description.Session) (*RTSPPreviewReport, error) {
+	if desc == nil {
+		return nil, fmt.Errorf("缺少原始 SDP，无法选择源内容检测轨道。")
+	}
+	preview := &RTSPPreviewReport{Version: 2, CodecCapabilitiesVersion: 3, State: "ready", ClockAlignment: "receiver_rtp", VideoReason: "no_track", AudioReason: "no_track"}
+	id := 0
+	for _, media := range desc.Medias {
+		for _, codec := range media.Formats {
+			id++
+			if media.IsBackChannel {
+				continue
+			}
+			switch codec.(type) {
+			case *format.H264, *format.H265:
+				if media.Type == description.MediaTypeVideo && preview.VideoTrackID == 0 {
+					preview.VideoTrackID, preview.VideoCodec, preview.VideoAUs = id, rtspCodec(codec), 1
+					preview.VideoReason = ""
+				}
+			case *format.MPEG4Audio, *format.Opus, *format.G711:
+				if media.Type == description.MediaTypeAudio && preview.AudioTrackID == 0 {
+					preview.AudioTrackID, preview.AudioCodec, preview.AudioAUs = id, rtspCodec(codec), 1
+					preview.AudioReason = ""
+				}
+			}
+		}
+	}
+	if preview.VideoTrackID == 0 && preview.AudioTrackID == 0 {
+		return nil, fmt.Errorf("SDP 没有可离线重建的音视频轨道。")
+	}
+	return preview, nil
+}
+
 func investigationRTSPSelect(desc *description.Session, preview *RTSPPreviewReport) ([]*investigationRTSPTrack, error) {
 	if desc == nil || preview == nil {
 		return nil, fmt.Errorf("缺少原始 SDP 或同次播放器轨道选择，无法建立离线媒体时钟。")

@@ -75,6 +75,27 @@ func investigationMediaRTSP(ctx context.Context, dir, stage string, report Repor
 	return input, nil
 }
 
+func investigationMediaRTSPContent(ctx context.Context, dir, stage string, report Report) (investigationMediaInput, error) {
+	input := investigationMediaInput{alignment: "receiver_rtp"}
+	evidence, err := reconstructRTSPMediaForContent(ctx, dir, filepath.Join(stage, "input.mp4"), report)
+	if err != nil {
+		return input, err
+	}
+	input.path = filepath.Join(stage, "input.mp4")
+	input.rtsp = evidence
+	input.partial = evidence.IncompleteAccessUnits > 0
+	for _, track := range report.RTSP.Tracks {
+		if (track.ID == evidence.VideoTrackID || track.ID == evidence.AudioTrackID) && track.MissingSequencePackets > 0 {
+			input.partial = true
+		}
+	}
+	input.note = "整段源内容由原始 RTP 离线重建，仅使用 SDP 轨道和接收端 RTP 时钟，不表示播放器实际画面或发送端音画同步。"
+	if input.partial {
+		input.note += " 原始 RTP 含有缺口或尾部不完整访问单元，已丢弃不完整内容。"
+	}
+	return input, nil
+}
+
 // Import validation uses only bounded Go parsing and deterministic muxing. The
 // scratch file is necessary because MP4 serialization backpatches box sizes.
 func recomputeRTSPMediaEvidence(ctx context.Context, dir string, report Report, item StallInvestigation) (*RTSPMediaEvidence, error) {
@@ -87,23 +108,42 @@ func recomputeRTSPMediaEvidence(ctx context.Context, dir string, report Report, 
 }
 
 func reconstructRTSPMedia(ctx context.Context, dir, path string, report Report, item StallInvestigation) (*RTSPMediaEvidence, error) {
-	sample, err := investigationRTSPAnchor(report, item)
-	if err != nil {
-		return nil, err
+	return reconstructRTSPMediaMode(ctx, dir, path, report, item, false)
+}
+
+func reconstructRTSPMediaForContent(ctx context.Context, dir, path string, report Report) (*RTSPMediaEvidence, error) {
+	return reconstructRTSPMediaMode(ctx, dir, path, report, StallInvestigation{}, true)
+}
+
+func reconstructRTSPMediaMode(ctx context.Context, dir, path string, report Report, item StallInvestigation, contentOnly bool) (*RTSPMediaEvidence, error) {
+	var sample PlayerBufferSample
+	var err error
+	if !contentOnly {
+		sample, err = investigationRTSPAnchor(report, item)
+		if err != nil {
+			return nil, err
+		}
 	}
-	if !isRTSPProtocol(report.Manifest.Protocol) || report.RTSP == nil || !validRTSPPreview(report.RTSP.Preview, report.RTSP.Tracks) {
+	if !isRTSPProtocol(report.Manifest.Protocol) || report.RTSP == nil || !contentOnly && !validRTSPPreview(report.RTSP.Preview, report.RTSP.Tracks) {
 		return nil, fmt.Errorf("RTSP 原始证据或预览轨道信息无效。")
 	}
 	if !sourceArtifactMatches(dir, rtspStreamName, report.Manifest.Stream, maxStreamBytes) || !sourceArtifactMatches(dir, timelineName, report.Manifest.Timeline, maxTimeline) {
 		return nil, fmt.Errorf("RTSP 原始证据与接收时间线校验不一致。")
 	}
-	if report.RTSP.Preview.State == "unsupported" || report.RTSP.Preview.VideoAUs+report.RTSP.Preview.AudioAUs == 0 {
+	preview := report.RTSP.Preview
+	if !contentOnly && (preview.State == "unsupported" || preview.VideoAUs+preview.AudioAUs == 0) {
 		return nil, fmt.Errorf("原预览没有可定位的媒体输出，未假定播放器使用了原始轨道。")
 	}
 	var configured []*investigationRTSPTrack
 	discovery := &rtspWireExport{describe: func(desc *description.Session) error {
 		var err error
-		configured, err = investigationRTSPSelect(desc, report.RTSP.Preview)
+		if contentOnly {
+			preview, err = investigationRTSPContentPreview(desc)
+			if err != nil {
+				return err
+			}
+		}
+		configured, err = investigationRTSPSelect(desc, preview)
 		for _, track := range configured {
 			track.reorder.onGap = track.resetLoss
 		}
@@ -145,7 +185,11 @@ func reconstructRTSPMedia(ctx context.Context, dir, path string, report Report, 
 	}
 	defer file.Close()
 	writer := &investigationRTSPFile{File: file}
-	proof := &RTSPMediaEvidence{Version: 1, SourceArtifact: report.Manifest.Stream, TimelineArtifact: report.Manifest.Timeline, PlayerArtifact: *report.Manifest.Player, PlayerRevision: report.Player.Revision, AnchorSampleOffsetMS: sample.OffsetMS, AnchorCurrentMS: sample.CurrentMS, Keyframes: []Event{}}
+	proof := &RTSPMediaEvidence{Version: 1, SourceArtifact: report.Manifest.Stream, TimelineArtifact: report.Manifest.Timeline, AnchorSampleOffsetMS: sample.OffsetMS, AnchorCurrentMS: sample.CurrentMS, Keyframes: []Event{}}
+	if !contentOnly {
+		proof.PlayerArtifact = *report.Manifest.Player
+		proof.PlayerRevision = report.Player.Revision
+	}
 	init := fmp4.Init{}
 	for _, track := range configured {
 		init.Tracks = append(init.Tracks, &fmp4.InitTrack{ID: track.id, TimeScale: uint32(track.rate), Codec: track.output})
@@ -204,7 +248,7 @@ func reconstructRTSPMedia(ctx context.Context, dir, path string, report Report, 
 	}
 	processing := &rtspWireExport{describe: func(desc *description.Session) error {
 		var err error
-		tracks, err = investigationRTSPSelect(desc, report.RTSP.Preview)
+		tracks, err = investigationRTSPSelect(desc, preview)
 		if err != nil {
 			return err
 		}
@@ -262,7 +306,7 @@ func reconstructRTSPMedia(ctx context.Context, dir, path string, report Report, 
 				if !track.video() {
 					first := au.dts * 1000 / track.rate
 					if proof.AudioAccessUnits == 0 {
-						if p := report.RTSP.Preview.G711; p != nil && p.EncoderPrimingSamples != nil && p.FirstInputPTS != nil && proof.AudioTransform == "g711_to_pcm" {
+						if p := preview.G711; p != nil && p.EncoderPrimingSamples != nil && p.FirstInputPTS != nil && proof.AudioTransform == "g711_to_pcm" {
 							first = ((*p.FirstInputPTS*48000-*p.EncoderPrimingSamples*track.rate)*1000 + 2000*track.rate*48000) / (track.rate * 48000)
 						}
 						previewOrigin = min(previewOrigin, first)
