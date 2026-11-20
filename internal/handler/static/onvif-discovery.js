@@ -1,10 +1,8 @@
 'use strict';
 (() => {
     const node = id => document.getElementById(id), base = '/api/diagnostics/onvif';
-    const dialog = node('onvif-discovery'), opener = node('open-onvif-discovery');
-    if (!dialog || !opener) return;
-    const nativeDialog = typeof dialog.showModal === 'function';
-    const isOpen = () => dialog.hasAttribute('open');
+    const discovery = node('onvif-discovery'), opener = node('open-onvif-discovery');
+    const isOpen = () => !discovery.hidden;
     const searchButton = node('onvif-search-button'), stopButton = node('onvif-stop');
     const interfaceField = node('onvif-interface'), manualField = node('onvif-manual');
     const serviceURL = node('onvif-service-url'), prefillStatus = node('onvif-prefill-status');
@@ -218,7 +216,7 @@
         node('url').value = address.href;
         node('analyze-playback').checked = false;
         node('url').dispatchEvent(new Event('input'));
-        closeDiscovery();
+        window.dispatchEvent(new CustomEvent('open-diagnostic-tool', {detail: '/diagnostics'}));
         prefillStatus.textContent = `已回填 ${result.protocol.toUpperCase()} / ${result.transport.toUpperCase()} 地址，请核对后开始采样。${result.different_host ? '流主机与设备服务不同，未复制凭据。' : ''}${result.removed_userinfo ? '已移除设备返回的内嵌凭据。' : ''}`;
         node('url').focus();
     });
@@ -287,53 +285,23 @@
         updateDevice();
         status('网卡已切换，请重新搜索或填写服务地址。');
     };
-    function closeDiscovery() {
-        endSession();
-        if (nativeDialog) dialog.close();
-        else {
-            dialog.removeAttribute('open');
-            node('onvif-backdrop').hidden = true;
-        }
-        opener.focus();
-    }
-    opener.onclick = () => {
-        if (nativeDialog) dialog.showModal();
-        else {
-            dialog.classList.add('onvif-fallback');
-            dialog.setAttribute('role', 'dialog');
-            dialog.setAttribute('aria-modal', 'true');
-            dialog.setAttribute('open', '');
-            node('onvif-backdrop').hidden = false;
-            interfaceField.focus();
-        }
+    let previouslyOpen = false;
+    function toolChanged() {
+        if (!isOpen() && previouslyOpen) endSession();
+        previouslyOpen = isOpen();
+        if (!previouslyOpen) return;
         if (!interfacesLoaded) loadingInterfaces ??= loadInterfaces().finally(() => { loadingInterfaces = undefined; });
         else if (!interfaceField.value) status('没有可用的 IPv4 网卡。', true);
-    };
-    node('close-onvif-discovery').onclick = closeDiscovery;
-    dialog.addEventListener('cancel', event => {
-        event.preventDefault();
-        closeDiscovery();
+    }
+    opener.addEventListener('click', () => {
+        window.dispatchEvent(new CustomEvent('open-diagnostic-tool', {detail: '/diagnostics/onvif'}));
+        node('onvif-title').focus();
     });
-    if (!nativeDialog) document.addEventListener('keydown', event => {
-        if (!isOpen()) return;
-        if (event.key === 'Escape') {
-            event.preventDefault();
-            closeDiscovery();
-            return;
-        }
-        if (event.key !== 'Tab') return;
-        const controls = [...dialog.querySelectorAll('button, input, select, [tabindex="0"]')]
-            .filter(control => !control.matches(':disabled, [hidden], [hidden] *'));
-        const next = event.shiftKey ? controls[controls.length - 1] : controls[0];
-        const boundary = event.shiftKey ? controls[0] : controls[controls.length - 1];
-        if (!dialog.contains(document.activeElement) || document.activeElement === boundary) {
-            event.preventDefault();
-            next.focus();
-        }
-    });
+    window.addEventListener('diagnostic-tool-change', toolChanged);
     window.addEventListener('pagehide', endSession);
     node('url').addEventListener('input', () => { prefillStatus.textContent = ''; });
     node('protocol').addEventListener('change', () => { prefillStatus.textContent = ''; });
     updateDevice();
+    toolChanged();
     opener.hidden = false;
 })();

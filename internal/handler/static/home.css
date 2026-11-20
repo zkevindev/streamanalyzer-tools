@@ -1,0 +1,122 @@
+.home, .home * { box-sizing: border-box; }
+.home {
+  margin: 0;
+  color: var(--text);
+  background: var(--bg);
+  font-size: 1rem;
+  line-height: 1.55;
+}
+.home-width {
+  width: min(72rem, calc(100% - 2 * clamp(1rem, 4vw, 3rem)));
+  margin-inline: auto;
+}
+.home .workbench-header-inner {
+  width: min(72rem, calc(100% - 2 * clamp(1rem, 4vw, 3rem)));
+  padding-inline: 0;
+}
+.home-main { padding-block: clamp(1.25rem, 3.5vw, 2.8rem) 2.5rem; }
+.home-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  align-items: center;
+  gap: clamp(1.25rem, 3.4vw, 2.75rem);
+  padding: clamp(1.35rem, 4vw, 3rem);
+  border-radius: 1rem;
+  background: var(--nav);
+  color: white;
+}
+.home-intro h1 {
+  max-inline-size: 12em;
+  margin: 0;
+  font-size: clamp(1.9rem, 3.9vw, 3.2rem);
+  line-height: 1.19;
+  font-weight: 760;
+  letter-spacing: -.035em;
+  text-wrap: balance;
+}
+.home-intro p {
+  max-inline-size: 29em;
+  color: var(--nav-muted);
+  margin: .85rem 0 0;
+  font-size: .95rem;
+}
+.home-signal {
+  display: flex;
+  gap: .3rem;
+  align-items: center;
+  margin-top: 1.6rem;
+}
+.home-signal i {
+  display: block;
+  height: .2rem;
+  border-radius: 1rem;
+  background: #7babdf;
+}
+.home-signal i:nth-child(1) { width: 1rem; opacity: .42; }
+.home-signal i:nth-child(2) { width: 2.35rem; }
+.home-signal i:nth-child(3) { width: 1.55rem; opacity: .64; }
+.home-signal i:nth-child(4) { width: .4rem; opacity: .42; }
+.home-workflows { display: grid; gap: .7rem; }
+.home-workflow, .home-tool-list a {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: .75rem;
+  min-inline-size: 0;
+  text-decoration: none;
+  color: inherit;
+  transition: background-color .16s ease, border-color .16s ease;
+}
+.home-workflow {
+  min-height: 5.2rem;
+  padding: .85rem 1rem;
+  border: 1px solid #4b6383;
+  border-radius: .65rem;
+  background: #203753;
+}
+.home-workflow:hover { background: #2a4666; border-color: #8aacd7; }
+.home-workflow-primary { background: #edf5ff; border-color: #edf5ff; color: var(--nav); }
+.home-workflow-primary:hover { background: #dcecff; border-color: #acc9ee; }
+.home-workflow:focus-visible { outline-color: #a6d3ff; }
+.home-tool-copy { display: grid; gap: .16rem; }
+.home-tool-copy strong { font-size: 1.03rem; font-weight: 680; }
+.home-tool-copy span { font-size: .875rem; color: var(--muted); overflow-wrap: anywhere; }
+.home-workflow .home-tool-copy span { color: var(--nav-muted); }
+.home-workflow-primary .home-tool-copy span { color: var(--muted); }
+.home-arrow { flex: none; font-size: 1.35rem; line-height: 1; }
+.home-workflow-primary .home-arrow, .home-tool-list .home-arrow { color: var(--accent); }
+.home-analysis { margin-top: clamp(1.35rem, 3vw, 2.1rem); }
+.home-analysis h2 { margin: 0 0 .65rem; font-size: 1.1rem; font-weight: 700; }
+.home-tool-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px;
+  padding: 0;
+  margin: 0;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--border);
+}
+.home-tool-list li { min-inline-size: 0; }
+.home-tool-list a {
+  height: 100%;
+  min-height: 4.75rem;
+  padding: .8rem 1rem;
+  background: var(--surface);
+  border-radius: inherit;
+}
+.home-tool-list a:hover { background: var(--accent-light); }
+.home-tool-list li:nth-child(1) { border-start-start-radius: calc(var(--radius) - 1px); }
+.home-tool-list li:nth-child(2) { border-start-end-radius: calc(var(--radius) - 1px); }
+.home-tool-list li:nth-child(3) { border-end-start-radius: calc(var(--radius) - 1px); }
+.home-tool-list li:nth-child(4) { border-end-end-radius: calc(var(--radius) - 1px); }
+.home-tool-list a:focus-visible { position: relative; z-index: 1; }
+
+@media (max-width: 42rem) {
+  .home-hero, .home-tool-list { grid-template-columns: minmax(0, 1fr); }
+  .home-signal { display: none; }
+  .home-tool-list li:nth-child(n) { border-radius: 0; }
+  .home-tool-list li:first-child { border-radius: calc(var(--radius) - 1px) calc(var(--radius) - 1px) 0 0; }
+  .home-tool-list li:last-child { border-radius: 0 0 calc(var(--radius) - 1px) calc(var(--radius) - 1px); }
+}

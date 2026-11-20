@@ -4,13 +4,16 @@ const {spawn}=require('node:child_process'),{once}=require('node:events'),{setTi
 async function until(fn){for(let i=0;i<150;i++){const v=await fn();if(v)return v;await delay(100);}throw Error('Timed out');}
 (async()=>{
  const staticRoot=path.resolve(__dirname,'../static'),shellFile=path.resolve(__dirname,'../../desktop/shell.html'),profile=await fs.mkdtemp(path.join(os.tmpdir(),'streamanalyzer-model-images-ui-'));
+ const navTemplate=await fs.readFile(path.resolve(__dirname,'../workbench_nav.html'),'utf8');
+ const settingsButton=navTemplate.match(/<button\b[^>]*\bid="model-settings"[^>]*>[^<]*<\/button>/)?.[0];
+ assert.ok(settingsButton,'expected the model settings action in the shared workbench header');
  let settings={provider:'openai-compatible',base_url:'https://model.example.test/v1',model:'vision-test',has_api_key:true,image_input:'text'},testFailure=false;const posts=[];
  const server=http.createServer(async(req,res)=>{try{
   if(req.url.startsWith('/model-settings')){assert.equal(req.headers['x-streamanalyzer-settings'],'fixture-token');res.setHeader('Content-Type','application/json');if(req.method==='POST'){let body='';for await(const c of req)body+=c;const draft=JSON.parse(body);posts.push({path:req.url,draft});if(req.url.endsWith('/test')){if(testFailure){res.writeHead(502);res.end(JSON.stringify({error:'HTTP 401：API Key 无效'}));}else res.end(JSON.stringify({elapsed_ms:12}));return;}settings={...settings,...draft,has_api_key:true};delete settings.api_key;}res.end(JSON.stringify(settings));return;}
   if(req.url==='/api/diagnostics/config'){res.setHeader('Content-Type','application/json');res.end(JSON.stringify({model_configured:true,model_provider:settings.provider,model_name:settings.model,model_image_input:settings.image_input}));return;}
   if(req.url.startsWith('/api/')){res.setHeader('Content-Type','application/json');res.end('[]');return;}
   if(req.url==='/shell'){const body=(await fs.readFile(shellFile,'utf8')).replace('{{.SettingsToken}}','fixture-token').replace('{{.WorkbenchURL}}','/diagnostics');res.setHeader('Content-Type','text/html');res.end(body);return;}
-  const name=req.url==='/diagnostics'?'diagnostics.html':req.url.replace(/^\/static\//,'');const body=await fs.readFile(path.join(staticRoot,name));res.setHeader('Content-Type',name.endsWith('.js')?'text/javascript':name.endsWith('.css')?'text/css':'text/html');res.end(body);
+  const name=req.url==='/diagnostics'?'diagnostics.html':req.url.replace(/^\/static\//,'');const body=await fs.readFile(path.join(staticRoot,name),'utf8');res.setHeader('Content-Type',name.endsWith('.js')?'text/javascript':name.endsWith('.css')?'text/css':'text/html');res.end(name==='diagnostics.html'?body.replace('<!-- workbench-header -->',settingsButton):body);
  }catch(error){res.writeHead(500);res.end(error.message);}});server.listen(0,'127.0.0.1');await once(server,'listening');
  const chrome=spawn(process.env.CHROME_BIN||'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',['--headless=new','--no-first-run',`--user-data-dir=${profile}`,'--remote-debugging-port=0','about:blank'],{stdio:'ignore'});let ws;
  try{

@@ -3,17 +3,13 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>历史记录 · Stream Analyzer</title>
+    <title>任务记录 · Stream Analyzer</title>
     <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
     <style>
         *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
         :root{--bg:#fafaf9;--surface:#ffffff;--border:#e8e6e1;--text:#1a1918;--text-muted:#78716c;--accent:#d97757;--accent-hover:#c4684a;--accent-light:#fef3ec;--radius:.875rem;--shadow:0 2px 12px rgba(0,0,0,.05);--shadow-md:0 4px 20px rgba(0,0,0,.08)}
-        body{font-family:'Outfit',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);min-h:100dvh;padding:1.5rem;line-height:1.5}
+        body{font-family:'Outfit',-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;background:var(--bg);color:var(--text);min-height:100dvh;line-height:1.5}
         .container{max-width:1200px;margin:0 auto}
-        .nav-bar{display:flex;align-items:center;gap:.5rem;margin-bottom:1.5rem;flex-wrap:wrap}
-        .nav-item{display:inline-flex;align-items:center;gap:.375rem;padding:.5rem .875rem;border-radius:.5rem;font-size:.8125rem;color:var(--text-muted);text-decoration:none;transition:all .2s ease}
-        .nav-item:hover{color:var(--text);background:rgba(0,0,0,.04)}
-        .nav-item.active{color:var(--accent);background:var(--accent-light);font-weight:500}
         .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.5rem;box-shadow:var(--shadow);margin-bottom:1.5rem}
         .card-title{font-size:1rem;font-weight:600;margin-bottom:1rem;display:flex;align-items:center;gap:.5rem}
         .back-link{display:inline-flex;align-items:center;gap:.375rem;color:var(--text-muted);text-decoration:none;font-size:.875rem;padding:.5rem .875rem;border-radius:8px;transition:all .2s ease}
@@ -64,31 +60,41 @@
         .hls-table-wrap th,.hls-table-wrap td{padding:.45rem .5rem;vertical-align:top}
         .hls-table-wrap th{background:#fafaf9;position:sticky;top:0}
         .hls-uri{max-width:220px;word-break:break-all}
-        @media(max-width:640px){body{padding:1rem}.stats-grid{grid-template-columns:repeat(3,1fr)}}
+        @media(max-width:640px){.stats-grid{grid-template-columns:repeat(3,1fr)}}
+        .history-filters{display:flex;flex-wrap:wrap;align-items:end;gap:.65rem;margin-bottom:.65rem}
+        .history-filters label{display:block;margin-bottom:.2rem;font-size:.82rem;font-weight:650}
+        .history-filters input,.history-filters select{min-height:2.75rem;width:100%;min-width:0;padding:.45rem .55rem;border:1px solid var(--border);border-radius:.375rem;background:var(--surface-inset);color:var(--text);font:inherit}
+        .history-filters .history-search{flex:1 1 13rem}
+        .history-status{margin:.4rem 0 .5rem;color:var(--muted);font-size:.875rem;overflow-wrap:anywhere}
+        td.history-input{min-width:13rem;max-width:25rem;white-space:normal;overflow-wrap:anywhere}
+        td.history-input code{display:block;margin-top:.2rem;color:var(--muted);font-size:.75rem}
+        #taskBody .btn{display:inline-flex;align-items:center;text-decoration:none;white-space:nowrap}
     </style>
   <link rel="stylesheet" href="/static/workbench-theme.css">
     <script src="/static/workbench-navigation.js" defer></script>
 </head>
-<body>
+<body class="workbench-tool-page">
+  <!-- workbench-header -->
     <div class="container">
-        <nav class="nav-bar">
-            <a href="/diagnostics" class="nav-item">排障工作台</a>
-            <a href="/realtime" class="nav-item">实时分析</a>
-            <a href="/hls-stats" class="nav-item">HLS 分析</a>
-            <a href="/offline" class="nav-item">离线分析</a>
-            <a href="/history" class="nav-item active">历史记录</a>
-        </nav>
+        <h1 class="workbench-page-title">任务记录</h1>
 
         <div class="card">
+            <form id="history-filters" class="history-filters" aria-label="筛选任务记录">
+                <div><label for="history-source">任务来源</label><select id="history-source"><option value="all">全部来源</option><option value="diagnostic">排障采样</option><option value="realtime">实时分析</option><option value="offline">离线解析</option><option value="hls">HLS 交付</option><option value="simulator">模拟器回归</option></select></div>
+                <div><label for="history-state">任务状态</label><select id="history-state"><option value="all">全部状态</option><option value="active">进行中</option><option value="finished">已结束</option><option value="error">失败或部分完成</option></select></div>
+                <div class="history-search"><label for="history-query">搜索记录</label><input type="search" id="history-query" placeholder="地址、文件名或任务 ID"></div>
+                <button type="button" class="btn secondary" id="refresh-history">刷新</button>
+            </form>
+            <p id="history-status" class="history-status" role="status">正在读取任务…</p>
             <div class="table-wrap">
                 <table>
                     <thead>
-                        <tr><th>ID</th><th>URL</th><th>Type</th><th>Status</th><th>Actions</th></tr>
+                        <tr><th scope="col">来源</th><th scope="col">地址或文件</th><th scope="col">状态</th><th scope="col">记录时间</th><th scope="col">操作</th></tr>
                     </thead>
                     <tbody id="taskBody"></tbody>
                 </table>
             </div>
-            <div id="emptyState" class="empty" style="display:none">No tasks found</div>
+            <p id="emptyState" class="empty" hidden></p>
         </div>
 
         <div id="analysisSection" class="detail">
@@ -244,30 +250,127 @@
             }
         }
 
-        async function loadAllTasks() {
-            const res = await fetch('/api/task/all');
-            const data = await res.json();
+        const historySources = {
+            diagnostic: { title: '排障采样', path: '/api/diagnostics/runs', rows: value => value || [] },
+            realtime: { title: '实时分析', path: '/api/task/all', rows: value => value.tasks || [] },
+            offline: { title: '离线解析', path: '/api/offline/tasks', rows: value => value.tasks || [] },
+            hls: { title: 'HLS 交付', path: '/api/hls-stats/tasks', rows: value => value || [] },
+            simulator: { title: '模拟器回归', path: '/api/simulators/runs?summary=1', rows: value => value.map(task => ({...task, status: task.passed ? 'passed' : 'failed'})) },
+        };
+        const historyStates = {
+            queued: '排队中', pending: '待处理', running: '进行中', stopping: '正在停止',
+            done: '已完成', stopped: '已停止', partial: '部分完成', passed: '通过', failed: '失败',
+            canceled: '已取消', cancelled: '已取消',
+        };
+        const historyActive = new Set(['queued', 'pending', 'running', 'stopping']);
+        const historyErrors = new Set(['failed', 'partial']);
+        const historyDate = new Intl.DateTimeFormat('zh-CN', {dateStyle: 'short', timeStyle: 'medium'});
+        let historyRows = [], historyUnavailable = [], historyRequest = 0;
+
+        function readableAddress(value) {
+            if (!value) return '—';
+            try {
+                const url = new URL(value);
+                url.username = url.password = url.search = url.hash = '';
+                return url.href;
+            } catch {
+                return String(value);
+            }
+        }
+        function putHistoryCell(row, text, className) {
+            const cell = row.insertCell();
+            cell.textContent = text;
+            if (className) cell.className = className;
+            return cell;
+        }
+        function historyButton(label, action, className = 'btn') {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.textContent = label;
+            button.className = className;
+            button.addEventListener('click', action);
+            return button;
+        }
+        function historyLink(label, path) {
+            const link = document.createElement('a');
+            link.className = 'btn secondary';
+            link.textContent = label;
+            link.href = path;
+            return link;
+        }
+        function showHistory() {
+            const source = document.getElementById('history-source').value;
+            const filter = document.getElementById('history-state').value;
+            const query = document.getElementById('history-query').value.trim().toLowerCase();
             const tbody = document.getElementById('taskBody');
+            tbody.replaceChildren();
+            let shown = 0;
+            for (const {kind, task, date, input, format} of historyRows) {
+                const state = task.status || '';
+                if (source !== 'all' && source !== kind) continue;
+                if (filter === 'active' && !historyActive.has(state)) continue;
+                if (filter === 'finished' && historyActive.has(state)) continue;
+                if (filter === 'error' && !historyErrors.has(state)) continue;
+                if (query && !`${input} ${task.id} ${format}`.toLowerCase().includes(query)) continue;
+                shown++;
+                const row = tbody.insertRow();
+                row.classList.toggle('active', kind === 'realtime' && task.id === currentTaskId);
+                putHistoryCell(row, [historySources[kind].title, format].filter(Boolean).join(' · '));
+                const context = putHistoryCell(row, input, 'history-input');
+                const id = document.createElement('code');
+                id.textContent = task.id;
+                context.append(id);
+                const status = document.createElement('span');
+                status.className = `pill${historyStates[state] ? ' ' + state : ''}`;
+                status.textContent = historyStates[state] || state || '未知';
+                row.insertCell().append(status);
+                putHistoryCell(row, Number.isFinite(date) ? historyDate.format(date) : '—');
+                const actions = putHistoryCell(row, '', 'actions');
+                const encodedID = encodeURIComponent(task.id);
+                if (kind === 'diagnostic') {
+                    actions.append(historyLink('查看记录', '/diagnostics#' + encodedID));
+                } else if (kind === 'offline') {
+                    actions.append(historyLink('查看解析', '/offline?task=' + encodedID));
+                } else if (kind === 'hls') {
+                    actions.append(historyLink('查看分析', '/hls-stats?task=' + encodedID));
+                } else if (kind === 'simulator') {
+                    actions.append(historyLink('查看回归', '/simulators/scenarios#run-' + encodedID));
+                } else if (state === 'running') {
+                    actions.append(historyButton('停止', () => stopTask(task.id), 'btn stop'));
+                } else {
+                    actions.append(historyButton('分析', () => analyzeTask(task.id, task.type)), historyLink('XLSX', '/api/task/' + encodedID + '/xlsx'));
+                }
+            }
             const empty = document.getElementById('emptyState');
-            tbody.innerHTML = '';
-            if (!data.tasks.length) {empty.style.display='block'; return;}
-            empty.style.display='none';
-            data.tasks.forEach(t => {
-                const status = t.status || 'stopped';
-                const tr = document.createElement('tr');
-                if (currentTaskId === t.id) tr.classList.add('active');
-                tr.innerHTML = '<td><span class="task-id">' + t.id.substring(5,15) + '...</span></td>' +
-                    '<td>' + t.url + '</td>' +
-                    '<td>' + t.type.toUpperCase() + '</td>' +
-                    '<td><span class="pill ' + status + '">' + t.status + '</span></td>' +
-                    '<td class="actions">' +
-                    (t.status === 'running'
-                        ? '<button class="btn stop" onclick="stopTask(\'' + t.id + '\')">停止</button>'
-                        : '<button class="btn" onclick="analyzeTask(\'' + t.id + '\',\'' + t.type + '\')">分析</button>' +
-                          '<button class="btn success" onclick="downloadXLSXById(\'' + t.id + '\')">XLSX</button>') +
-                    '</td>';
-                tbody.appendChild(tr);
-            });
+            empty.textContent = historyRows.length ? '没有符合筛选条件的记录。' : '暂无历史记录。';
+            empty.hidden = shown > 0 || (historyRows.length === 0 && historyUnavailable.length > 0);
+            const available = historyUnavailable.length ? ` · 暂时无法读取${historyUnavailable.join('、')}` : '';
+            const scope = source === 'hls' ? ' · HLS 交付仅显示本次应用运行的任务' : '';
+            document.getElementById('history-status').textContent = `显示 ${shown} 条，共 ${historyRows.length} 条${available}${scope}`;
+        }
+        async function loadAllTasks() {
+            const refresh = document.getElementById('refresh-history');
+            refresh.disabled = true;
+            const request = ++historyRequest;
+            const groups = Object.entries(historySources);
+            const response = await Promise.allSettled(groups.map(async ([kind, source]) => {
+                const res = await fetch(source.path, {cache: 'no-store'});
+                if (!res.ok) throw new Error(`HTTP ${res.status}`);
+                return source.rows(await res.json()).filter(task => typeof task.id === 'string').map(task => ({
+                    kind, task, date: Date.parse(task.start_time || task.created_at || task.started_at),
+                    input: task.preset?.name || task.input_name || readableAddress(task.url || task.origin),
+                    format: (task.type || task.protocol || task.mode || task.command || '').toUpperCase(),
+                }));
+            }));
+            if (request !== historyRequest) return;
+            historyUnavailable = [];
+            historyRows = response.flatMap((group, index) => {
+                if (group.status === 'fulfilled') return group.value;
+                historyUnavailable.push(groups[index][1].title);
+                return [];
+            }).sort((a, b) => (b.date || 0) - (a.date || 0));
+            refresh.disabled = false;
+            showHistory();
         }
 
         async function stopTask(id) {
@@ -539,6 +642,10 @@
             window.location.href = '/api/task/' + id + '/xlsx';
         }
         
+        const filters = document.getElementById('history-filters');
+        filters.addEventListener('submit', event => event.preventDefault());
+        filters.addEventListener('input', showHistory);
+        document.getElementById('refresh-history').addEventListener('click', loadAllTasks);
         loadAllTasks();
     </script>
 </body>

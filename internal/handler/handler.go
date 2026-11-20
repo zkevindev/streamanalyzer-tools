@@ -62,6 +62,7 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 		hlsStats := api.Group("/hls-stats")
 		{
 			hlsStats.POST("/tasks", h.CreateHLSStatsTask)
+			hlsStats.GET("/tasks", localDiagnostics, h.ListHLSStatsTasks)
 			hlsStats.GET("/tasks/:id", h.GetHLSStatsTask)
 			hlsStats.DELETE("/tasks/:id", h.StopHLSStatsTask)
 		}

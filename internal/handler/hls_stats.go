@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"net/http"
+	"net/url"
 	"sync"
 	"time"
 
@@ -188,6 +189,33 @@ func (h *Handler) CreateHLSStatsTask(c *gin.Context) {
 
 	go h.runHLSStats(ctx, job.ID, req, opt)
 	c.JSON(http.StatusOK, gin.H{"id": job.ID, "status": "running"})
+}
+
+func (h *Handler) ListHLSStatsTasks(c *gin.Context) {
+	type taskSummary struct {
+		ID      string    `json:"id"`
+		Command string    `json:"command"`
+		Status  string    `json:"status"`
+		URL     string    `json:"url"`
+		Started time.Time `json:"started_at"`
+	}
+	store := &h.hlsStats
+	store.mu.Lock()
+	result := make([]taskSummary, 0, len(store.order))
+	for _, id := range store.order {
+		job := store.jobs[id]
+		if job == nil {
+			continue
+		}
+		var address string
+		if parsed, err := url.Parse(job.URL); err == nil {
+			parsed.User, parsed.RawQuery, parsed.Fragment, parsed.ForceQuery = nil, "", "", false
+			address = parsed.String()
+		}
+		result = append(result, taskSummary{ID: id, Command: job.Command, Status: job.Status, URL: address, Started: job.Started})
+	}
+	store.mu.Unlock()
+	c.JSON(http.StatusOK, result)
 }
 
 func (h *Handler) GetHLSStatsTask(c *gin.Context) {

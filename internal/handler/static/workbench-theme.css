@@ -20,10 +20,134 @@
 }
 
 body { font-family: var(--font-ui); }
-.nav-bar { padding: .5rem; background: var(--nav); border-radius: var(--radius); }
-.nav-bar .nav-item { color: var(--nav-muted); min-height: 2.75rem; display: inline-flex; align-items: center; }
-.nav-bar .nav-item:hover,
-.nav-bar .nav-item.active { color: #fff; background: #284366; }
+[hidden] { display: none !important; }
+.workbench-header, .workbench-header * { box-sizing: border-box; }
+.workbench-header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    color: var(--text);
+    font: .875rem/1.4 var(--font-ui);
+}
+.workbench-header-inner {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    gap: .25rem clamp(.7rem, 3vw, 2.1rem);
+    max-width: 88rem;
+    padding: .4rem clamp(1rem, 3.5vw, 2rem);
+    margin: 0 auto;
+}
+.workbench-brand {
+    display: inline-flex;
+    align-items: center;
+    gap: .65rem;
+    min-height: 2.75rem;
+    color: var(--text);
+    font-size: 1rem;
+    font-weight: 740;
+    letter-spacing: -.015em;
+    text-decoration: none;
+    white-space: nowrap;
+}
+.workbench-mark {
+    display: inline-grid;
+    grid-template-columns: repeat(3, .16rem);
+    place-content: center;
+    align-items: center;
+    gap: .15rem;
+    width: 1.8rem;
+    aspect-ratio: 1;
+    border-radius: .4rem;
+    background: var(--nav);
+    color: #b9d8ff;
+}
+.workbench-mark i { height: .48rem; border-radius: .14rem; background: currentColor; }
+.workbench-mark i:nth-child(2) { height: .92rem; }
+.workbench-mark i:nth-child(3) { height: .64rem; }
+.workbench-sections { display: flex; flex-wrap: wrap; align-items: center; gap: .35rem; }
+.workbench-tab, .workbench-setting {
+    display: inline-flex;
+    align-items: center;
+    gap: .45rem;
+    min-height: 2.75rem;
+    padding: .4rem .68rem;
+    border: 1px solid transparent;
+    border-radius: .45rem;
+    color: var(--muted);
+    font: inherit;
+    font-weight: 600;
+    text-decoration: none;
+    cursor: pointer;
+}
+.workbench-tab:hover { background: var(--surface-inset); color: var(--accent); }
+.workbench-tab[aria-current] {
+    color: var(--accent);
+    background: var(--accent-light);
+    border-color: #d0e0f5;
+}
+.workbench-header .workbench-setting {
+    grid-column: 3;
+    justify-self: end;
+    color: var(--accent);
+    background: var(--surface);
+    border-color: var(--border);
+}
+.workbench-header .workbench-setting:hover { background: var(--accent-light); border-color: #9bbce3; }
+.workbench-subnav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .25rem .45rem;
+    margin-bottom: 1.1rem;
+    border-bottom: 1px solid var(--border);
+}
+.workbench-subnav a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.75rem;
+    padding: .4rem .68rem;
+    border-bottom: 2px solid transparent;
+    color: var(--muted);
+    font-size: .9rem;
+    text-decoration: none;
+}
+.workbench-subnav a:hover { color: var(--accent); background: var(--surface-inset); }
+.workbench-subnav a[aria-current] { color: var(--accent); border-color: var(--accent); font-weight: 650; }
+/* The mode switch sits inside a workbench group, below its primary tabs. */
+.workbench-modes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: .35rem;
+    margin: 0 0 .95rem;
+}
+.workbench-modes a {
+    color: var(--muted);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: .42rem;
+    text-decoration: none;
+    font-size: .875rem;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    min-height: 2.75rem;
+    padding: .35rem .68rem;
+}
+.workbench-modes a:hover, .workbench-modes a[aria-current] {
+    color: var(--accent);
+    background: var(--accent-light);
+    border-color: #bdd1eb;
+}
+.workbench-tool-page > .container {
+    width: calc(100% - 2 * clamp(1rem, 3.5vw, 2rem));
+    margin-block: 1.4rem 2rem;
+}
+.workbench-page-title { margin: 0 0 .85rem; font-size: 1.45rem; line-height: 1.2; }
+@media (max-width: 42rem) {
+    .workbench-header-inner { grid-template-columns: minmax(0, 1fr) auto; }
+    .workbench-sections { grid-column: 1 / -1; grid-row: 2; gap: .2rem; }
+    .workbench-header .workbench-setting { grid-column: 2; grid-row: 1; }
+    .workbench-tab { padding-inline: .5rem; }
+}
 a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible {
     outline: 2px solid #2471c7;
     outline-offset: 3px;

@@ -7,6 +7,7 @@ const onvif = '/api/simulators/onvif';
 const hls = '/api/simulators/hls';
 const media = '/api/simulators/media';
 const runs = '/api/diagnostics/runs';
+const savedRuns = '/api/simulators/runs';
 const ids = {
   platform_id: '34020000002000000001',
   device_id: '34020000001320000001',
@@ -26,7 +27,8 @@ function load(key) {
 }
 
 let presets = load('presets');
-let history = load('runs');
+let history = load('runs').filter(entry => entry?.preset && typeof entry.started_at === 'string');
+let focusedRun = /^#run-[0-9a-f]{24}$/.test(location.hash) ? location.hash.slice(1) : '';
 
 function persist(key, value) {
   try {
@@ -83,6 +85,7 @@ function renderHistory(scenario) {
   el('empty-history').hidden = Boolean(history.length);
   list.replaceChildren(...history.map(entry => {
     const row = document.createElement('li');
+    if (entry.id) row.id = 'run-' + entry.id;
     const time = document.createElement('time');
     time.textContent = new Date(entry.started_at).toLocaleString('zh-CN');
     const detail = document.createElement('span');
@@ -108,6 +111,11 @@ function renderHistory(scenario) {
     row.append(time, detail);
     return row;
   }));
+  const target = focusedRun && el(focusedRun);
+  if (target) {
+    focusedRun = '';
+    target.scrollIntoView({block: 'center'});
+  }
   const comparison = el('comparison');
   const pair = history.filter(entry => entry.preset.scenario === scenario).slice(0, 2);
   comparison.hidden = pair.length < 2;
@@ -866,8 +874,14 @@ el('scenario-form').addEventListener('submit', async event => {
     entry.detail = error.message;
   } finally {
     entry.elapsed_ms = Math.round(performance.now() - started);
-    history = [entry, ...history].slice(0, 12);
+    history = mergeRuns([entry], history);
     persist('runs', history);
+    try {
+      history = mergeRuns([await request(savedRuns, entry)], history);
+      persist('runs', history);
+    } catch {
+      notice('设备上的任务记录暂未保存，可在当前页面导出结果。');
+    }
     progress((entry.passed ? '场景通过' : '场景失败') + ' · ' + entry.detail);
     renderHistory(preset.scenario);
     busy = el('config').disabled = false;
@@ -905,5 +919,37 @@ el('import-preset').addEventListener('change', async event => {
     control.value = '';
   }
 });
+function runKey(entry) {
+  return JSON.stringify([Date.parse(entry.started_at), entry.preset.scenario, entry.preset.name.trim()]);
+}
+
+function mergeRuns(preferred, fallback) {
+  const unique = new Map();
+  for (const entry of [...preferred, ...fallback]) {
+    const key = runKey(entry);
+    if (!unique.has(key)) unique.set(key, entry);
+  }
+  return [...unique.values()].sort((a, b) => Date.parse(b.started_at) - Date.parse(a.started_at)).slice(0, 50);
+}
+
+async function restoreSharedRuns() {
+  try {
+    const remote = await request(savedRuns);
+    const known = new Set(remote.map(runKey));
+    const missing = history.filter(entry => !known.has(runKey(entry)));
+    const restored = [];
+    for (const entry of missing) {
+      try { restored.push(await request(savedRuns, entry)); }
+      catch { /* Keep legacy evidence available in this browser. */ }
+    }
+    history = mergeRuns([...restored, ...remote], history);
+    persist('runs', history);
+    renderHistory(el('scenario').value);
+  } catch {
+    notice('暂时无法读取设备上的任务记录，当前显示浏览器保存的结果。');
+  }
+}
+
 refreshPresets();
 renderHistory(el('scenario').value);
+void restoreSharedRuns();

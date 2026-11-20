@@ -8,4 +8,6 @@ if (window.parent !== window) {
     if (event.source === window.parent && event.data?.kind === 'workbench-location-query') sendLocation();
   });
   window.addEventListener('pageshow', sendLocation);
+  window.addEventListener('popstate', sendLocation);
+  window.addEventListener('workbench-location-change', sendLocation);
 }

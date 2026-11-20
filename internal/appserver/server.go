@@ -87,6 +87,7 @@ func newEngine(cfg *Config, model diagnostic.Explainer, sim *simulators) (*gin.E
 	h.RegisterRoutes(r)
 	handler.RegisterDiagnosticRoutes(r, diagnostics)
 	handler.RegisterONVIFDiscoveryRoutes(r, &sim.discovery)
+	handler.RegisterSimulatorHistoryRoutes(r, cfg.Server.DataDir)
 	handler.RegisterSimulatorRoutes(r, &sim.gb28181, &sim.onvif, &sim.sip, &sim.hls, &sim.gbPlatform, &sim.media, &sim.rtmp, &sim.whep)
 	return r, xlsxStorage, diagnostics, nil
 }

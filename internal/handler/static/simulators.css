@@ -55,10 +55,6 @@ details[open] > summary .event-summary::before { content: "▾ "; }
 .sim-targets > p { margin-bottom: .6rem; }
 .sim-targets select { min-width: 0; text-overflow: ellipsis; }
 
-.simulator-protocols { display: flex; flex-wrap: wrap; gap: .35rem; margin-bottom: 1rem; border-bottom: 1px solid var(--border); }
-.simulator-protocols a { padding: .6rem .8rem; color: var(--muted); text-decoration: none; border-bottom: 2px solid transparent; }
-.simulator-protocols a:hover { color: var(--accent); background: var(--surface-inset); }
-.simulator-protocols a[aria-current] { color: var(--accent); border-color: var(--accent); font-weight: 600; }
 .onvif-addresses { display: grid; grid-template-columns: minmax(0, 1fr); gap: .65rem; margin: 1rem 0 0; }
 .onvif-addresses dt { font-size: .8rem; font-weight: 600; color: var(--muted); }
 .onvif-addresses dd { margin: .2rem 0 0; font-family: var(--font-data); overflow-wrap: anywhere; user-select: all; }
@@ -68,3 +64,5 @@ details[open] > summary .event-summary::before { content: "▾ "; }
 #call-form input { margin-bottom: .55rem; }
 
 .whep-preview { width: 100%; max-height: 18rem; background: #111; border-radius: .45rem; }
+
+#run-history li:target { background: var(--accent-light); outline: 2px solid var(--accent); outline-offset: 2px; }
