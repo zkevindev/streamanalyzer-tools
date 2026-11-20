@@ -260,6 +260,9 @@ func (s *Service) Start(req SampleRequest) (Run, error) {
 		protocol = ProtocolHTTPFLV
 	}
 	req.Protocol = protocol
+	if req.HLSVariant != nil && (protocol != ProtocolHLS || *req.HLSVariant < -1) {
+		return Run{}, fmt.Errorf("%w: hls_variant 仅适用于 HLS，-1 为最高码率，0 起为清单档位序号", ErrInvalid)
+	}
 	if err := validateReconnect(req); err != nil {
 		return Run{}, err
 	}
@@ -377,6 +380,7 @@ func (s *Service) Start(req SampleRequest) (Run, error) {
 				report.Throughput, err = buildThroughput(dir, report)
 			}
 			if err == nil {
+				report.HLSABR = buildHLSABR(report)
 				report.Assessment = assessReport(report)
 				err = persistReport(dir, report)
 				if err == nil && report.Player != nil {

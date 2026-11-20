@@ -13,15 +13,16 @@ import (
 const maxCustomHeaderCount = 16
 
 type captureAccess struct {
-	headers   http.Header
-	client    *http.Client
-	tlsConfig *tls.Config
+	headers    http.Header
+	client     *http.Client
+	tlsConfig  *tls.Config
+	hlsVariant *int
 }
 
 type captureAccessContextKey struct{}
 
 func prepareCaptureAccess(base *http.Client, req SampleRequest) (captureAccess, error) {
-	result := captureAccess{headers: make(http.Header), client: base}
+	result := captureAccess{headers: make(http.Header), client: base, hlsVariant: req.HLSVariant}
 	if len(req.Headers) > maxCustomHeaderCount {
 		return result, fmt.Errorf("%w: 自定义请求头最多 %d 个", ErrInvalid, maxCustomHeaderCount)
 	}

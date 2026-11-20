@@ -64,6 +64,7 @@ type SampleRequest struct {
 	CACertificate     string            `json:"ca_certificate,omitempty"`
 	ReconnectAttempts int               `json:"reconnect_attempts,omitempty"`
 	ReconnectDelayMS  int               `json:"reconnect_delay_ms,omitempty"`
+	HLSVariant        *int              `json:"hls_variant,omitempty"`
 	SessionGroupID    string            `json:"-"`
 	SessionAttempt    int               `json:"-"`
 }
@@ -144,6 +145,8 @@ type Manifest struct {
 	Version                int         `json:"version"`
 	Protocol               string      `json:"protocol"`
 	StreamLimitBytes       int64       `json:"stream_limit_bytes,omitempty"`
+	HLSVariant             *int        `json:"hls_variant,omitempty"`
+	HLSVariantBandwidth    int         `json:"hls_variant_bandwidth,omitempty"`
 	Observation            Observation `json:"observation"`
 	Stream                 Artifact    `json:"stream"`
 	Timeline               Artifact    `json:"timeline"`
@@ -206,6 +209,7 @@ type Report struct {
 	ContentQuality         *ContentQualityReport   `json:"content_quality,omitempty"`
 	Throughput             *ThroughputReport       `json:"throughput,omitempty"`
 	RTMPControl            *RTMPControlReport      `json:"rtmp_control,omitempty"`
+	HLSABR                 *HLSABRReport           `json:"hls_abr,omitempty"`
 	modelScope             string
 	Requests               []HTTPRequestTiming  `json:"requests,omitempty"`
 	RequestsTruncated      int                  `json:"requests_truncated,omitempty"`

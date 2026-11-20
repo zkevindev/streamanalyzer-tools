@@ -131,3 +131,10 @@
 - 逐条记录保留到达时间、受控类型、名称和数值，最多展示 64 条；超过上限后仍继续统计总数并记录未展示数量。User Control 区分 Stream Begin/EOF/Dry、Set Buffer Length、Ping Request/Response 等事件。
 - `onStatus` 仅保留 `status` / `error` / `warning` level 和 `NetStream.*` code。connect/play 参数、URL、description 和其他 AMF 属性不会写入报告或模型输入。
 - 完整证据包导入时重新解析原始 RTMP 消息并校验控制面字段，旧证据包没有该字段时保持原样。RTMPS 仍在 TLS 解密后的 RTMP 协议层分析。
+
+## 16. HLS 变体与 ABR 对齐
+
+- HLS 采样表单可指定主清单常规变体：`-1` 选择最高码率，`0` 起按非 I-Frame 变体顺序选择。实际序号和声明带宽写入 `manifest.hls_variant` / `hls_variant_bandwidth`，证据包复盘使用同一档位，不再默认回退到最高码率。
+- hls.js 的 `LEVEL_SWITCHED` 现在持久化为受控 `level_switch` 播放器事件，只包含档位、声明带宽和分辨率，并在播放器记录校验中限制数值范围。
+- `hls_abr` 将切换事件换算到后端采样时间轴，查找 ±2 秒内最近的实际播放代理请求，标记播放器档位是否等于独立采样变体。
+- 最近请求仅表示时间接近，不证明某个分片直接导致 ABR 切换；原生 HLS 没有统一档位事件时保持未观测。独立采样和播放器仍是两条连接，报告继续保留此边界。
