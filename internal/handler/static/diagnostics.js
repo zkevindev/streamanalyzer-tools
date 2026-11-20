@@ -1814,6 +1814,18 @@ function renderReportAssessment(assessment, findings) {
     content.append(element('p', `排查规则 ${assessment.version}`, 'timing-note muted'));
 }
 
+function renderHLSABR(abr) {
+    node('hls-abr-report').hidden = !abr;
+    if (!abr) return;
+    renderMetrics('hls-abr-metrics', [
+        ['独立采样变体', abr.sampled_variant == null ? '未记录' : `#${abr.sampled_variant} · ${abr.sampled_bandwidth || '未声明'} bit/s`],
+        ['ABR 切换次数', abr.switches?.length || 0], ['命中采样变体的切换', abr.matched_switches || 0],
+    ]);
+    node('hls-abr-switches').replaceChildren(renderTable(['采样时间', '档位', '带宽 (bit/s)', '分辨率', '最近播放请求', '请求时间差', '命中采样变体'],
+        (abr.switches || []).map(item => [time(item.at_ms), item.level, item.bandwidth, item.width && item.height ? `${item.width}×${item.height}` : '未记录', item.nearest_player_request ? `#${item.nearest_player_request}` : '未关联', item.nearest_player_request ? time(item.request_delta_ms) : '—', item.matches_sampled_variant ? '是' : '否'])));
+    node('hls-abr-boundary').textContent = abr.boundary;
+}
+
 function renderRTMPControl(control) {
     node('rtmp-control-report').hidden = !control;
     if (!control) return;
@@ -1886,6 +1898,7 @@ function renderReport(report) {
     renderMetrics('metrics', values);
     renderThroughput(report);
     renderRTMPControl(report.rtmp_control);
+    renderHLSABR(report.hls_abr);
     renderAutomaticInvestigation(report);
     renderSamplingTiming(report, requests);
     renderRTSPReport(report);
@@ -2178,6 +2191,7 @@ node('protocol').addEventListener('change', () => {
     const httpAccess = ['http-flv', 'hls', 'http-ts'].includes(protocol);
     node('http-access-options').hidden = !httpAccess && !['rtmp', 'rtsps'].includes(protocol);
     node('reconnect-options').hidden = !['http-flv', 'rtmp'].includes(protocol);
+    node('hls-variant-option').hidden = protocol !== 'hls';
     for (const id of ['http-headers', 'http-proxy-url']) {
         node(id).hidden = !httpAccess;
         document.querySelector(`label[for="${id}"]`).hidden = !httpAccess;
@@ -2396,7 +2410,7 @@ bindForm('sample', async () => {
     const protocol = node('protocol').value;
     const run = await api('/runs', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ protocol, transport: protocols[protocol]?.nativeRTSP ? node('rtsp-transport').value : undefined, url, seconds, playback, auto_investigate: autoInvestigate, reconnect_attempts: ['http-flv', 'rtmp'].includes(protocol) ? node('reconnect-attempts').valueAsNumber : 0, reconnect_delay_ms: ['http-flv', 'rtmp'].includes(protocol) ? node('reconnect-delay').valueAsNumber : 0, ...captureAccessOptions(protocol) }),
+        body: JSON.stringify({ protocol, transport: protocols[protocol]?.nativeRTSP ? node('rtsp-transport').value : undefined, url, seconds, playback, auto_investigate: autoInvestigate, reconnect_attempts: ['http-flv', 'rtmp'].includes(protocol) ? node('reconnect-attempts').valueAsNumber : 0, reconnect_delay_ms: ['http-flv', 'rtmp'].includes(protocol) ? node('reconnect-delay').valueAsNumber : 0, hls_variant: protocol === 'hls' ? node('hls-variant').valueAsNumber : undefined, ...captureAccessOptions(protocol) }),
     });
     stopPlayback(activePlayer);
     startPlayback(run, startedAt, startedAtPerformanceMS, seconds, hlsRecovery, hlsABR, hlsLowLatency);

@@ -329,9 +329,15 @@ func (r *hlsReplay) observePlaylist(track *hlsReplayTrack, id int, row hlsRecord
 	}
 	if playlist.IsMaster() {
 		r.masterID = id
-		variant := highestHLSVariant(playlist)
+		variant, _, ok := selectHLSVariant(playlist, r.report.Manifest.HLSVariant)
+		if !ok {
+			return hlsInvalid("HLS 选中变体不存在")
+		}
 		r.audioAllowed = selectedHLSAudio(playlist, variant.AudioGroup) != ""
 		r.report.HLS.RenditionBandwidth = max(0, variant.Bandwidth)
+		if r.report.Manifest.HLSVariant != nil && r.report.Manifest.HLSVariantBandwidth != r.report.HLS.RenditionBandwidth {
+			return hlsInvalid("HLS 选中变体带宽记录不一致")
+		}
 		return nil
 	}
 	track.playlist, track.playlistID = playlist, id

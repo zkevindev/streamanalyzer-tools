@@ -58,6 +58,8 @@ type hlsCapture struct {
 	count       int
 	remaining   int64
 	observation *Observation
+	variant     *int
+	bandwidth   int
 }
 
 func sampleHLS(ctx context.Context, client *http.Client, dir string, target *url.URL, seconds int) (Report, error) {
@@ -87,6 +89,7 @@ func sampleHLS(ctx context.Context, client *http.Client, dir string, target *url
 	}
 	manifest := Manifest{
 		Version: multiProtocolSchemaVersion, Protocol: ProtocolHLS, Observation: obs,
+		HLSVariant: capture.variant, HLSVariantBandwidth: capture.bandwidth,
 		Stream: stream.artifact(), Timeline: timeline.artifact(),
 	}
 	return replayHLS(dir, manifest)
@@ -161,7 +164,11 @@ func (c *hlsCapture) run(ctx context.Context, target *url.URL, obs *Observation)
 	tracks := []*hlsCaptureTrack{main}
 	if pl.IsMaster() {
 		masterID = 1
-		variant := highestHLSVariant(pl)
+		variant, index, ok := selectHLSVariant(pl, captureAccessFromContext(ctx).hlsVariant)
+		if !ok {
+			return "hls_error", nil
+		}
+		c.variant, c.bandwidth = &index, max(0, variant.Bandwidth)
 		main.target = resolveHLS(base, variant.URI)
 		if audio := selectedHLSAudio(pl, variant.AudioGroup); audio != "" {
 			tracks = append(tracks, newHLSCaptureTrack(hlsAudio, resolveHLS(base, audio)))
@@ -524,6 +531,34 @@ func highestHLSVariant(playlist *m3u8.Playlist) m3u8.Variant {
 		}
 	}
 	return highest
+}
+
+func selectHLSVariant(playlist *m3u8.Playlist, requested *int) (m3u8.Variant, int, bool) {
+	if requested != nil && *requested >= 0 {
+		index := 0
+		for _, variant := range playlist.Variants {
+			if variant.IFrame {
+				continue
+			}
+			if index == *requested {
+				return variant, index, true
+			}
+			index++
+		}
+		return m3u8.Variant{}, 0, false
+	}
+	variant := highestHLSVariant(playlist)
+	index := 0
+	for _, candidate := range playlist.Variants {
+		if candidate.IFrame {
+			continue
+		}
+		if candidate.URI == variant.URI {
+			return variant, index, variant.URI != ""
+		}
+		index++
+	}
+	return m3u8.Variant{}, 0, false
 }
 
 func selectedHLSAudio(pl *m3u8.Playlist, group string) string {

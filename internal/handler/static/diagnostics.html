@@ -70,6 +70,10 @@
                             <option value="udp">UDP 单播 RTP/RTCP</option>
                         </select>
                     </div>
+                    <div id="hls-variant-option" hidden>
+                        <label for="hls-variant">采样变体（-1 最高码率，0 起为档位）</label>
+                        <input id="hls-variant" type="number" min="-1" value="-1">
+                    </div>
                     <div>
                         <label for="seconds">时长（秒）</label>
                         <input id="seconds" type="number" min="1" max="300" value="60" required>
@@ -316,6 +320,12 @@
                         <dl id="player-network-metrics" class="metrics" hidden></dl>
                         <p id="player-network-dropped" class="timing-note muted" hidden></p>
                         <div id="player-network-table"></div>
+                    </section>
+                    <section id="hls-abr-report" hidden>
+                        <h3 class="report-title">HLS 变体与 ABR 对齐</h3>
+                        <dl id="hls-abr-metrics" class="metrics"></dl>
+                        <div id="hls-abr-switches"></div>
+                        <p id="hls-abr-boundary" class="timing-note muted"></p>
                     </section>
                     <section id="transport" aria-labelledby="transport-title" hidden>
                         <h3 id="transport-title" class="report-title">MPEG-TS 传输指标</h3>

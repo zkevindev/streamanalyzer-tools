@@ -581,10 +581,18 @@
                 player.on(Hls.Events.MANIFEST_PARSED, () => {
                     this.options.onQualities?.(player.levels, level => { player.currentLevel = level; });
                 });
-                player.on(Hls.Events.LEVEL_SWITCHED, (_event, data) => {
-                    this.options.onQualityPlaying?.(player.levels[data.level]);
-                });
             }
+            player.on(Hls.Events.LEVEL_SWITCHED, (_event, data) => {
+                const level = player.levels[data.level];
+                if (!level || !Number.isFinite(level.bitrate)) return;
+                this.event('level_switch', {
+                    level: data.level,
+                    bandwidth: Math.round(level.bitrate),
+                    width: Number.isFinite(level.width) ? Math.round(level.width) : undefined,
+                    height: Number.isFinite(level.height) ? Math.round(level.height) : undefined,
+                });
+                if (abr) this.options.onQualityPlaying?.(level);
+            });
             if (this.options.onHLSBuffered) {
                 player.on(Hls.Events.FRAG_BUFFERED, (_event, data) => {
                     this.options.onHLSBuffered(data.frag);

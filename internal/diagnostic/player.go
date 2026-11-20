@@ -22,10 +22,14 @@ type PlayerStart struct {
 }
 
 type PlayerEvent struct {
-	AtMS   int64  `json:"at_ms"`
-	Kind   string `json:"kind"`
-	Method string `json:"method,omitempty"`
-	Code   string `json:"code,omitempty"`
+	AtMS      int64  `json:"at_ms"`
+	Kind      string `json:"kind"`
+	Method    string `json:"method,omitempty"`
+	Code      string `json:"code,omitempty"`
+	Level     *int   `json:"level,omitempty"`
+	Bandwidth *int64 `json:"bandwidth,omitempty"`
+	Width     *int   `json:"width,omitempty"`
+	Height    *int   `json:"height,omitempty"`
 }
 
 type PlayerSample struct {
@@ -131,7 +135,7 @@ func validatePlayerRecording(record PlayerRecording, reference time.Time) error 
 		}
 		last = event.AtMS
 		switch event.Kind {
-		case "start", "playing", "waiting", "pause", "seeking", "seeked", "ended", "error", "hidden", "visible", "first_frame", "autoplay_blocked", "unsupported", "stop":
+		case "start", "playing", "waiting", "pause", "seeking", "seeked", "ended", "error", "hidden", "visible", "first_frame", "autoplay_blocked", "unsupported", "stop", "level_switch":
 		default:
 			return invalid()
 		}
@@ -146,6 +150,13 @@ func validatePlayerRecording(record PlayerRecording, reference time.Time) error 
 		switch event.Code {
 		case "", "blocked", "unsupported", "media_error", "network_error", "no_stream", "stopped", "preview_unsupported", "preview_failed", "preview_queue_limit", "browser_codec_unsupported":
 		default:
+			return invalid()
+		}
+		if event.Kind != "level_switch" && (event.Level != nil || event.Bandwidth != nil || event.Width != nil || event.Height != nil) {
+			return invalid()
+		}
+		if event.Kind == "level_switch" && (event.Level == nil || *event.Level < 0 || *event.Level > 64 || event.Bandwidth == nil || *event.Bandwidth <= 0 ||
+			event.Width != nil && (*event.Width <= 0 || *event.Width > 8192) || event.Height != nil && (*event.Height <= 0 || *event.Height > 8192)) {
 			return invalid()
 		}
 	}
