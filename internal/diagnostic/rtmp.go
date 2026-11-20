@@ -30,12 +30,13 @@ type rtmpTap struct {
 	stream *artifactWriter
 	start  time.Time
 	cancel context.CancelFunc
+	limit  int64
 	stamps []rtmpReadStamp
 }
 
 func (t *rtmpTap) Write(data []byte) (int, error) {
 	arrival := time.Since(t.start).Milliseconds()
-	limit := int(min(int64(len(data)), maxStreamBytes-t.stream.bytes))
+	limit := int(min(int64(len(data)), t.limit-t.stream.bytes))
 	if limit == 0 {
 		return 0, io.ErrShortWrite
 	}
@@ -48,7 +49,7 @@ func (t *rtmpTap) Write(data []byte) (int, error) {
 			t.stamps = append(t.stamps, stamp)
 		}
 	}
-	if err != nil || t.stream.bytes == maxStreamBytes {
+	if err != nil || t.stream.bytes == t.limit {
 		t.cancel()
 	}
 	if n != len(data) && err == nil {
@@ -70,7 +71,7 @@ func sampleRTMP(ctx context.Context, dir string, target *url.URL, seconds int) (
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(seconds)*time.Second)
 	defer cancel()
-	tap := rtmpTap{stream: stream, start: start, cancel: cancel}
+	tap := rtmpTap{stream: stream, start: start, cancel: cancel, limit: captureLimit(ctx)}
 	obs := Observation{
 		Origin: origin(target), StartedAt: start.UTC(), RequestedSeconds: seconds,
 	}
@@ -128,7 +129,7 @@ func captureRTMP(ctx context.Context, target *url.URL, tap *rtmpTap, obs *Observ
 		}
 		_ = client.Close()
 	}
-	if tap.stream.bytes == maxStreamBytes {
+	if tap.stream.bytes == tap.limit {
 		return "size_limit"
 	}
 	return captureEnd(ctx, reason)

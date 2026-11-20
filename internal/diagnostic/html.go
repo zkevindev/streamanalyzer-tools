@@ -608,6 +608,8 @@ thead{color:#52657e;background:#f7f9fc}
 <dl>
 <dt>文件</dt><dd><code>{{dumpName .Report.Manifest.Protocol}}</code></dd>
 <dt>保留字节</dt><dd>{{.Report.Manifest.Stream.Bytes}}</dd>
+{{with .Report.Manifest.StreamLimitBytes}}<dt>本次原始流上限</dt><dd>{{.}} 字节</dd>{{end}}
+{{if eq .Report.Manifest.Observation.EndReason "size_limit"}}<dt>原始产物状态</dt><dd>达到上限，已保留可复盘前缀</dd>{{end}}
 <dt>SHA-256</dt><dd><code>{{.Report.Manifest.Stream.SHA256}}</code></dd>
 </dl></article>
 </main></body></html>`))

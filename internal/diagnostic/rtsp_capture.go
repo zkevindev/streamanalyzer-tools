@@ -28,6 +28,7 @@ type rtspCapture struct {
 	start             time.Time
 	ctx               context.Context
 	cancel            context.CancelFunc
+	limit             int64
 	wire, timeline    *artifactWriter
 	metadata          rtspArchiveMetadata
 	sdp               []byte
@@ -64,13 +65,20 @@ func (connection *rtspCaptureConn) Read(data []byte) (int, error) {
 
 func (capture *rtspCapture) now() int64 { return max(0, time.Since(capture.start).Milliseconds()) }
 
+func (capture *rtspCapture) limitBytes() int64 {
+	if capture.limit > 0 {
+		return capture.limit
+	}
+	return maxStreamBytes
+}
+
 func (capture *rtspCapture) keep(data []byte, id int) (int, error) {
 	capture.mu.Lock()
 	defer capture.mu.Unlock()
 	if capture.err != nil {
 		return 0, capture.err
 	}
-	remaining := maxStreamBytes - (1 << 20) - capture.wire.bytes
+	remaining := capture.limitBytes() - min(int64(1<<20), capture.limitBytes()/8) - capture.wire.bytes
 	if capture.udpData != nil {
 		remaining -= capture.udpData.bytes + capture.udpIndex.bytes
 	}
@@ -315,7 +323,7 @@ func sampleRTSPTransportWithPreviewLookup(ctx context.Context, dir string, targe
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(seconds)*time.Second)
 	defer cancel()
 	start := time.Now()
-	capture := &rtspCapture{ctx: ctx, cancel: cancel, start: start, wire: wire, timeline: timeline, metadata: rtspArchiveMetadata{Version: 1, Requests: []RTSPRequestTiming{}, Channels: []rtspChannel{}}}
+	capture := &rtspCapture{ctx: ctx, cancel: cancel, start: start, limit: captureLimit(ctx), wire: wire, timeline: timeline, metadata: rtspArchiveMetadata{Version: 1, Requests: []RTSPRequestTiming{}, Channels: []rtspChannel{}}}
 	if selected == "udp" {
 		capture.metadata.Version, capture.metadata.Transport = 2, "udp"
 		capture.udpClientPorts = map[int][2]int{}

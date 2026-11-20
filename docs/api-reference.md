@@ -6,6 +6,7 @@
 
 | 方法与路径 | 说明 |
 | --- | --- |
+| `GET /api/diagnostics/config` | 返回当前模型配置状态及 `capture_limit_bytes` 原始产物上限 |
 | `POST /api/diagnostics/runs` | 发起采样。请求体示例：`{"protocol":"hls","url":"<stream-url>","seconds":60,"playback":true,"auto_investigate":true}`。`protocol` 可选 `http-flv` / `rtmp` / `rtsp` / `rtsps` / `hls` / `http-ts` / `udp-ts` / `rtp-ts`（默认 `http-flv`）；RTSP 可传 `"transport":"udp"`（默认 `tcp`） |
 | `GET /api/diagnostics/runs` | 列出最近的采样与复盘记录 |
 | `GET /api/diagnostics/runs/:id` | 查询任务状态、规则报告与已生成的模型解读 |

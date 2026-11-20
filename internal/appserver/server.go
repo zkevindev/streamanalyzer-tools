@@ -57,8 +57,11 @@ type Server struct {
 
 func newEngine(cfg *Config, model diagnostic.Explainer, sim *simulators) (*gin.Engine, *diagnostic.Service, error) {
 	ApplyDefaults(cfg)
+	if err := ValidateConfig(cfg); err != nil {
+		return nil, nil, err
+	}
 
-	diagnostics, err := diagnostic.Open(cfg.Server.DataDir, model)
+	diagnostics, err := diagnostic.OpenWithCaptureLimit(cfg.Server.DataDir, model, int64(*cfg.Server.MaxDumpMB)<<20)
 	if err != nil {
 		return nil, nil, err
 	}

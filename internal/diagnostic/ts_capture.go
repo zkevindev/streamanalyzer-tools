@@ -36,6 +36,7 @@ type tsCapture struct {
 	start       time.Time
 	player      *PlayerSession
 	protocol    string
+	limit       int64
 }
 
 func sampleTS(ctx context.Context, client *http.Client, dir string, target *url.URL, seconds int, protocol string) (Report, error) {
@@ -50,7 +51,7 @@ func sampleTS(ctx context.Context, client *http.Client, dir string, target *url.
 
 	start := time.Now()
 	obs := Observation{Origin: origin(target), StartedAt: start.UTC(), RequestedSeconds: seconds}
-	capture := tsCapture{stream: stream, timeline: timeline, observation: &obs, start: start, player: capturePlayer(ctx), protocol: protocol}
+	capture := tsCapture{stream: stream, timeline: timeline, observation: &obs, start: start, player: capturePlayer(ctx), protocol: protocol, limit: captureLimit(ctx)}
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(seconds)*time.Second)
 	defer cancel()
 	var captureErr error
@@ -73,11 +74,18 @@ func sampleTS(ctx context.Context, client *http.Client, dir string, target *url.
 	return replayTS(dir, manifest)
 }
 
+func (c *tsCapture) limitBytes() int64 {
+	if c.limit > 0 {
+		return c.limit
+	}
+	return maxStreamBytes
+}
+
 // keep returns false when a limit is reached. For datagrams this retains a
 // prefix of whole datagrams, so a truncated datagram never looks like one
 // the sender actually sent.
 func (c *tsCapture) keep(data []byte) (bool, error) {
-	if int64(len(data)) > maxStreamBytes-c.stream.bytes {
+	if int64(len(data)) > c.limitBytes()-c.stream.bytes {
 		c.observation.EndReason = "size_limit"
 		return false, nil
 	}
@@ -110,7 +118,7 @@ func (c *tsCapture) keep(data []byte) (bool, error) {
 			c.player.publish(data)
 		}
 	}
-	if c.stream.bytes == maxStreamBytes {
+	if c.stream.bytes == c.limitBytes() {
 		c.observation.EndReason = "size_limit"
 		return false, nil
 	}
@@ -143,7 +151,7 @@ func (c *tsCapture) http(ctx context.Context, client *http.Client, target *url.U
 
 	buffer := make([]byte, tsHTTPReadSize)
 	for ctx.Err() == nil {
-		readLimit := int(min(int64(len(buffer)), maxStreamBytes-c.stream.bytes))
+		readLimit := int(min(int64(len(buffer)), c.limitBytes()-c.stream.bytes))
 		n, readErr := resp.Body.Read(buffer[:readLimit])
 		if n > 0 {
 			more, err := c.keep(buffer[:n])

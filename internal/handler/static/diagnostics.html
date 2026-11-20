@@ -79,7 +79,7 @@
                 <label class="playback-option"><input id="analyze-playback" type="checkbox" aria-describedby="playback-capability-note"> 同时分析播放器体验</label>
                 <label class="playback-option automatic-option"><input id="auto-investigate" type="checkbox" checked disabled aria-describedby="auto-investigate-hint"> 采样后自动补查并汇总</label>
                 <p id="auto-investigate-hint" class="field-hint muted">启用播放器分析后，自动补查最多 3 个同期关键异常，再按模型设置生成一次整体汇总；也可关闭后手动补查。</p>
-                <p id="playback-capability-note" class="field-hint muted" hidden>RTSP 预览复用同次采样的 RTP，在本机转封装 H.264 / H.265 / AAC-LC 后播放，H.265 需要浏览器和系统解码支持。其他编码仍可采样和 dump；不支持的音轨将明确标记并静音，不进行转码。Opus 优先使用 MP4 音频缓冲；桌面 WebKit 不支持时使用 WebM 音频缓冲，保留原始 Opus 编码与时序。</p>
+                <p id="playback-capability-note" class="field-hint muted" hidden>RTSP 预览复用同次采样的 RTP，在本机转封装 H.264 / H.265 / AAC-LC / Opus 后播放，H.265 需要浏览器和系统解码支持。无 AAC/Opus 原码音轨时，可经本机 FFmpeg 将 G.711 PCMA/PCMU 转为 AAC；其他编码仍可采样和保存原始流，不支持的音轨会明确标记并静音。Opus 按浏览器能力使用 MP4 或 WebM 音频缓冲，保留原始编码与时序。</p>
             </form>
             <div id="hls-delivery-panel" class="panel-body hls-tool hls-embedded" hidden>
                 <form id="hls-form" aria-label="HLS 交付分析配置">

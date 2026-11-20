@@ -76,7 +76,7 @@ func sampleHLS(ctx context.Context, client *http.Client, dir string, target *url
 	defer cancel()
 	capture := hlsCapture{
 		client: client, start: start, archive: zip.NewWriter(stream), ledger: timeline,
-		remaining:   maxStreamBytes - hlsZipOverhead,
+		remaining:   max(0, captureLimit(ctx)-hlsZipOverhead),
 		observation: &obs,
 	}
 	reason, err := capture.run(ctx, target, &obs)
