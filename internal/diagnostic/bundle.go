@@ -434,6 +434,9 @@ func readManifest(entry *zip.File) (Manifest, error) {
 		(manifest.Version == rtspPlayerSchemaVersion && (manifest.Protocol != ProtocolRTSP && manifest.Protocol != ProtocolRTSPS || manifest.Player == nil || manifest.PlayerNetwork != nil)) {
 		return manifest, fmt.Errorf("%w: 证据包版本或协议不受支持", ErrInvalid)
 	}
+	if !validManifestThresholds(manifest) {
+		return manifest, fmt.Errorf("%w: 诊断场景或阈值记录无效", ErrInvalid)
+	}
 	if manifest.Protocol != ProtocolHLS && (manifest.HLSVariant != nil || manifest.HLSVariantBandwidth != 0) ||
 		manifest.HLSVariant != nil && *manifest.HLSVariant < 0 || manifest.HLSVariantBandwidth < 0 {
 		return manifest, fmt.Errorf("%w: HLS 变体记录无效", ErrInvalid)

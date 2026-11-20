@@ -53,20 +53,22 @@ var (
 )
 
 type SampleRequest struct {
-	AutoInvestigate   bool              `json:"auto_investigate,omitempty"`
-	URL               string            `json:"url"`
-	Seconds           int               `json:"seconds"`
-	Protocol          string            `json:"protocol,omitempty"`
-	Transport         string            `json:"transport,omitempty"`
-	Playback          bool              `json:"playback,omitempty"`
-	Headers           map[string]string `json:"headers,omitempty"`
-	ProxyURL          string            `json:"proxy_url,omitempty"`
-	CACertificate     string            `json:"ca_certificate,omitempty"`
-	ReconnectAttempts int               `json:"reconnect_attempts,omitempty"`
-	ReconnectDelayMS  int               `json:"reconnect_delay_ms,omitempty"`
-	HLSVariant        *int              `json:"hls_variant,omitempty"`
-	SessionGroupID    string            `json:"-"`
-	SessionAttempt    int               `json:"-"`
+	AutoInvestigate   bool                `json:"auto_investigate,omitempty"`
+	URL               string              `json:"url"`
+	Seconds           int                 `json:"seconds"`
+	Protocol          string              `json:"protocol,omitempty"`
+	Transport         string              `json:"transport,omitempty"`
+	Playback          bool                `json:"playback,omitempty"`
+	Headers           map[string]string   `json:"headers,omitempty"`
+	ProxyURL          string              `json:"proxy_url,omitempty"`
+	CACertificate     string              `json:"ca_certificate,omitempty"`
+	ReconnectAttempts int                 `json:"reconnect_attempts,omitempty"`
+	ReconnectDelayMS  int                 `json:"reconnect_delay_ms,omitempty"`
+	HLSVariant        *int                `json:"hls_variant,omitempty"`
+	Profile           string              `json:"profile,omitempty"`
+	CustomThresholds  *AnalysisThresholds `json:"custom_thresholds,omitempty"`
+	SessionGroupID    string              `json:"-"`
+	SessionAttempt    int                 `json:"-"`
 }
 
 type Run struct {
@@ -141,18 +143,20 @@ type HTTPHeader struct {
 }
 
 type Manifest struct {
-	AutomaticInvestigation *Artifact   `json:"automatic_investigation,omitempty"`
-	Version                int         `json:"version"`
-	Protocol               string      `json:"protocol"`
-	StreamLimitBytes       int64       `json:"stream_limit_bytes,omitempty"`
-	HLSVariant             *int        `json:"hls_variant,omitempty"`
-	HLSVariantBandwidth    int         `json:"hls_variant_bandwidth,omitempty"`
-	Observation            Observation `json:"observation"`
-	Stream                 Artifact    `json:"stream"`
-	Timeline               Artifact    `json:"timeline"`
-	Player                 *Artifact   `json:"player,omitempty"`
-	StallEvidence          *Artifact   `json:"stall_evidence,omitempty"`
-	PlayerNetwork          *Artifact   `json:"player_network,omitempty"`
+	AutomaticInvestigation *Artifact          `json:"automatic_investigation,omitempty"`
+	Version                int                `json:"version"`
+	Protocol               string             `json:"protocol"`
+	StreamLimitBytes       int64              `json:"stream_limit_bytes,omitempty"`
+	HLSVariant             *int               `json:"hls_variant,omitempty"`
+	HLSVariantBandwidth    int                `json:"hls_variant_bandwidth,omitempty"`
+	AnalysisProfile        string             `json:"analysis_profile,omitempty"`
+	AnalysisThresholds     AnalysisThresholds `json:"analysis_thresholds,omitempty"`
+	Observation            Observation        `json:"observation"`
+	Stream                 Artifact           `json:"stream"`
+	Timeline               Artifact           `json:"timeline"`
+	Player                 *Artifact          `json:"player,omitempty"`
+	StallEvidence          *Artifact          `json:"stall_evidence,omitempty"`
+	PlayerNetwork          *Artifact          `json:"player_network,omitempty"`
 }
 
 // Event locates protocol evidence in the dump. RTMP and FLV events use byte

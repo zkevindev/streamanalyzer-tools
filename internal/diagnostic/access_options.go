@@ -17,12 +17,22 @@ type captureAccess struct {
 	client     *http.Client
 	tlsConfig  *tls.Config
 	hlsVariant *int
+	profile    string
+	thresholds AnalysisThresholds
 }
 
 type captureAccessContextKey struct{}
 
 func prepareCaptureAccess(base *http.Client, req SampleRequest) (captureAccess, error) {
 	result := captureAccess{headers: make(http.Header), client: base, hlsVariant: req.HLSVariant}
+	thresholds, err := resolveAnalysisThresholds(req.Profile, req.CustomThresholds)
+	if err != nil {
+		return result, err
+	}
+	result.profile, result.thresholds = req.Profile, thresholds
+	if result.profile == "" {
+		result.profile = "standard"
+	}
 	if len(req.Headers) > maxCustomHeaderCount {
 		return result, fmt.Errorf("%w: 自定义请求头最多 %d 个", ErrInvalid, maxCustomHeaderCount)
 	}
@@ -109,4 +119,14 @@ func captureHTTPClient(ctx context.Context, fallback *http.Client) *http.Client 
 
 func captureTLSConfig(ctx context.Context) *tls.Config {
 	return captureAccessFromContext(ctx).tlsConfig
+}
+
+func applyAnalysisConfig(ctx context.Context, manifest *Manifest) {
+	access := captureAccessFromContext(ctx)
+	if access.thresholds == (AnalysisThresholds{}) {
+		access.thresholds = standardAnalysisThresholds()
+		access.profile = "standard"
+	}
+	manifest.AnalysisProfile = access.profile
+	manifest.AnalysisThresholds = access.thresholds
 }

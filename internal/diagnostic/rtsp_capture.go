@@ -528,6 +528,7 @@ func sampleRTSPTransportWithPreviewLookup(ctx context.Context, dir string, targe
 		_ = os.Remove(filepath.Join(dir, rtspUDPIndexName))
 	}
 	manifest := Manifest{Version: multiProtocolSchemaVersion, Protocol: protocol, Observation: observation, Stream: artifact, Timeline: timeline.artifact()}
+	applyAnalysisConfig(ctx, &manifest)
 	return replayRTSP(dir, manifest)
 }
 

@@ -86,6 +86,15 @@
                     </div>
                     <button type="submit">采样并保存原始流</button>
                 </div>
+                <div class="sample-options">
+                    <div><label for="analysis-profile">诊断场景</label><select id="analysis-profile"><option value="standard">普通直播（默认）</option><option value="low-latency">低延迟直播</option><option value="camera">摄像头 / 低帧率</option><option value="custom">自定义阈值</option></select></div>
+                </div>
+                <div id="custom-thresholds" class="sample-options" hidden>
+                    <div><label for="threshold-first-frame">首帧告警 (ms)</label><input id="threshold-first-frame" type="number" min="100" max="60000" value="3000"></div>
+                    <div><label for="threshold-video-gap">接收空洞告警 (ms)</label><input id="threshold-video-gap" type="number" min="100" max="60000" value="3000"></div>
+                    <div><label for="threshold-dts-gap">DTS 间隔告警 (ms)</label><input id="threshold-dts-gap" type="number" min="100" max="60000" value="2000"></div>
+                    <div><label for="threshold-gop">GOP 告警 (ms)</label><input id="threshold-gop" type="number" min="100" max="60000" value="10000"></div>
+                </div>
                 <label class="playback-option"><input id="analyze-playback" type="checkbox" aria-describedby="playback-capability-note"> 同时分析播放器体验</label>
                 <label class="playback-option automatic-option"><input id="auto-investigate" type="checkbox" checked disabled aria-describedby="auto-investigate-hint"> 采样后自动补查并汇总</label>
                 <p id="auto-investigate-hint" class="field-hint muted">启用播放器分析后，自动补查最多 3 个同期关键异常，再按模型设置生成一次整体汇总；也可关闭后手动补查。</p>

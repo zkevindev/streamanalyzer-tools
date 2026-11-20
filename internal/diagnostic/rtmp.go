@@ -98,6 +98,7 @@ func sampleRTMP(ctx context.Context, dir string, target *url.URL, seconds int) (
 		Version: multiProtocolSchemaVersion, Protocol: ProtocolRTMP, Observation: obs,
 		Stream: stream.artifact(), Timeline: timeline.artifact(),
 	}
+	applyAnalysisConfig(ctx, &manifest)
 	return replayRTMP(dir, manifest)
 }
 

@@ -71,6 +71,7 @@ func sampleTS(ctx context.Context, client *http.Client, dir string, target *url.
 		Version: multiProtocolSchemaVersion, Protocol: protocol, Observation: obs,
 		Stream: stream.artifact(), Timeline: timeline.artifact(),
 	}
+	applyAnalysisConfig(ctx, &manifest)
 	return replayTS(dir, manifest)
 }
 

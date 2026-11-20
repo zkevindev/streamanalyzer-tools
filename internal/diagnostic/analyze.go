@@ -7,15 +7,9 @@ import (
 	"streamanalyzer/internal/codec"
 )
 
-const (
-	firstFrameWarnMS = 3000
-	videoGapWarnMS   = 3000
-	dtsGapWarnMS     = 2000
-	gopWarnMS        = 10000
-)
-
 func analyze(manifest Manifest, events []Event) Report {
 	report := Report{RuleVersion: manifest.Protocol + "/2", Manifest: manifest, Findings: []Finding{}}
+	thresholds := manifest.thresholds()
 	obs := manifest.Observation
 	metrics := &report.Metrics
 	var firstVideo, lastVideo *Event
@@ -45,8 +39,8 @@ func analyze(manifest Manifest, events []Event) Report {
 		switch {
 		case delta < 0:
 			addOnce(current.Kind+"_dts_backwards", "warn", fmt.Sprintf("%s DTS 回退 %d ms", track, -delta), previous.ArrivalMS, current.ArrivalMS, *previous, current)
-		case delta > dtsGapWarnMS:
-			addOnce(current.Kind+"_dts_gap", "warn", fmt.Sprintf("%s DTS 间隔 %d ms，超过 %d ms", track, delta, dtsGapWarnMS), previous.ArrivalMS, current.ArrivalMS, *previous, current)
+		case delta > thresholds.DTSGapWarnMS:
+			addOnce(current.Kind+"_dts_gap", "warn", fmt.Sprintf("%s DTS 间隔 %d ms，超过 %d ms", track, delta, thresholds.DTSGapWarnMS), previous.ArrivalMS, current.ArrivalMS, *previous, current)
 		}
 	}
 
@@ -83,8 +77,8 @@ func analyze(manifest Manifest, events []Event) Report {
 				if lastKey != nil {
 					gop := event.DTS - lastKey.DTS
 					metrics.MaxGOPMS = max(metrics.MaxGOPMS, gop)
-					if gop > gopWarnMS {
-						addOnce("long_gop", "warn", fmt.Sprintf("视频关键帧间隔 %d ms，超过 %d ms", gop, gopWarnMS), lastKey.ArrivalMS, event.ArrivalMS, *lastKey, *event)
+					if gop > thresholds.GOPWarnMS {
+						addOnce("long_gop", "warn", fmt.Sprintf("视频关键帧间隔 %d ms，超过 %d ms", gop, thresholds.GOPWarnMS), lastKey.ArrivalMS, event.ArrivalMS, *lastKey, *event)
 					}
 				}
 				lastKey = event
@@ -111,22 +105,22 @@ func analyze(manifest Manifest, events []Event) Report {
 	slices.Sort(metrics.VideoCodecs)
 	slices.Sort(metrics.AudioCodecs)
 
-	if firstVideo != nil && firstVideo.ArrivalMS > firstFrameWarnMS {
-		addOnce("slow_first_video", "warn", fmt.Sprintf("首个视频帧在 %d ms 到达，超过 %d ms", firstVideo.ArrivalMS, firstFrameWarnMS), 0, firstVideo.ArrivalMS, *firstVideo)
+	if firstVideo != nil && firstVideo.ArrivalMS > thresholds.FirstFrameWarnMS {
+		addOnce("slow_first_video", "warn", fmt.Sprintf("首个视频帧在 %d ms 到达，超过 %d ms", firstVideo.ArrivalMS, thresholds.FirstFrameWarnMS), 0, firstVideo.ArrivalMS, *firstVideo)
 	}
-	if metrics.MaxVideoGapMS > videoGapWarnMS {
+	if metrics.MaxVideoGapMS > thresholds.VideoGapWarnMS {
 		addOnce("video_arrival_gap", "warn", fmt.Sprintf("采样点连续 %d ms 未收到新视频帧", metrics.MaxVideoGapMS), longestGapStart.ArrivalMS, longestGapEnd.ArrivalMS, *longestGapStart, *longestGapEnd)
 	}
-	if metrics.MaxAudioGapMS > videoGapWarnMS {
+	if metrics.MaxAudioGapMS > thresholds.VideoGapWarnMS {
 		addOnce("audio_arrival_gap", "warn", fmt.Sprintf("采样点连续 %d ms 未收到新音频帧", metrics.MaxAudioGapMS), audioGapStart.ArrivalMS, audioGapEnd.ArrivalMS, *audioGapStart, *audioGapEnd)
 	}
-	if lastAudio != nil && obs.EndReason == "duration_limit" && obs.ElapsedMS-lastAudio.ArrivalMS > videoGapWarnMS {
+	if lastAudio != nil && obs.EndReason == "duration_limit" && obs.ElapsedMS-lastAudio.ArrivalMS > thresholds.VideoGapWarnMS {
 		addOnce("audio_tail_gap", "warn", fmt.Sprintf("采样结束前 %d ms 未收到新音频帧", obs.ElapsedMS-lastAudio.ArrivalMS), lastAudio.ArrivalMS, obs.ElapsedMS, *lastAudio)
 	}
-	if firstVideo != nil && lastKey == nil && obs.ElapsedMS-firstVideo.ArrivalMS > firstFrameWarnMS {
+	if firstVideo != nil && lastKey == nil && obs.ElapsedMS-firstVideo.ArrivalMS > thresholds.FirstFrameWarnMS {
 		addOnce("no_video_keyframe", "warn", "已收到视频帧，采样窗口内尚未观察到关键帧", firstVideo.ArrivalMS, obs.ElapsedMS, *firstVideo)
 	}
-	if lastVideo != nil && obs.EndReason == "duration_limit" && obs.ElapsedMS-lastVideo.ArrivalMS > videoGapWarnMS {
+	if lastVideo != nil && obs.EndReason == "duration_limit" && obs.ElapsedMS-lastVideo.ArrivalMS > thresholds.VideoGapWarnMS {
 		addOnce("video_tail_gap", "warn", fmt.Sprintf("采样结束前 %d ms 未收到新视频帧", obs.ElapsedMS-lastVideo.ArrivalMS), lastVideo.ArrivalMS, obs.ElapsedMS, *lastVideo)
 	}
 	if firstVideo == nil && lastAudio == nil {
