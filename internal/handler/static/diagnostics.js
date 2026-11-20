@@ -2013,7 +2013,7 @@ node('explain').addEventListener('click', async () => {
 if (window.parent !== window) {
     let saving = false;
     const settingsButton = node('model-settings');
-    settingsButton.addEventListener('click', () => {
+    settingsButton?.addEventListener('click', () => {
         if (desktop) window.parent.postMessage({ kind: 'open-model-settings' }, '*');
     });
     for (const [id, name] of Object.entries({ json: 'report.json', dump: 'dump', bundle: 'evidence.zip' })) {
@@ -2030,10 +2030,10 @@ if (window.parent !== window) {
         if (event.source !== window.parent) return;
         if (event.data?.kind === 'desktop-shell') {
             desktop = true;
-            settingsButton.hidden = !event.data.modelSettings;
+            if (settingsButton) settingsButton.hidden = !event.data.modelSettings;
             if (!node('report').hidden) renderModelStatus();
         }
-        if (event.data?.kind === 'model-settings-closed' && !settingsButton.hidden) settingsButton.focus();
+        if (event.data?.kind === 'model-settings-closed' && settingsButton && !settingsButton.hidden) settingsButton.focus();
         if (event.data?.kind === 'model-settings-updated') {
             try {
                 await refreshModelConfiguration();

@@ -7,6 +7,10 @@
         ['/diagnostics/onvif', node('onvif-tool-link')],
         ['/diagnostics/review', node('review-tool-link')],
     ]);
+    const modeLinks = [...linkByPath.values(), node('capture-mode-link'), node('import-mode-link')];
+    const workbenchTab = document.querySelector('.workbench-tab[href="/diagnostics"]');
+    if (!workbenchTab || modeLinks.some((link) => !link)) return;
+
     const supportedRealtime = new Set(['rtmp', 'http-flv', 'hls']);
     const protocol = node('protocol');
     const address = node('url');
@@ -28,7 +32,7 @@
             if (href === path) link.setAttribute('aria-current', 'page');
             else link.removeAttribute('aria-current');
         }
-        document.querySelector('.workbench-tab[href="/diagnostics"]').setAttribute('aria-current', onvif || review ? 'true' : 'page');
+        workbenchTab.setAttribute('aria-current', onvif || review ? 'true' : 'page');
         window.dispatchEvent(new Event('diagnostic-tool-change'));
     }
 
@@ -39,7 +43,7 @@
         window.dispatchEvent(new Event('workbench-location-change'));
     }
 
-    for (const link of [...linkByPath.values(), node('capture-mode-link'), node('import-mode-link')]) {
+    for (const link of modeLinks) {
         link.addEventListener('click', (event) => {
             if (event.button !== 0 || event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
             event.preventDefault();
