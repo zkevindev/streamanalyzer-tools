@@ -260,6 +260,9 @@ func (s *Service) Start(req SampleRequest) (Run, error) {
 		protocol = ProtocolHTTPFLV
 	}
 	req.Protocol = protocol
+	if err := validateRolling(&req); err != nil {
+		return Run{}, err
+	}
 	if req.HLSVariant != nil && (protocol != ProtocolHLS || *req.HLSVariant < -1) {
 		return Run{}, fmt.Errorf("%w: hls_variant 仅适用于 HLS，-1 为最高码率，0 起为清单档位序号", ErrInvalid)
 	}
@@ -300,7 +303,7 @@ func (s *Service) Start(req SampleRequest) (Run, error) {
 		return Run{}, ErrBusy
 	}
 	run := newRun("sample", protocol, origin(target))
-	if req.ReconnectAttempts > 0 && req.SessionGroupID == "" {
+	if (req.ReconnectAttempts > 0 || req.SegmentSeconds > 0) && req.SessionGroupID == "" {
 		req.SessionGroupID = newRun("session", "", "").ID
 	}
 	run.SessionGroupID = req.SessionGroupID
@@ -320,7 +323,7 @@ func (s *Service) Start(req SampleRequest) (Run, error) {
 		return Run{}, err
 	}
 	if req.SessionGroupID != "" && req.SessionAttempt == 0 {
-		s.sessionGroups[req.SessionGroupID] = &diagnosticSessionGroup{id: req.SessionGroupID, createdAt: run.CreatedAt, runIDs: []string{run.ID}, status: "running"}
+		s.sessionGroups[req.SessionGroupID] = &diagnosticSessionGroup{id: req.SessionGroupID, createdAt: run.CreatedAt, runIDs: []string{run.ID}, status: "running", rolling: req.SegmentSeconds > 0, retain: req.RollingSegments, seconds: req.SegmentSeconds}
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())

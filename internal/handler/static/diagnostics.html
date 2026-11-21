@@ -84,6 +84,12 @@
                         <label for="reconnect-delay">间隔（ms）</label>
                         <input id="reconnect-delay" type="number" min="0" max="5000" value="500">
                     </div>
+                    <div id="rolling-options" hidden>
+                        <label for="segment-seconds">分段时长（0 不滚动）</label>
+                        <input id="segment-seconds" type="number" min="0" max="300" value="0">
+                        <label for="rolling-segments">保留最近段数</label>
+                        <input id="rolling-segments" type="number" min="1" max="12" value="3">
+                    </div>
                     <button type="submit">采样并保存原始流</button>
                 </div>
                 <div class="sample-options">

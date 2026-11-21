@@ -67,6 +67,8 @@ type SampleRequest struct {
 	HLSVariant        *int                `json:"hls_variant,omitempty"`
 	Profile           string              `json:"profile,omitempty"`
 	CustomThresholds  *AnalysisThresholds `json:"custom_thresholds,omitempty"`
+	SegmentSeconds    int                 `json:"segment_seconds,omitempty"`
+	RollingSegments   int                 `json:"rolling_segments,omitempty"`
 	SessionGroupID    string              `json:"-"`
 	SessionAttempt    int                 `json:"-"`
 }
