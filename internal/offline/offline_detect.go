@@ -62,6 +62,14 @@ func DetectMode(path, filename string) (models.OfflineMode, string) {
 		}
 	}
 
+	// 3.5 EBML / WebM / Matroska (0x1A 0x45 0xDF 0xA3)
+	if len(head) >= 4 && head[0] == 0x1A && head[1] == 0x45 && head[2] == 0xDF && head[3] == 0xA3 {
+		if bytes.Contains(head[:min(len(head), 128)], []byte("webm")) {
+			return models.OfflineModeWebM, "magic:webm"
+		}
+		return models.OfflineModeWebM, "magic:matroska"
+	}
+
 	// 4. MPEG-TS (188-byte packets or 192-byte M2TS packets)
 	if stride, offset := detectTSSync(head); stride > 0 {
 		if stride == 192 {
@@ -71,6 +79,11 @@ func DetectMode(path, filename string) (models.OfflineMode, string) {
 			return models.OfflineModeTS, "magic:ts"
 		}
 		return models.OfflineModeTS, "magic:ts-sync"
+	}
+
+	// 4.5 MPEG-PS (Program Stream Pack Start Code 0x000001BA)
+	if looksLikeMPEGPS(head) {
+		return models.OfflineModePS, "magic:mpeg-ps"
 	}
 
 	// 5. Annex B H.264 / H.265 elementary stream
@@ -156,6 +169,26 @@ func looksLikeAnnexB(head []byte) bool {
 	return valid > 0
 }
 
+func looksLikeMPEGPS(head []byte) bool {
+	if len(head) < 14 {
+		return false
+	}
+	// Check pack start code 00 00 01 BA within first 512 bytes and confirm valid marker bits.
+	limit := len(head) - 14
+	if limit > 512 {
+		limit = 512
+	}
+	for i := 0; i <= limit; i++ {
+		if head[i] == 0x00 && head[i+1] == 0x00 && head[i+2] == 0x01 && head[i+3] == 0xBA {
+			// MPEG-2 PS: (head[i+4] & 0xC0) == 0x40; MPEG-1 PS: (head[i+4] & 0xF0) == 0x20
+			if (head[i+4]&0xC0) == 0x40 || (head[i+4]&0xF0) == 0x20 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func detectByExt(filename string) (models.OfflineMode, string) {
 	ext := strings.ToLower(filepath.Ext(strings.TrimSpace(filename)))
 	switch ext {
@@ -165,6 +198,10 @@ func detectByExt(filename string) (models.OfflineMode, string) {
 		return models.OfflineModeMP4, "ext:" + ext
 	case ".ts", ".m2ts", ".mts":
 		return models.OfflineModeTS, "ext:" + ext
+	case ".ps", ".mpg", ".mpeg", ".vob":
+		return models.OfflineModePS, "ext:" + ext
+	case ".webm", ".mkv", ".mka":
+		return models.OfflineModeWebM, "ext:" + ext
 	case ".pcap", ".pcapng", ".cap":
 		return models.OfflineModePCAP, "ext:" + ext
 	case ".h264", ".264", ".h265", ".265", ".hevc", ".annexb", ".es":

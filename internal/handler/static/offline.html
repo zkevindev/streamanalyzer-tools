@@ -175,7 +175,26 @@
     .pager{display:inline-flex;align-items:center;gap:.45rem;font-size:.79rem;color:var(--muted)}
     .subtext{font-size:.74rem;color:var(--muted);display:block;margin-top:.12rem}
     .err-text{color:var(--danger);font-size:.79rem;word-break:break-word}
-    @media(max-width:860px){.chart-grid{grid-template-columns:1fr}}
+    .ff-grid{display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-top:.55rem}
+    .ff-panel{border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);padding:.9rem 1rem}
+    .ff-panel-head{display:flex;justify-content:space-between;align-items:center;gap:.5rem;margin-bottom:.6rem;flex-wrap:wrap}
+    .ff-panel-title{font-size:.86rem;font-weight:650;color:var(--text)}
+    .clip-form{display:flex;align-items:flex-end;gap:.55rem;flex-wrap:wrap}
+    .clip-form .form-group{min-width:110px;flex:1}
+    .thumb-card{margin-top:.65rem;border:1px solid var(--border);border-radius:var(--radius-sm);background:#0f172a;padding:.6rem;text-align:center}
+    .thumb-card img{max-width:100%;max-height:260px;border-radius:4px;display:block;margin:0 auto}
+    .thumb-meta{font-size:.74rem;color:#cbd5e1;margin-top:.4rem;font-family:var(--font-data)}
+    .audit-range-list{display:flex;flex-direction:column;gap:.35rem;margin-top:.45rem;max-height:220px;overflow:auto}
+    .audit-range-item{display:flex;justify-content:space-between;align-items:center;gap:.5rem;padding:.38rem .55rem;border:1px solid var(--border);border-radius:var(--radius-xs);font-size:.78rem;background:var(--bg)}
+    .compare-panel{border:1px solid var(--border);border-radius:var(--radius);background:var(--surface);padding:1.15rem 1.25rem;margin-bottom:1rem}
+    .compare-selectors{display:grid;grid-template-columns:1fr 1fr auto;gap:.75rem;align-items:end;margin-bottom:.85rem}
+    .diff-row-changed{background:rgba(245,158,11,.10)}
+    .diff-row-changed td:first-child{border-left:3px solid var(--warning)}
+    .diff-badge{display:inline-block;padding:.1rem .4rem;border-radius:999px;font-size:.69rem;font-weight:600;background:rgba(239,68,68,.12);color:var(--danger)}
+    .diff-badge.same{background:rgba(16,185,129,.12);color:var(--success)}
+    .audio-preview{margin-top:.35rem;height:28px;max-width:240px;display:block}
+    .proto-badge{display:inline-block;padding:.12rem .45rem;border-radius:999px;font-size:.71rem;font-weight:620;background:var(--surface-inset);border:1px solid var(--border);color:var(--text);text-transform:uppercase}
+    @media(max-width:860px){.chart-grid,.ff-grid,.compare-selectors{grid-template-columns:1fr}}
     @media(max-width:640px){.form-grid{grid-template-columns:1fr}.page-header{flex-direction:column}.kv{grid-template-columns:115px 1fr}}
   </style>
   <script src="/static/workbench-navigation.js" defer></script>
@@ -230,8 +249,10 @@
             <option value="flv">flv（FLV / Enhanced FLV）</option>
             <option value="mp4">mp4（MP4 / fMP4）</option>
             <option value="ts">ts（MPEG-TS / M2TS）</option>
+            <option value="ps">ps（MPEG-PS / GB28181 .ps/.mpg）</option>
+            <option value="webm">webm（WebM / MKV，含 AV1/VP8/VP9/Opus）</option>
             <option value="annexb">annexb（H.264 / H.265 裸码流）</option>
-            <option value="pcap">pcap / pcapng（RTMP 抓包）</option>
+            <option value="pcap">pcap / pcapng（RTMP / RTP / HTTP-FLV / TS 抓包）</option>
             <option value="raw">raw（RTMP 单方向裸流）</option>
           </select>
         </div>
@@ -257,7 +278,10 @@
     <div class="card">
       <div class="section-head" style="margin-bottom:.25rem">
         <div class="section-title">解析任务列表</div>
-        <button class="btn secondary sm" onclick="loadTasks()">刷新</button>
+        <div class="actions">
+          <button class="btn secondary sm" onclick="toggleComparePanel()">两文件 A/B 对比</button>
+          <button class="btn secondary sm" onclick="loadTasks()">刷新</button>
+        </div>
       </div>
       <div class="table-wrap">
         <table>
@@ -270,6 +294,49 @@
         </table>
       </div>
       <div id="emptyState" class="empty-state" style="display:none">暂无解析任务，上传任意媒体或抓包文件开始分析</div>
+    </div>
+
+    <!-- 两文件 A/B 对比工作区 -->
+    <div id="comparePanel" class="compare-panel" style="display:none">
+      <div class="section-head" style="margin-bottom:.65rem">
+        <div class="section-title">离线两文件 A/B 参数与曲线对比</div>
+        <button type="button" class="btn secondary sm" onclick="toggleComparePanel(false)">收起</button>
+      </div>
+      <div class="compare-selectors">
+        <div class="form-group">
+          <label for="compareTaskA">样本 A（基准文件）</label>
+          <select id="compareTaskA"></select>
+        </div>
+        <div class="form-group">
+          <label for="compareTaskB">样本 B（对比文件）</label>
+          <select id="compareTaskB"></select>
+        </div>
+        <button type="button" class="btn" id="btnRunCompare" onclick="runCompare()">开始 A/B 对比</button>
+      </div>
+      <div id="compareStatus" class="hint" style="margin-bottom:.5rem">选择任意两个已完成的离线任务，对比编码参数、码率、GOP、时间戳健康度，并同图叠加趋势曲线。</div>
+      <div id="compareResultBox" style="display:none">
+        <div id="compareSummaryWrap" class="warning-box" style="display:none;margin-bottom:.75rem">
+          <ul id="compareSummaryList"></ul>
+        </div>
+        <div class="table-wrap" style="margin-top:0">
+          <table class="small">
+            <thead>
+              <tr><th>维度</th><th>指标</th><th id="cmpHeadA">样本 A</th><th id="cmpHeadB">样本 B</th><th>差异</th></tr>
+            </thead>
+            <tbody id="compareDiffBody"></tbody>
+          </table>
+        </div>
+        <div class="chart-grid" style="margin-top:.9rem">
+          <div class="chart-box" id="cmpBoxBitrate" style="display:none">
+            <div class="chart-title">瞬时码率叠加对比（kbps）</div>
+            <div id="chartCmpBitrate" class="chart"></div>
+          </div>
+          <div class="chart-box" id="cmpBoxFrameSize" style="display:none">
+            <div class="chart-title">视频帧大小叠加对比（Bytes）</div>
+            <div id="chartCmpFrameSize" class="chart"></div>
+          </div>
+        </div>
+      </div>
     </div>
 
     <div id="detail" class="detail">
@@ -300,6 +367,13 @@
           </div>
         </div>
 
+        <div class="section" id="rtpStatsSection" style="display:none">
+          <div class="section-head">
+            <div class="section-title">RTP / RTCP 传输质量统计</div>
+          </div>
+          <div class="stats-cards" id="rtpStatsCards"></div>
+        </div>
+
         <div class="section" id="mediaProfileSection" style="display:none">
           <div class="section-head">
             <div class="section-title" id="mediaProfileTitle">媒体概况</div>
@@ -312,6 +386,52 @@
           </div>
           <div id="mediaProfileWarningsWrap" class="warning-box" style="display:none">
             <ul id="mediaProfileWarnings"></ul>
+          </div>
+        </div>
+
+        <div class="section" id="ffmpegToolsSection" style="display:none">
+          <div class="section-head">
+            <div class="section-title">FFmpeg 联动诊断（解码体检 · 异常画面抽帧 · 区间无损切片）</div>
+          </div>
+          <div class="ff-grid">
+            <div class="ff-panel">
+              <div class="ff-panel-head">
+                <div class="ff-panel-title">解码错误 / 黑帧 / 冻结帧 / 静音扫描</div>
+                <div class="actions">
+                  <button type="button" class="btn sm" id="btnRunAudit" onclick="runDecodeAudit(false)">运行解码体检</button>
+                  <button type="button" class="btn secondary sm" id="btnForceAudit" onclick="runDecodeAudit(true)" style="display:none">重新扫描</button>
+                </div>
+              </div>
+              <div id="auditStatusHint" class="hint" style="margin:0">按需触发本机 FFmpeg 解码扫描，定位黑帧（blackdetect）、冻结帧（freezedetect）、静音（silencedetect）与解码报错。</div>
+              <div id="auditResultBox" style="display:none;margin-top:.6rem"></div>
+            </div>
+            <div class="ff-panel">
+              <div class="ff-panel-head">
+                <div class="ff-panel-title">区间无损切片（-c copy）与任意时刻抽帧预览</div>
+              </div>
+              <div class="clip-form">
+                <div class="form-group">
+                  <label for="clipStartSec">起始秒 (start_sec)</label>
+                  <input id="clipStartSec" type="number" step="0.1" min="0" value="0" />
+                </div>
+                <div class="form-group">
+                  <label for="clipEndSec">结束秒 (end_sec)</label>
+                  <input id="clipEndSec" type="number" step="0.1" min="0.1" value="5" />
+                </div>
+                <button type="button" class="btn sm" id="btnExportClip" onclick="exportClipRange()">导出无损切片</button>
+              </div>
+              <div id="clipResultHint" class="hint" style="margin-top:.45rem">提取最小复现片段用于回归或问题提交，不重新编码。</div>
+              <div style="border-top:1px solid var(--border);margin-top:.7rem;padding-top:.65rem">
+                <div class="clip-form">
+                  <div class="form-group">
+                    <label for="thumbTimeSec">抽帧预览时间（秒）</label>
+                    <input id="thumbTimeSec" type="number" step="0.1" min="0" value="0" />
+                  </div>
+                  <button type="button" class="btn secondary sm" onclick="previewThumbnailAtSec()">抽取 JPEG 画面</button>
+                </div>
+                <div id="thumbPreviewWrap" style="display:none"></div>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -444,6 +564,20 @@
           </div>
         </div>
 
+        <div class="section" id="pcapExtSection" style="display:none">
+          <div class="section-title" style="margin-bottom:.35rem">扩展协议媒体流（RTP / RTCP / HTTP-FLV / MPEG-TS）</div>
+          <div class="table-wrap">
+            <table class="small">
+              <thead>
+                <tr>
+                  <th>flow</th><th>协议</th><th>源 → 目的</th><th>包数 / 负载</th><th>RTP / 传输指标</th><th>codec</th><th>产物</th><th>err</th>
+                </tr>
+              </thead>
+              <tbody id="flowPcapExt"></tbody>
+            </table>
+          </div>
+        </div>
+
         <div class="section" id="rawFrameSection" style="display:none">
           <div class="section-head">
             <div class="section-title" id="mediaDetailMainTitle">媒体包明细</div>
@@ -534,6 +668,8 @@
     let mp4PanelTab = 'boxes';
     let mp4ReportMeta = { taskId: '', rel: '' };
     let inspectorState = null;
+    let cachedTaskList = [];
+    let compareCharts = {};
 
     function setInputTab(tab){
       currentInputTab = (tab === 'local') ? 'local' : 'upload';
@@ -643,12 +779,14 @@
       if(serverPortWrap) serverPortWrap.style.display = (mode === 'pcap') ? '' : 'none';
       if(skipBytesWrap) skipBytesWrap.style.display = (mode === 'pcap' || mode === 'raw') ? '' : 'none';
       const hints = {
-        auto: '提示：默认通过文件头魔数与扩展名自动识别 FLV / MP4(含 fMP4) / TS / H.264·H.265 Annex B / PCAP / RTMP 裸流。',
+        auto: '提示：默认通过文件头魔数与扩展名自动识别 FLV / MP4(含 fMP4) / TS / MPEG-PS / WebM·MKV / H.264·H.265 Annex B / PCAP / RTMP 裸流。',
         flv: '提示：FLV 会解析传统与 Enhanced Tag（含 avc1 / hvc1 / mp4a），导出裸流并分析码率、GOP 与音画同步。',
         mp4: '提示：MP4 支持标准 MP4 与 fMP4(moof/trun)，检测 FastStart(moov 位置)、提取编码参数与样例时间线。',
         ts: '提示：TS 支持 188B 与 192B M2TS，解析 PAT/PMT/PES，并扫描全文件 CC 连续性错误、TEI、同步丢失与 PCR 间隔。',
+        ps: '提示：MPEG-PS（.ps/.mpg，常用于 GB28181/安防录像）解析 Pack Header、PSM、90kHz 音视频 PES，自动将 G.711(PCMA/PCMU) 转为可试听 WAV。',
+        webm: '提示：WebM / Matroska（.webm/.mkv）纯 Go EBML 解析，支持 AV1（解析 Sequence Header OBU）/ VP8 / VP9 / H.264 / H.265 / Opus / AAC。',
         annexb: '提示：Annex B 模式直接解析 .h264 / .h265 裸码流，提取 SPS 参数、统计 NALU 分布并按帧聚合。',
-        pcap: '提示：PCAP 按指定 RTMP 端口重组双向 TCP 流并自动区分 push/pull；无握手抓包可将 skip_bytes 设为 0。',
+        pcap: '提示：PCAP 自动提取 RTMP 双向流，并同步扫描 UDP RTP/RTCP（按 SSRC 统计丢包/乱序/Jitter 并解包 H.264/H.265/PS/TS/G.711）、UDP TS、HTTP-FLV 与 HTTP TS。',
         raw: '提示：RAW 模式解析单方向 RTMP chunk 裸流；完整握手跳过 3073 字节，无握手可设为 0。'
       };
       hintEl.textContent = hints[mode] || hints.auto;
@@ -847,6 +985,8 @@
       const empty = document.getElementById('emptyState');
       tb.innerHTML = '';
       const tasks = (data.tasks || []).sort((a,b) => String(b.created_at).localeCompare(String(a.created_at)));
+      cachedTaskList = tasks;
+      refreshCompareSelectors();
       if(!tasks.length){ empty.style.display = 'block'; return; }
       empty.style.display = 'none';
       tasks.forEach(t => {
@@ -1210,6 +1350,14 @@
             btn.onclick = () => openFrameInspector(idx0);
             meta.appendChild(btn);
           }
+        }
+        if(c.first_dts_ms !== undefined && c.first_dts_ms !== null && Number(c.first_dts_ms) >= 0){
+          const snapBtn = document.createElement('button');
+          snapBtn.type = 'button';
+          snapBtn.className = 'btn secondary sm';
+          snapBtn.textContent = '预览画面';
+          snapBtn.onclick = () => previewThumbnailAtMS(Number(c.first_dts_ms), c.title || '异常帧');
+          meta.appendChild(snapBtn);
         }
         card.appendChild(meta);
         grid.appendChild(card);
@@ -1661,12 +1809,31 @@
         let n = 0;
         if(!isTS && rawRel){ if(n++) addSep(links); addLink(links, base + rawRel, '原始文件'); }
         if(vRel){ if(n++) addSep(links); addLink(links, base + vRel, '视频裸流'); }
-        if(aRel){ if(n++) addSep(links); addLink(links, base + aRel, '音频裸流'); }
+        if(aRel){
+          if(n++) addSep(links);
+          addLink(links, base + aRel, aRel.toLowerCase().endsWith('.wav') ? '音频 WAV' : '音频裸流');
+          if(aRel.toLowerCase().endsWith('.wav')){
+            const au = document.createElement('audio');
+            au.className = 'audio-preview';
+            au.controls = true;
+            au.preload = 'none';
+            au.src = base + aRel;
+            links.appendChild(au);
+          }
+        }
         extras.forEach(p => {
           const rel = toRel(taskId, p);
           if(!rel) return;
           if(n++) addSep(links);
           addLink(links, base + rel, rel.split('/').pop());
+          if(rel.toLowerCase().endsWith('.wav')){
+            const au = document.createElement('audio');
+            au.className = 'audio-preview';
+            au.controls = true;
+            au.preload = 'none';
+            au.src = base + rel;
+            links.appendChild(au);
+          }
         });
         const codec = [f.video_codec, f.audio_codec].filter(Boolean).join(' / ') || '-';
         tr.innerHTML =
@@ -1714,6 +1881,483 @@
         tr.appendChild(tdErr);
         tb.appendChild(tr);
       });
+    }
+
+    function renderPCAPExtFlows(taskId, flows){
+      const sec = document.getElementById('pcapExtSection');
+      const tb = document.getElementById('flowPcapExt');
+      if(!sec || !tb) return;
+      tb.innerHTML = '';
+      if(!flows || !flows.length){
+        sec.style.display = 'none';
+        return;
+      }
+      sec.style.display = '';
+      const base = '/api/offline/tasks/' + encodeURIComponent(taskId) + '/files/';
+      flows.forEach(f => {
+        const tr = document.createElement('tr');
+        const src = (f.client_ip || '-') + ':' + (f.client_port || '-');
+        const dst = (f.server_ip || '-') + ':' + (f.server_port || '-');
+        const proto = f.protocol || f.direction || 'ext';
+        const links = document.createElement('div');
+        const rawRel = toRel(taskId, f.raw_path);
+        const vRel = toRel(taskId, f.video_path);
+        const aRel = toRel(taskId, f.audio_path);
+        let n = 0;
+        if(rawRel){ if(n++) addSep(links); addLink(links, base + rawRel, 'raw'); }
+        if(vRel){ if(n++) addSep(links); addLink(links, base + vRel, 'video'); }
+        if(aRel){
+          if(n++) addSep(links);
+          addLink(links, base + aRel, aRel.toLowerCase().endsWith('.wav') ? 'audio.wav' : 'audio');
+          if(aRel.toLowerCase().endsWith('.wav')){
+            const au = document.createElement('audio');
+            au.className = 'audio-preview';
+            au.controls = true;
+            au.preload = 'none';
+            au.src = base + aRel;
+            links.appendChild(au);
+          }
+        }
+        (Array.isArray(f.artifact_paths) ? f.artifact_paths : []).forEach(p => {
+          const rel = toRel(taskId, p);
+          if(!rel) return;
+          if(n++) addSep(links);
+          addLink(links, base + rel, rel.split('/').pop());
+          if(rel.toLowerCase().endsWith('.wav')){
+            const au = document.createElement('audio');
+            au.className = 'audio-preview';
+            au.controls = true;
+            au.preload = 'none';
+            au.src = base + rel;
+            links.appendChild(au);
+          }
+        });
+        let rtpSummary = '-';
+        if(f.rtp_stats){
+          const r = f.rtp_stats;
+          const ssrcHex = '0x' + Number(r.ssrc || 0).toString(16).toUpperCase().padStart(8, '0');
+          rtpSummary = 'SSRC ' + ssrcHex + ' · PT ' + r.payload_type + (r.payload_name ? ('(' + r.payload_name + ')') : '') +
+            ' · 丢包 ' + (r.lost || 0) + ' (' + Number(r.loss_rate_pct || 0).toFixed(2) + '%)' +
+            ' · 乱序 ' + (r.out_of_order || 0) + ' · Jitter ' + Number(r.jitter_ms || 0).toFixed(2) + 'ms';
+        }
+        const codec = [f.video_codec, f.audio_codec].filter(Boolean).join(' / ') || '-';
+        tr.innerHTML =
+          '<td>flow' + String(f.flow_id).padStart(3, '0') + '</td>' +
+          '<td><span class="proto-badge">' + esc(proto) + '</span></td>' +
+          '<td>' + esc(src + ' → ' + dst) + '</td>' +
+          '<td>' + esc((f.tcp_pkt_count || 0) + ' pkts / ' + fmtBytes(f.payload_bytes)) + '</td>' +
+          '<td>' + esc(rtpSummary) + '</td>' +
+          '<td><code>' + esc(codec) + '</code></td>';
+        const tdLinks = document.createElement('td'); tdLinks.appendChild(links);
+        const tdErr = document.createElement('td'); tdErr.className = 'err-text'; tdErr.textContent = f.error || '';
+        tr.appendChild(tdLinks);
+        tr.appendChild(tdErr);
+        tb.appendChild(tr);
+      });
+    }
+
+    function renderRTPStats(flow){
+      const sec = document.getElementById('rtpStatsSection');
+      const cards = document.getElementById('rtpStatsCards');
+      if(!sec || !cards) return;
+      const r = flow && flow.rtp_stats;
+      if(!r){
+        sec.style.display = 'none';
+        cards.innerHTML = '';
+        return;
+      }
+      sec.style.display = '';
+      const lossCls = r.loss_rate_pct >= 1 ? 'warn' : (r.lost > 0 ? 'warn' : 'ok');
+      const ssrcHex = '0x' + Number(r.ssrc || 0).toString(16).toUpperCase().padStart(8, '0');
+      const items = [
+        { k: 'SSRC / PT', v: ssrcHex + ' / PT ' + r.payload_type, sub: (r.payload_name || '-') + ' · ' + (r.clock_rate || 90000) + ' Hz' },
+        { k: '实收 / 期望包', v: (r.packets || 0) + ' / ' + (r.expected || 0), sub: 'Seq ' + r.first_seq + ' → ' + r.last_seq + ' · M=' + (r.marker_count || 0) },
+        { k: 'RTP 丢包', v: (r.lost || 0) + ' (' + Number(r.loss_rate_pct || 0).toFixed(2) + '%)', sub: '乱序 ' + (r.out_of_order || 0) + ' · 重复 ' + (r.duplicates || 0), cls: lossCls },
+        { k: 'RFC 3550 Jitter', v: Number(r.jitter_ms || 0).toFixed(2) + ' ms', sub: '峰值 ' + Number(r.max_jitter_ms || 0).toFixed(2) + ' ms' },
+        { k: 'RTCP 报告', v: (r.rtcp_count || 0) + ' 包', sub: 'SR 发送包 ' + (r.rtcp_sender_packets || 0) + (r.rtcp_fraction_lost_pct ? (' · 丢包率 ' + Number(r.rtcp_fraction_lost_pct).toFixed(1) + '%') : '') }
+      ];
+      cards.innerHTML = items.map(it =>
+        '<div class="stat-card' + (it.cls ? (' ' + it.cls) : '') + '">' +
+        '<div class="stat-label">' + esc(it.k) + '</div>' +
+        '<div class="stat-value">' + esc(it.v) + '</div>' +
+        (it.sub ? '<div class="stat-sub">' + esc(it.sub) + '</div>' : '') +
+        '</div>'
+      ).join('');
+    }
+
+    function resetFFmpegTools(flow){
+      const sec = document.getElementById('ffmpegToolsSection');
+      if(!sec) return;
+      if(!currentId || !flow){
+        sec.style.display = 'none';
+        return;
+      }
+      sec.style.display = '';
+      const box = document.getElementById('auditResultBox');
+      const hint = document.getElementById('auditStatusHint');
+      const forceBtn = document.getElementById('btnForceAudit');
+      const thumbWrap = document.getElementById('thumbPreviewWrap');
+      const clipHint = document.getElementById('clipResultHint');
+      if(box){ box.style.display = 'none'; box.innerHTML = ''; }
+      if(hint) hint.textContent = '按需触发本机 FFmpeg 解码扫描，定位黑帧（blackdetect）、冻结帧（freezedetect）、静音（silencedetect）与解码报错。';
+      if(forceBtn) forceBtn.style.display = 'none';
+      if(thumbWrap){ thumbWrap.style.display = 'none'; thumbWrap.innerHTML = ''; }
+      if(clipHint) clipHint.textContent = '提取最小复现片段用于回归或问题提交，不重新编码。';
+      const durSec = (flow.profile && flow.profile.duration_ms > 0) ? (flow.profile.duration_ms / 1000) : 5;
+      const endInput = document.getElementById('clipEndSec');
+      if(endInput) endInput.value = String(Math.max(0.5, Math.min(10, Number(durSec.toFixed(1)))));
+    }
+
+    async function runDecodeAudit(force){
+      if(!currentId) return;
+      const btn = document.getElementById('btnRunAudit');
+      const forceBtn = document.getElementById('btnForceAudit');
+      const hint = document.getElementById('auditStatusHint');
+      if(btn) btn.disabled = true;
+      if(forceBtn) forceBtn.disabled = true;
+      if(hint) hint.textContent = '正在调用 FFmpeg 执行全流解码体检（黑帧/冻结/静音/解码错误），请稍候…';
+      try{
+        const qs = new URLSearchParams({ flow: String(currentFlowIndex), force: force ? '1' : '0' });
+        const resp = await fetch('/api/offline/tasks/' + encodeURIComponent(currentId) + '/decode-audit?' + qs.toString(), { method: 'POST' });
+        const data = await resp.json();
+        if(!resp.ok){
+          if(hint) hint.textContent = '解码体检失败：' + (data.error || ('HTTP ' + resp.status));
+          return;
+        }
+        renderDecodeAuditResult(data);
+        if(forceBtn) forceBtn.style.display = '';
+      }catch(e){
+        if(hint) hint.textContent = '解码体检请求异常：' + e.message;
+      }finally{
+        if(btn) btn.disabled = false;
+        if(forceBtn) forceBtn.disabled = false;
+      }
+    }
+
+    function renderDecodeAuditResult(a){
+      const hint = document.getElementById('auditStatusHint');
+      const box = document.getElementById('auditResultBox');
+      if(!box) return;
+      const blacks = Array.isArray(a.black_frames) ? a.black_frames : [];
+      const freezes = Array.isArray(a.freeze_frames) ? a.freeze_frames : [];
+      const silences = Array.isArray(a.silence_ranges) ? a.silence_ranges : [];
+      const errSamples = Array.isArray(a.error_samples) ? a.error_samples : [];
+      const warns = Array.isArray(a.warnings) ? a.warnings : [];
+      if(hint){
+        hint.textContent = '体检完成（耗时 ' + (a.duration_ms || 0) + ' ms）：' +
+          '解码报错 ' + (a.decode_errors || 0) + ' 条 · 黑帧 ' + blacks.length + ' 段 · 冻结 ' + freezes.length + ' 段 · 静音 ' + silences.length + ' 段';
+      }
+      const parts = [];
+      const renderRanges = (title, items) => {
+        if(!items.length) return '';
+        let html = '<div style="margin-top:.45rem"><strong style="font-size:.79rem">' + esc(title) + ' (' + items.length + ')</strong><div class="audit-range-list">';
+        items.forEach(r => {
+          const midMS = Math.round(((Number(r.start_sec || 0) + Number(r.end_sec || 0)) / 2) * 1000);
+          const s0 = Math.max(0, Number(r.start_sec || 0) - 2).toFixed(1);
+          const e0 = (Number(r.end_sec || 0) + 2).toFixed(1);
+          html += '<div class="audit-range-item">' +
+            '<span><code>' + Number(r.start_sec || 0).toFixed(2) + 's → ' + Number(r.end_sec || 0).toFixed(2) + 's</code>（持续 ' + Number(r.duration_sec || 0).toFixed(2) + 's）</span>' +
+            '<span class="actions">' +
+              '<button type="button" class="btn secondary sm" onclick="previewThumbnailAtMS(' + midMS + ', \'' + esc(title) + '\')">预览画面</button>' +
+              '<button type="button" class="btn secondary sm" onclick="fillClipRange(' + s0 + ',' + e0 + ')">填入切片</button>' +
+            '</span></div>';
+        });
+        html += '</div></div>';
+        return html;
+      };
+      parts.push(renderRanges('黑帧区间', blacks));
+      parts.push(renderRanges('冻结帧区间', freezes));
+      parts.push(renderRanges('静音区间', silences));
+      if(errSamples.length){
+        parts.push('<div style="margin-top:.45rem"><strong style="font-size:.79rem;color:var(--danger)">解码错误样本（共 ' + (a.decode_errors || errSamples.length) + ' 条）</strong><pre class="meta-box" style="max-height:130px;margin-top:.3rem">' + esc(errSamples.join('\n')) + '</pre></div>');
+      }
+      if(warns.length){
+        parts.push('<div class="hint" style="color:var(--warning);margin-top:.35rem">' + esc(warns.join('；')) + '</div>');
+      }
+      if(!blacks.length && !freezes.length && !silences.length && !errSamples.length){
+        parts.push('<div class="hint" style="color:var(--success);margin-top:.35rem">未检测到黑帧、冻结帧、长静音或 FFmpeg 解码错误。</div>');
+      }
+      box.innerHTML = parts.join('');
+      box.style.display = '';
+    }
+
+    function fillClipRange(startSec, endSec){
+      const s = document.getElementById('clipStartSec');
+      const e = document.getElementById('clipEndSec');
+      if(s) s.value = String(Math.max(0, Number(startSec || 0)));
+      if(e) e.value = String(Math.max(Number(startSec || 0) + 0.5, Number(endSec || 5)));
+      const sec = document.getElementById('ffmpegToolsSection');
+      if(sec) sec.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    async function exportClipRange(){
+      if(!currentId) return;
+      const startSec = Number(document.getElementById('clipStartSec')?.value || 0);
+      const endSec = Number(document.getElementById('clipEndSec')?.value || 0);
+      const hint = document.getElementById('clipResultHint');
+      const btn = document.getElementById('btnExportClip');
+      if(!isFinite(startSec) || !isFinite(endSec) || endSec <= startSec){
+        if(hint) hint.textContent = '结束时间必须大于起始时间。';
+        return;
+      }
+      if(btn) btn.disabled = true;
+      if(hint) hint.textContent = '正在执行无损切片（-c copy）…';
+      try{
+        const resp = await fetch('/api/offline/tasks/' + encodeURIComponent(currentId) + '/clip', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ flow: currentFlowIndex, start_sec: startSec, end_sec: endSec })
+        });
+        const data = await resp.json();
+        if(!resp.ok){
+          if(hint) hint.textContent = '切片失败：' + (data.error || ('HTTP ' + resp.status));
+          return;
+        }
+        if(hint){
+          hint.innerHTML = '切片完成：<code>' + esc(data.filename || data.rel_path) + '</code> (' + esc(fmtBytes(data.size_bytes)) + ') · ' +
+            '<a class="link" href="' + esc(data.download_url) + '" download>下载无损切片</a>';
+        }
+      }catch(e){
+        if(hint) hint.textContent = '切片请求异常：' + e.message;
+      }finally{
+        if(btn) btn.disabled = false;
+      }
+    }
+
+    function previewThumbnailAtSec(){
+      const secVal = Number(document.getElementById('thumbTimeSec')?.value || 0);
+      previewThumbnailAtMS(Math.max(0, Math.round(secVal * 1000)), '手动抽帧');
+    }
+
+    function previewThumbnailAtMS(timeMS, label){
+      if(!currentId) return;
+      const wrap = document.getElementById('thumbPreviewWrap');
+      const timeInput = document.getElementById('thumbTimeSec');
+      if(timeInput) timeInput.value = (Number(timeMS || 0) / 1000).toFixed(2);
+      if(!wrap) return;
+      const url = '/api/offline/tasks/' + encodeURIComponent(currentId) + '/thumbnail?flow=' + currentFlowIndex + '&time_ms=' + Math.max(0, Math.round(Number(timeMS || 0)));
+      wrap.style.display = '';
+      wrap.innerHTML = '<div class="thumb-card"><div class="thumb-meta">正在抽取 ' + esc(label || '') + ' @ ' + (Number(timeMS || 0) / 1000).toFixed(2) + 's 画面…</div></div>';
+      const img = new Image();
+      img.onload = () => {
+        wrap.innerHTML = '<div class="thumb-card"></div>';
+        const card = wrap.firstChild;
+        card.appendChild(img);
+        const meta = document.createElement('div');
+        meta.className = 'thumb-meta';
+        meta.textContent = (label ? (label + ' · ') : '') + 't = ' + (Number(timeMS || 0) / 1000).toFixed(3) + ' s (' + Math.round(Number(timeMS || 0)) + ' ms) · ' + img.naturalWidth + '×' + img.naturalHeight;
+        card.appendChild(meta);
+      };
+      img.onerror = async () => {
+        let msg = '抽帧失败（请确认本机已安装 ffmpeg 且媒体流含可解码视频）';
+        try{
+          const r = await fetch(url);
+          if(!r.ok){
+            const j = await r.json();
+            if(j && j.error) msg = j.error;
+          }
+        }catch(_){}
+        wrap.innerHTML = '<div class="hint" style="color:var(--danger);margin-top:.45rem">' + esc(msg) + '</div>';
+      };
+      img.src = url;
+      const sec = document.getElementById('ffmpegToolsSection');
+      if(sec) sec.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    function loadInspectorThumbnail(timeMS){
+      const wrap = document.getElementById('inspectorThumbBox');
+      if(!wrap || !inspectorState) return;
+      const ms = Math.max(0, Math.round(Number(timeMS || 0)));
+      const url = '/api/offline/tasks/' + encodeURIComponent(inspectorState.taskId) + '/thumbnail?flow=' + inspectorState.flowIdx + '&time_ms=' + ms;
+      wrap.innerHTML = '<div class="thumb-card"><div class="thumb-meta">正在抽取 @ ' + (ms / 1000).toFixed(3) + ' s 画面…</div></div>';
+      const img = new Image();
+      img.onload = () => {
+        wrap.innerHTML = '<div class="thumb-card"></div>';
+        wrap.firstChild.appendChild(img);
+        const meta = document.createElement('div');
+        meta.className = 'thumb-meta';
+        meta.textContent = '抽帧画面 · t = ' + (ms / 1000).toFixed(3) + ' s · ' + img.naturalWidth + '×' + img.naturalHeight;
+        wrap.firstChild.appendChild(meta);
+      };
+      img.onerror = () => {
+        wrap.innerHTML = '<div class="hint" style="color:var(--danger);margin-top:.35rem">当前帧暂无法抽取解码画面（需本机安装 ffmpeg 且含可解码视频）。</div>';
+      };
+      img.src = url;
+    }
+
+    function toggleComparePanel(forceShow){
+      const panel = document.getElementById('comparePanel');
+      if(!panel) return;
+      const next = (forceShow === undefined) ? (panel.style.display === 'none') : Boolean(forceShow);
+      panel.style.display = next ? '' : 'none';
+      if(next){
+        refreshCompareSelectors();
+        panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }
+    }
+
+    function refreshCompareSelectors(){
+      const selA = document.getElementById('compareTaskA');
+      const selB = document.getElementById('compareTaskB');
+      if(!selA || !selB) return;
+      const done = (cachedTaskList || []).filter(t => String(t.status || '').toLowerCase() === 'done');
+      const prevA = selA.value;
+      const prevB = selB.value;
+      const fill = (sel, prev, fallbackIdx) => {
+        sel.innerHTML = '';
+        if(!done.length){
+          const opt = document.createElement('option');
+          opt.value = '';
+          opt.textContent = '暂无已完成任务';
+          sel.appendChild(opt);
+          return;
+        }
+        done.forEach((t, idx) => {
+          const opt = document.createElement('option');
+          opt.value = t.id;
+          opt.textContent = (t.input_name || t.id) + ' [' + (t.mode || '-') + '] (' + fmtBytes(t.input_size) + ')';
+          if(prev ? (t.id === prev) : (idx === fallbackIdx)) opt.selected = true;
+          sel.appendChild(opt);
+        });
+      };
+      fill(selA, prevA, 0);
+      fill(selB, prevB, done.length > 1 ? 1 : 0);
+    }
+
+    function openCompareWithCurrent(){
+      toggleComparePanel(true);
+      const selA = document.getElementById('compareTaskA');
+      const selB = document.getElementById('compareTaskB');
+      if(selA && currentId) selA.value = currentId;
+      if(selB && selB.value === currentId){
+        const other = (cachedTaskList || []).find(t => String(t.status || '').toLowerCase() === 'done' && t.id !== currentId);
+        if(other) selB.value = other.id;
+      }
+    }
+
+    function destroyCompareCharts(){
+      Object.keys(compareCharts).forEach(k => {
+        if(compareCharts[k]){ try{ compareCharts[k].dispose(); }catch(_){} }
+      });
+      compareCharts = {};
+    }
+
+    async function runCompare(){
+      const taskA = document.getElementById('compareTaskA')?.value || '';
+      const taskB = document.getElementById('compareTaskB')?.value || '';
+      const statusEl = document.getElementById('compareStatus');
+      const resBox = document.getElementById('compareResultBox');
+      if(!taskA || !taskB){
+        if(statusEl) statusEl.textContent = '请先至少完成两个离线解析任务后再对比。';
+        return;
+      }
+      if(statusEl) statusEl.textContent = '正在计算两文件参数 Diff 与趋势曲线…';
+      try{
+        const qs = new URLSearchParams({ task_a: taskA, flow_a: '0', task_b: taskB, flow_b: '0' });
+        const resp = await fetch('/api/offline/compare?' + qs.toString());
+        const data = await resp.json();
+        if(!resp.ok){
+          if(statusEl) statusEl.textContent = '对比失败：' + (data.error || ('HTTP ' + resp.status));
+          return;
+        }
+        renderCompareResult(data);
+        if(statusEl) statusEl.textContent = '对比完成：共比较 ' + (data.rows ? data.rows.length : 0) + ' 项核心指标。';
+        if(resBox) resBox.style.display = '';
+      }catch(e){
+        if(statusEl) statusEl.textContent = '对比请求失败：' + e.message;
+      }
+    }
+
+    function renderCompareResult(cmp){
+      const headA = document.getElementById('cmpHeadA');
+      const headB = document.getElementById('cmpHeadB');
+      const labelA = (cmp.side_a && cmp.side_a.input_name) || '样本 A';
+      const labelB = (cmp.side_b && cmp.side_b.input_name) || '样本 B';
+      if(headA) headA.textContent = 'A · ' + labelA;
+      if(headB) headB.textContent = 'B · ' + labelB;
+
+      const sumWrap = document.getElementById('compareSummaryWrap');
+      const sumList = document.getElementById('compareSummaryList');
+      if(sumWrap && sumList){
+        const notes = Array.isArray(cmp.summary_notes) ? cmp.summary_notes : [];
+        if(notes.length){
+          sumList.innerHTML = notes.map(n => '<li>' + esc(n) + '</li>').join('');
+          sumWrap.style.display = '';
+        }else{
+          sumWrap.style.display = 'none';
+        }
+      }
+
+      const tbody = document.getElementById('compareDiffBody');
+      if(tbody){
+        tbody.innerHTML = (cmp.rows || []).map(r => {
+          const cls = r.changed ? ' class="diff-row-changed"' : '';
+          const sevText = r.severity === 'error' ? '显著差异' : (r.severity === 'warn' ? '存在差异' : '差异');
+          const badge = r.changed
+            ? ('<span class="diff-badge">' + esc(sevText) + '</span>')
+            : '<span class="diff-badge same">一致</span>';
+          return '<tr' + cls + '>' +
+            '<td>' + esc(r.category || '-') + '</td>' +
+            '<td><strong>' + esc(r.label || '-') + '</strong></td>' +
+            '<td><code>' + esc(r.value_a || '-') + '</code></td>' +
+            '<td><code>' + esc(r.value_b || '-') + '</code></td>' +
+            '<td>' + badge + '</td>' +
+            '</tr>';
+        }).join('');
+      }
+
+      destroyCompareCharts();
+      if(typeof echarts === 'undefined') return;
+      const pA = cmp.side_a && cmp.side_a.profile;
+      const pB = cmp.side_b && cmp.side_b.profile;
+
+      const brA = (pA && Array.isArray(pA.bitrate_timeline)) ? pA.bitrate_timeline : [];
+      const brB = (pB && Array.isArray(pB.bitrate_timeline)) ? pB.bitrate_timeline : [];
+      const boxBr = document.getElementById('cmpBoxBitrate');
+      if(boxBr){
+        if(brA.length || brB.length){
+          boxBr.style.display = '';
+          const ch = echarts.init(document.getElementById('chartCmpBitrate'));
+          compareCharts.bitrate = ch;
+          ch.setOption({
+            tooltip: { trigger: 'axis' },
+            legend: { top: 0, textStyle: { fontSize: 11 } },
+            grid: { left: 52, right: 20, top: 32, bottom: 28 },
+            xAxis: { type: 'value', name: 's', axisLabel: { fontSize: 10 } },
+            yAxis: { type: 'value', name: 'kbps', axisLabel: { fontSize: 10 } },
+            series: [
+              { name: 'A: ' + labelA, type: 'line', showSymbol: false, smooth: true, lineStyle: { width: 2, color: '#2563eb' }, data: brA.map(pt => [Number((pt.t_ms / 1000).toFixed(2)), Number((pt.total_kbps || 0).toFixed(1))]) },
+              { name: 'B: ' + labelB, type: 'line', showSymbol: false, smooth: true, lineStyle: { width: 2, color: '#dc2626', type: 'dashed' }, data: brB.map(pt => [Number((pt.t_ms / 1000).toFixed(2)), Number((pt.total_kbps || 0).toFixed(1))]) }
+            ]
+          });
+        }else{
+          boxBr.style.display = 'none';
+        }
+      }
+
+      const fsA = (pA && Array.isArray(pA.frame_size_series)) ? pA.frame_size_series : [];
+      const fsB = (pB && Array.isArray(pB.frame_size_series)) ? pB.frame_size_series : [];
+      const boxFs = document.getElementById('cmpBoxFrameSize');
+      if(boxFs){
+        if(fsA.length || fsB.length){
+          boxFs.style.display = '';
+          const ch = echarts.init(document.getElementById('chartCmpFrameSize'));
+          compareCharts.frameSize = ch;
+          ch.setOption({
+            tooltip: { trigger: 'axis' },
+            legend: { top: 0, textStyle: { fontSize: 11 } },
+            grid: { left: 56, right: 20, top: 32, bottom: 28 },
+            xAxis: { type: 'value', name: 's', axisLabel: { fontSize: 10 } },
+            yAxis: { type: 'value', name: 'B', axisLabel: { fontSize: 10 } },
+            series: [
+              { name: 'A: ' + labelA, type: 'line', showSymbol: false, lineStyle: { width: 1.5, color: '#2563eb' }, data: fsA.map(pt => [Number((pt.t_ms / 1000).toFixed(2)), pt.size || 0]) },
+              { name: 'B: ' + labelB, type: 'line', showSymbol: false, lineStyle: { width: 1.5, color: '#16a34a' }, data: fsB.map(pt => [Number((pt.t_ms / 1000).toFixed(2)), pt.size || 0]) }
+            ]
+          });
+        }else{
+          boxFs.style.display = 'none';
+        }
+      }
     }
 
     function renderFLVMetadata(flow){
@@ -2138,13 +2782,30 @@
         { k: '数据定位', v: streamSource + ' @ 0x' + streamOffset.toString(16) }
       ];
       const inspWarns = Array.isArray(ins.warnings) ? ins.warnings : [];
+      const frameTimeMS = Number(frame.pts ?? frame.dts ?? 0);
+      const snapAction = (frame.media_type === 'video' || ins.media_type === 'video')
+        ? '<button type="button" class="btn secondary sm" onclick="loadInspectorThumbnail(' + Math.max(0, isFinite(frameTimeMS) ? frameTimeMS : 0) + ')">抽取当前帧画面截图</button>'
+        : '';
       parts.push(
-        '<div class="insp-section"><h4>基础信息</h4><div class="stat-grid">' +
+        '<div class="insp-section"><div class="section-head"><h4>基础信息</h4>' + snapAction + '</div><div class="stat-grid">' +
         basicCards.map(c => '<div class="stat-card"><div class="k">' + esc(c.k) + '</div><div class="v" style="font-size:.9rem">' + esc(c.v) + '</div></div>').join('') +
-        '</div>' +
+        '</div><div id="inspectorThumbBox"></div>' +
         (inspWarns.length ? ('<ul class="warn-list">' + inspWarns.map(w => '<li>' + esc(w) + '</li>').join('') + '</ul>') : '') +
         '</div>'
       );
+
+      // 1.5 AV1 Sequence Header OBU
+      if(ins.av1){
+        const av = ins.av1;
+        const avRows = [
+          ['Profile', av.profile_name || ('Profile ' + av.seq_profile)],
+          ['Level', av.level_name || ('idx ' + av.seq_level_idx)],
+          ['分辨率', (av.width && av.height) ? (av.width + ' × ' + av.height) : '-'],
+          ['位深 / 色度', (av.bit_depth ? (av.bit_depth + '-bit') : '-') + ' / ' + (av.chroma_format || '-')],
+          ['单色模式', av.monochrome ? '是 (Monochrome)' : '否']
+        ];
+        parts.push('<div class="insp-section"><h4>AV1 Sequence Header OBU 解码</h4><div class="table-wrap" style="margin-top:0">' + renderKVTable(avRows) + '</div></div>');
+      }
 
       // 2. NALU list
       const nalus = Array.isArray(ins.nalus) ? ins.nalus : [];
@@ -2291,7 +2952,13 @@
       const task = currentData.task || {};
       const mode = String(task.mode || '').toLowerCase();
       const flow = activeFlow();
+      const btnH = document.getElementById('btnReportHTML');
+      if(btnH && task.id) btnH.href = '/api/offline/tasks/' + encodeURIComponent(task.id) + '/report?flow=' + currentFlowIndex + '&format=html';
+      const btnM = document.getElementById('btnReportMD');
+      if(btnM && task.id) btnM.href = '/api/offline/tasks/' + encodeURIComponent(task.id) + '/report?flow=' + currentFlowIndex + '&format=md';
+      renderRTPStats(flow);
       renderMediaProfile(mode, flow);
+      resetFFmpegTools(flow);
       renderCharts(flow);
       renderDetailTable();
       if(mode === 'flv') renderFLVMetadata(flow);
@@ -2352,7 +3019,7 @@
       reparseBtn.onclick = () => reparseTask(task.id);
       act.appendChild(reparseBtn);
 
-      if(['flv', 'mp4', 'ts', 'annexb'].includes(mode) && task.input_path){
+      if(['flv', 'mp4', 'ts', 'annexb', 'ps', 'webm'].includes(mode) && task.input_path){
         const pushBtn = document.createElement('a');
         pushBtn.className = 'btn sm';
         pushBtn.style.textDecoration = 'none';
@@ -2363,6 +3030,32 @@
         pushBtn.href = '/simulators/pusher?' + q.toString();
         pushBtn.textContent = '送推流器循环推流';
         act.appendChild(pushBtn);
+      }
+
+      if(status === 'done'){
+        const htmlReportBtn = document.createElement('a');
+        htmlReportBtn.id = 'btnReportHTML';
+        htmlReportBtn.className = 'btn secondary sm';
+        htmlReportBtn.style.textDecoration = 'none';
+        htmlReportBtn.href = '/api/offline/tasks/' + encodeURIComponent(id) + '/report?flow=0&format=html';
+        htmlReportBtn.setAttribute('download', '');
+        htmlReportBtn.textContent = '导出 HTML 报告';
+        act.appendChild(htmlReportBtn);
+
+        const mdReportBtn = document.createElement('a');
+        mdReportBtn.id = 'btnReportMD';
+        mdReportBtn.className = 'btn secondary sm';
+        mdReportBtn.style.textDecoration = 'none';
+        mdReportBtn.href = '/api/offline/tasks/' + encodeURIComponent(id) + '/report?flow=0&format=md';
+        mdReportBtn.setAttribute('download', '');
+        mdReportBtn.textContent = '导出 Markdown';
+        act.appendChild(mdReportBtn);
+
+        const cmpBtn = document.createElement('button');
+        cmpBtn.className = 'btn secondary sm';
+        cmpBtn.textContent = 'A/B 对比';
+        cmpBtn.onclick = () => openCompareWithCurrent();
+        act.appendChild(cmpBtn);
       }
 
       const base = '/api/offline/tasks/' + encodeURIComponent(id) + '/files/';
@@ -2432,15 +3125,32 @@
         rawSection.style.display = 'none';
         tsStatsSection.style.display = 'none';
         tsPidSection.style.display = 'none';
-        pushSection.style.display = '';
-        pullSection.style.display = '';
-        renderPCAPFlows(id, flows.filter(f => String(f.direction).toLowerCase() === 'push'), 'flowPush');
-        renderPCAPFlows(id, flows.filter(f => String(f.direction).toLowerCase() === 'pull'), 'flowPull');
+        const rtmpPush = flows.filter(f => String(f.direction).toLowerCase() === 'push');
+        const rtmpPull = flows.filter(f => String(f.direction).toLowerCase() === 'pull');
+        const extFlows = flows.filter(f => {
+          const d = String(f.direction || '').toLowerCase();
+          return d !== 'push' && d !== 'pull';
+        });
+        pushSection.style.display = rtmpPush.length ? '' : 'none';
+        pullSection.style.display = rtmpPull.length ? '' : 'none';
+        renderPCAPFlows(id, rtmpPush, 'flowPush');
+        renderPCAPFlows(id, rtmpPull, 'flowPull');
+        renderPCAPExtFlows(id, extFlows);
       }else{
         rawSection.style.display = '';
         pushSection.style.display = 'none';
         pullSection.style.display = 'none';
-        const titles = { mp4: 'MP4 产物', flv: 'FLV 产物', ts: 'TS 产物', raw: 'RTMP Raw 产物', annexb: 'Annex B 裸流产物' };
+        const extSec = document.getElementById('pcapExtSection');
+        if(extSec) extSec.style.display = 'none';
+        const titles = {
+          mp4: 'MP4 产物',
+          flv: 'FLV 产物',
+          ts: 'TS 产物',
+          ps: 'MPEG-PS 产物',
+          webm: 'WebM / MKV 产物',
+          raw: 'RTMP Raw 产物',
+          annexb: 'Annex B 裸流产物'
+        };
         rawTitle.textContent = titles[mode] || '解析产物';
         rawHint.textContent = mode === 'ts' ? '各 PID 独立 ES 文件见上方「TS PID 明细」表格。' : '';
         renderSingleFlows(id, flows);
@@ -2459,6 +3169,7 @@
 
     window.addEventListener('resize', () => {
       Object.keys(charts).forEach(k => { if(charts[k]) try{ charts[k].resize(); }catch(_){} });
+      Object.keys(compareCharts).forEach(k => { if(compareCharts[k]) try{ compareCharts[k].resize(); }catch(_){} });
     });
     window.addEventListener('keydown', e => {
       if(e.key === 'Escape') closeInspector();

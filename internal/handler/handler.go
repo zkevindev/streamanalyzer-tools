@@ -2,7 +2,9 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -33,12 +35,17 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 			offlineAPI.POST("/tasks", h.CreateOfflineTask)
 			offlineAPI.POST("/tasks/local", localDiagnostics, h.CreateLocalOfflineTask)
 			offlineAPI.GET("/tasks", h.ListOfflineTasks)
+			offlineAPI.GET("/compare", h.CompareOfflineTasks)
 			offlineAPI.GET("/tasks/:id", h.GetOfflineTask)
 			offlineAPI.DELETE("/tasks/:id", h.DeleteOfflineTask)
 			offlineAPI.POST("/tasks/:id/reparse", h.ReparseOfflineTask)
 			offlineAPI.POST("/tasks/:id/cancel", h.CancelOfflineTask)
 			offlineAPI.GET("/tasks/:id/inspect/frame", h.InspectOfflineFrame)
 			offlineAPI.GET("/tasks/:id/mp4/boxes", h.InspectOfflineMP4Boxes)
+			offlineAPI.GET("/tasks/:id/thumbnail", h.GetOfflineThumbnail)
+			offlineAPI.POST("/tasks/:id/decode-audit", h.RunOfflineDecodeAudit)
+			offlineAPI.POST("/tasks/:id/clip", h.ExportOfflineClip)
+			offlineAPI.GET("/tasks/:id/report", h.DownloadOfflineReport)
 			offlineAPI.GET("/tasks/:id/files/*name", h.DownloadOfflineFile)
 		}
 	}
@@ -69,7 +76,9 @@ func (h *Handler) CreateOfflineTask(c *gin.Context) {
 		models.OfflineModeTS,
 		models.OfflineModeFLV,
 		models.OfflineModeMP4,
-		models.OfflineModeAnnexB:
+		models.OfflineModeAnnexB,
+		models.OfflineModePS,
+		models.OfflineModeWebM:
 	default:
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid mode"})
 		return
@@ -236,7 +245,9 @@ func (h *Handler) CreateLocalOfflineTask(c *gin.Context) {
 		models.OfflineModeTS,
 		models.OfflineModeFLV,
 		models.OfflineModeMP4,
-		models.OfflineModeAnnexB:
+		models.OfflineModeAnnexB,
+		models.OfflineModePS,
+		models.OfflineModeWebM:
 	default:
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid mode"})
 		return
@@ -387,4 +398,157 @@ func (h *Handler) DownloadOfflineFile(c *gin.Context) {
 		return
 	}
 	c.File(full)
+}
+
+func (h *Handler) GetOfflineThumbnail(c *gin.Context) {
+	if h.offline == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "offline manager not configured"})
+		return
+	}
+	taskID := c.Param("id")
+	flowIdx, _ := strconv.Atoi(c.DefaultQuery("flow", "0"))
+	timeMS, _ := strconv.ParseInt(c.DefaultQuery("time_ms", "0"), 10, 64)
+	if timeMS < 0 {
+		timeMS = 0
+	}
+
+	img, err := h.offline.ExtractFrameThumbnail(c.Request.Context(), taskID, flowIdx, timeMS)
+	if err != nil {
+		code := http.StatusBadRequest
+		if strings.Contains(err.Error(), "not found") {
+			code = http.StatusNotFound
+		} else if strings.Contains(err.Error(), "未找到 ffmpeg") {
+			code = http.StatusServiceUnavailable
+		}
+		c.JSON(code, gin.H{"error": err.Error()})
+		return
+	}
+	c.Header("Cache-Control", "public, max-age=3600")
+	c.Data(http.StatusOK, "image/jpeg", img)
+}
+
+func (h *Handler) RunOfflineDecodeAudit(c *gin.Context) {
+	if h.offline == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "offline manager not configured"})
+		return
+	}
+	taskID := c.Param("id")
+	flowIdx, _ := strconv.Atoi(c.DefaultQuery("flow", "0"))
+	force := c.DefaultQuery("force", "0") == "1" || strings.EqualFold(c.DefaultQuery("force", ""), "true")
+
+	audit, err := h.offline.RunDecodeAudit(c.Request.Context(), taskID, flowIdx, force)
+	if err != nil {
+		code := http.StatusBadRequest
+		if strings.Contains(err.Error(), "not found") {
+			code = http.StatusNotFound
+		} else if strings.Contains(err.Error(), "未找到 ffmpeg") {
+			code = http.StatusServiceUnavailable
+		}
+		c.JSON(code, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, audit)
+}
+
+type exportClipRequest struct {
+	Flow     int     `json:"flow"`
+	StartSec float64 `json:"start_sec"`
+	EndSec   float64 `json:"end_sec"`
+}
+
+func (h *Handler) ExportOfflineClip(c *gin.Context) {
+	if h.offline == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "offline manager not configured"})
+		return
+	}
+	taskID := c.Param("id")
+	var body exportClipRequest
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body: " + err.Error()})
+		return
+	}
+	relPath, sizeBytes, err := h.offline.ExportClip(c.Request.Context(), taskID, body.Flow, body.StartSec, body.EndSec)
+	if err != nil {
+		code := http.StatusBadRequest
+		if strings.Contains(err.Error(), "not found") {
+			code = http.StatusNotFound
+		} else if strings.Contains(err.Error(), "未找到 ffmpeg") {
+			code = http.StatusServiceUnavailable
+		}
+		c.JSON(code, gin.H{"error": err.Error()})
+		return
+	}
+	downloadURL := fmt.Sprintf("/api/offline/tasks/%s/files/%s", url.PathEscape(taskID), relPath)
+	c.JSON(http.StatusOK, gin.H{
+		"rel_path":     relPath,
+		"filename":     filepath.Base(relPath),
+		"size_bytes":   sizeBytes,
+		"download_url": downloadURL,
+	})
+}
+
+func (h *Handler) CompareOfflineTasks(c *gin.Context) {
+	if h.offline == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "offline manager not configured"})
+		return
+	}
+	taskA := strings.TrimSpace(c.Query("task_a"))
+	taskB := strings.TrimSpace(c.Query("task_b"))
+	if taskA == "" || taskB == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "task_a and task_b are required"})
+		return
+	}
+	flowA, _ := strconv.Atoi(c.DefaultQuery("flow_a", "0"))
+	flowB, _ := strconv.Atoi(c.DefaultQuery("flow_b", "0"))
+
+	res, err := h.offline.CompareTasks(taskA, flowA, taskB, flowB)
+	if err != nil {
+		code := http.StatusBadRequest
+		if strings.Contains(err.Error(), "not found") {
+			code = http.StatusNotFound
+		}
+		c.JSON(code, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, res)
+}
+
+func (h *Handler) DownloadOfflineReport(c *gin.Context) {
+	if h.offline == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "offline manager not configured"})
+		return
+	}
+	taskID := c.Param("id")
+	flowIdx, _ := strconv.Atoi(c.DefaultQuery("flow", "0"))
+	format := strings.ToLower(strings.TrimSpace(c.DefaultQuery("format", "html")))
+
+	var (
+		data     []byte
+		filename string
+		ctype    string
+		err      error
+	)
+	switch format {
+	case "md", "markdown":
+		data, filename, err = h.offline.RenderMarkdownReport(taskID, flowIdx)
+		ctype = "text/markdown; charset=utf-8"
+	case "html", "":
+		data, filename, err = h.offline.RenderHTMLReport(taskID, flowIdx)
+		ctype = "text/html; charset=utf-8"
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "unsupported report format (use html or md)"})
+		return
+	}
+	if err != nil {
+		code := http.StatusBadRequest
+		if strings.Contains(err.Error(), "not found") {
+			code = http.StatusNotFound
+		}
+		c.JSON(code, gin.H{"error": err.Error()})
+		return
+	}
+	if c.DefaultQuery("inline", "0") != "1" {
+		c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
+	}
+	c.Data(http.StatusOK, ctype, data)
 }

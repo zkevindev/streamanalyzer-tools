@@ -17,7 +17,7 @@ import (
 
 func (m *Manager) runPCAP(task *models.OfflineTask, taskDir string, summary *models.OfflineSummary) error {
 	ctx := m.taskContext(task.ID)
-	m.setProgressPercent(task.ID, "重组 PCAP TCP 流", 10, 0)
+	m.setProgressPercent(task.ID, "重组 PCAP 网络流 (RTMP/RTP/HTTP-FLV/TS)", 10, 0)
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
@@ -27,18 +27,17 @@ func (m *Manager) runPCAP(task *models.OfflineTask, taskDir string, summary *mod
 	if err != nil {
 		return err
 	}
-	if len(flows) == 0 {
-		return fmt.Errorf("no candidate RTMP flows found")
-	}
 
+	nextFlowID := 1
 	for i, f := range flows {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		pct := 25.0 + float64(i)*70.0/float64(len(flows))
-		m.setProgressPercent(task.ID, fmt.Sprintf("解析 RTMP 流 %d/%d", i+1, len(flows)), pct, task.InputSize*int64(i+1)/int64(len(flows)))
+		pct := 20.0 + float64(i)*40.0/float64(max(len(flows), 1))
+		m.setProgressPercent(task.ID, fmt.Sprintf("解析 RTMP 流 %d/%d", i+1, len(flows)), pct, task.InputSize*int64(i+1)/int64(max(len(flows), 1)))
 
-		flowID := i + 1
+		flowID := nextFlowID
+		nextFlowID++
 		dir := pcaprtmp.DetectDirection(f, task.SkipBytes, opt.DetectLimitBytes)
 		raw := []byte(nil)
 		rawDir := ""
@@ -55,6 +54,7 @@ func (m *Manager) runPCAP(task *models.OfflineTask, taskDir string, summary *mod
 
 		fr := models.OfflineFlowResult{
 			FlowID:       flowID,
+			Protocol:     "rtmp",
 			HasSYN:       f.Meta.HasSYN,
 			SYNCount:     f.Meta.SYNCount,
 			TCPPktCount:  f.Meta.TCPPktCount,
@@ -158,6 +158,25 @@ func (m *Manager) runPCAP(task *models.OfflineTask, taskDir string, summary *mod
 		}
 		attachMediaProfileWithSamples(&fr, frameDetails, samples, profileFromRTMP(res), hctx)
 		summary.Flows = append(summary.Flows, fr)
+	}
+
+	// Scan extended PCAP protocols: UDP RTP/RTCP, UDP MPEG-TS, TCP HTTP-FLV, TCP HTTP MPEG-TS
+	m.setProgressPercent(task.ID, "扫描 RTP/RTCP、HTTP-FLV 与 MPEG-TS 流", 65, task.InputSize/2)
+	extFlows, extErr := m.extractExtendedPCAPFlows(ctx, task, taskDir, nextFlowID)
+	if extErr != nil {
+		if errors.Is(extErr, context.Canceled) {
+			return context.Canceled
+		}
+		if len(summary.Flows) == 0 {
+			return extErr
+		}
+	}
+	if len(extFlows) > 0 {
+		summary.Flows = append(summary.Flows, extFlows...)
+	}
+
+	if len(summary.Flows) == 0 {
+		return fmt.Errorf("未在 PCAP 中识别到 RTMP、RTP/RTCP、HTTP-FLV 或 MPEG-TS 媒体流")
 	}
 	return nil
 }

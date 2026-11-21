@@ -34,6 +34,7 @@ type FrameInspection struct {
 	PPS         []PPSDetail        `json:"pps,omitempty"`
 	VPS         []VPSDetail        `json:"vps,omitempty"`
 	SEIs        []SEIDetail        `json:"seis,omitempty"`
+	AV1         *AV1Meta           `json:"av1,omitempty"`
 	AudioHeader *AudioHeaderDetail `json:"audio_header,omitempty"`
 	Hex         HexDump            `json:"hex"`
 	Warnings    []string           `json:"warnings,omitempty"`
@@ -210,7 +211,8 @@ func InspectFrame(data []byte, opts InspectOptions) FrameInspection {
 	}
 
 	if media == "" {
-		if codecName == "aac" || codecName == "mp3" || codecName == "mp2" || codecName == "opus" {
+		if codecName == "aac" || codecName == "mp3" || codecName == "mp2" || codecName == "opus" ||
+			codecName == "pcma" || codecName == "pcmu" || codecName == "g711a" || codecName == "g711u" || codecName == "g711" {
 			media = "audio"
 		} else {
 			media = "video"
@@ -219,6 +221,23 @@ func InspectFrame(data []byte, opts InspectOptions) FrameInspection {
 	}
 
 	if media == "audio" {
+		if codecName == "pcma" || codecName == "pcmu" || codecName == "g711a" || codecName == "g711u" || codecName == "g711" {
+			fmtName := "G.711 A-law (PCMA)"
+			if codecName == "pcmu" || codecName == "g711u" {
+				fmtName = "G.711 mu-law (PCMU)"
+			}
+			res.Format = "g711"
+			res.AudioHeader = &AudioHeaderDetail{
+				Format:      fmtName,
+				Profile:     "8-bit log-PCM",
+				SampleRate:  8000,
+				Channels:    1,
+				BitrateKbps: 64,
+				FrameLength: len(data),
+			}
+			res.Hex = buildHexDump(data, opts.HexOffset, opts.HexLimit, nil)
+			return res
+		}
 		if hdr, ok := parseAudioFrameHeader(data, codecName); ok {
 			res.AudioHeader = hdr
 			if hdr.Format == "ADTS AAC" {
@@ -234,6 +253,18 @@ func InspectFrame(data []byte, opts InspectOptions) FrameInspection {
 			}
 		} else if len(data) > 0 {
 			res.Warnings = append(res.Warnings, "未识别到 ADTS AAC 或 MP3 音频帧头，仅展示原始字节")
+		}
+		res.Hex = buildHexDump(data, opts.HexOffset, opts.HexLimit, nil)
+		return res
+	}
+
+	// AV1 OBU frame inspection
+	if codecName == "av1" {
+		res.Format = "av1-obu"
+		if meta, err := ParseAV1SequenceHeader(data); err == nil && meta != nil {
+			res.AV1 = meta
+		} else if len(data) > 0 {
+			res.Warnings = append(res.Warnings, "当前 AV1 帧未包含 Sequence Header OBU（仅关键帧或封装头携带）")
 		}
 		res.Hex = buildHexDump(data, opts.HexOffset, opts.HexLimit, nil)
 		return res

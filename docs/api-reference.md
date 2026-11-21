@@ -51,7 +51,7 @@
 ## 2. 离线文件解析 API（`/api/offline/tasks`）
 
 - `POST /api/offline/tasks`：使用 `multipart/form-data` 上传文件
-  - `mode`：`auto`（默认，基于魔数与扩展名自动识别）/ `flv` / `mp4`（含 fMP4）/ `ts`（MPEG-TS / M2TS）/ `annexb`（H.264 / H.265 裸码流）/ `pcap`（抓包自动区分 push/pull）/ `raw`（单方向 RTMP 裸流）
+  - `mode`：`auto`（默认，基于魔数与扩展名自动识别）/ `flv` / `mp4`（含 fMP4）/ `ts`（MPEG-TS / M2TS）/ `ps`（MPEG-PS / GB28181 `.ps`/`.mpg`，支持 H.264/H.265 + AAC/G.711 转 WAV）/ `webm`（WebM / Matroska `.webm`/`.mkv`，含 AV1/VP8/VP9/Opus）/ `annexb`（H.264 / H.265 裸码流）/ `pcap`（抓包自动提取 RTMP push/pull、UDP RTP/RTCP、UDP MPEG-TS、TCP HTTP-FLV 与 HTTP MPEG-TS）/ `raw`（单方向 RTMP 裸流）
   - `server_port`：仅 `pcap` 模式有效（RTMP 端口，默认 `1935`）
   - `skip_bytes`：握手跳过字节数（`raw` / `pcap` 有效，默认 `3073`，无握手可传 `0`）
   - `file`：上传媒体或抓包文件
@@ -59,17 +59,32 @@
   - JSON 请求体：`{ "path": "/abs/path/to/media.mp4", "mode": "auto", "server_port": 1935, "skip_bytes": 3073 }`
   - 不复制原文件，任务标记 `source_type: "local"`；删除任务时仅清理 `data/offline/<taskID>` 产物目录，不会删除用户原始文件
 - `GET /api/offline/tasks`：列出离线解析任务（运行中任务包含 `progress_pct`、`progress_stage`、`bytes_processed` 实时进度字段，状态含 `running` / `done` / `failed` / `canceled`）
-- `GET /api/offline/tasks/:id`：获取任务状态与 `summary.json`（含 flow、编解码、逐帧字节定位 `stream_source`/`stream_offset`/`stream_len`/`nalu_len_size` 或 TS PAT/PMT/PES/NALU 明细，以及 `profile`：分辨率、Profile、时长、帧率、码率曲线、200ms 瞬时峰值码率 `peak_200ms_kbps`/`peak_to_avg_ratio`、帧大小、帧间隔、GOP、音画偏移、TS 传输层 CC/TEI/PCR、告警及结构化深度体检明细 `health_checks`）
+- `GET /api/offline/tasks/:id`：获取任务状态与 `summary.json`（含 flow、协议 `protocol`、RTP/RTCP 传输统计 `rtp_stats`（按 SSRC 统计丢包/乱序/重复/RFC 3550 Jitter/RTCP SR·RR）、编解码、逐帧字节定位 `stream_source`/`stream_offset`/`stream_len`/`nalu_len_size` 或 TS PAT/PMT/PES/NALU 明细，以及 `profile`：分辨率、Profile、时长、帧率、码率曲线、200ms 瞬时峰值码率 `peak_200ms_kbps`/`peak_to_avg_ratio`、帧大小、帧间隔、GOP、音画偏移、TS 传输层 CC/TEI/PCR、告警及结构化深度体检明细 `health_checks`）
 - `POST /api/offline/tasks/:id/cancel`：取消正在运行中的离线解析任务（任务状态变为 `canceled`）
 - `POST /api/offline/tasks/:id/reparse`：保留原始输入文件并重新解析任务
 - `DELETE /api/offline/tasks/:id`：删除非运行中的离线解析任务及其磁盘产物目录（本机直读模式不删除原始文件）
 - `GET /api/offline/tasks/:id/inspect/frame`：按需读取单帧或 TS PES 原始字节（单帧读取上限 4 MiB）并进行深度解码
   - Query 参数：`flow_idx`（默认 `0`）、`frame_idx`（0-based 帧序号）或 `pes_idx`（TS 模式 0-based PES 序号）、`hex_offset`（默认 `0`）、`hex_limit`（默认 `2048`，上限 `8192`）
-  - 返回字段：帧/PES 基础信息、NALU 列表（偏移/长度/类型/Slice 类型/关键帧标记）、H.264 SPS（含 VUI）/ PPS 与 H.265 VPS / SPS / PPS 字段解码、SEI 载荷解码（含 `user_data_unregistered` UUID 与可读明文）、ADTS AAC / MP3 音频帧头、以及 16 列分页 Hex+ASCII 视图与 NALU 边界区间
+  - 返回字段：帧/PES 基础信息、NALU 列表（偏移/长度/类型/Slice 类型/关键帧标记）、H.264 SPS（含 VUI）/ PPS 与 H.265 VPS / SPS / PPS 字段解码、AV1 Sequence Header OBU 字段解码、SEI 载荷解码（含 `user_data_unregistered` UUID 与可读明文）、ADTS AAC / MP3 / G.711(PCMA/PCMU) 音频帧头、以及 16 列分页 Hex+ASCII 视图与 NALU 边界区间
 - `GET /api/offline/tasks/:id/mp4/boxes`：解析 MP4 / fMP4 任务的完整递归 Box 树结构
   - Query 参数：`max_nodes`（可选，默认 `2500`，超限时返回 `truncated: true`）
   - 返回字段：文件大小、FastStart / 分片标记，以及递归 `boxes`（每节点含 `type`、`offset`、`size`、`header_size`、`percent`、可读 `summary`、`highlight`/`highlight_reason` 如 `elst` 与非 FastStart `moov` 标黄提示、`children`）
-- `GET /api/offline/tasks/:id/files/*name`：下载提取产物（如 `video.annexb`、`audio.adts.aac`、`audio.mp3`、`mp4_report.txt`、`summary.json`）
+- `GET /api/offline/tasks/:id/thumbnail`：调用本机 FFmpeg 按时间点抽取 JPEG 画面截图（并缓存至任务目录 `thumbs/`）
+  - Query 参数：`flow`（默认 `0`）、`time_ms`（时间点毫秒，默认 `0`）
+  - 返回：`image/jpeg` 二进制响应
+- `POST /api/offline/tasks/:id/decode-audit`：调用本机 FFmpeg 执行全流解码体检（缓存至 `decode_audit_f<N>.json`）
+  - Query 参数：`flow`（默认 `0`）、`force`（`1` 强制重新扫描，默认使用缓存）
+  - 返回字段：解码报错次数与错误样本 `decode_errors` / `error_samples`，以及黑帧（`black_frames`）、冻结帧（`freeze_frames`）、静音（`silence_ranges`）时间段列表
+- `POST /api/offline/tasks/:id/clip`：调用本机 FFmpeg `-c copy` 无损截取最小复现片段并导出至 `clips/`
+  - JSON 请求体：`{ "flow": 0, "start_sec": 1.5, "end_sec": 8.0 }`
+  - 返回字段：`rel_path`、`filename`、`size_bytes` 与可直接下载的 `download_url`
+- `GET /api/offline/compare`：离线两文件 A/B 参数与曲线对比
+  - Query 参数：`task_a`、`task_b`（必填），`flow_a`、`flow_b`（可选，默认 `0`）
+  - 返回字段：`side_a`、`side_b`（含各自 `profile` 时序曲线）、字段级 Diff 表 `rows`（含 `changed` 与 `severity`）、`changed_count` 及差异结论 `summary_notes`
+- `GET /api/offline/tasks/:id/report`：导出独立离线诊断报告
+  - Query 参数：`flow`（默认 `0`）、`format`（`html` 或 `md`，默认 `html`）、`inline`（`1` 浏览器内联查看，否则附件下载）
+  - `html` 报告零外部 CDN 依赖，内联 SVG 瞬时码率趋势图、完整媒体概况、RTP 传输统计与深度体检规则，可直接发给同事或客户离线打开
+- `GET /api/offline/tasks/:id/files/*name`：下载提取产物（如 `video.annexb`、`audio.adts.aac`、`audio.mp3`、`audio.wav`、`mp4_report.txt`、`clips/*.mp4`、`summary.json`）
 
 ---
 

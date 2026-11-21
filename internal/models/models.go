@@ -193,6 +193,8 @@ const (
 	OfflineModeFLV    OfflineMode = "flv"
 	OfflineModeMP4    OfflineMode = "mp4"
 	OfflineModeAnnexB OfflineMode = "annexb"
+	OfflineModePS     OfflineMode = "ps"
+	OfflineModeWebM   OfflineMode = "webm"
 )
 
 type OfflineStatus string
@@ -244,7 +246,8 @@ type OfflineSummary struct {
 }
 
 type OfflineFlowResult struct {
-	FlowID int `json:"flow_id"`
+	FlowID   int    `json:"flow_id"`
+	Protocol string `json:"protocol,omitempty"` // rtmp / rtp / http-flv / mpeg-ts / ps / webm
 
 	HasSYN       bool `json:"has_syn"`
 	SYNCount     int  `json:"syn_count"`
@@ -264,6 +267,8 @@ type OfflineFlowResult struct {
 	AudioPath string `json:"audio_path,omitempty"`
 	// ArtifactPaths 额外产物（如 MP4 的 mp4_report.txt），绝对路径。
 	ArtifactPaths []string `json:"artifact_paths,omitempty"`
+
+	RTPStats *OfflineRTPStats `json:"rtp_stats,omitempty"`
 
 	ProgramCount  int `json:"program_count,omitempty"`
 	PATCount      int `json:"pat_count,omitempty"`
@@ -443,3 +448,82 @@ type OfflineNALUBrief struct {
 	Len      int    `json:"len,omitempty"`
 	Key      bool   `json:"key,omitempty"`
 }
+
+// OfflineRTPStats holds RFC 3550 RTP/RTCP statistics for one SSRC flow extracted from PCAP.
+type OfflineRTPStats struct {
+	SSRC           uint32  `json:"ssrc"`
+	PayloadType    uint8   `json:"payload_type"`
+	PayloadName    string  `json:"payload_name,omitempty"`
+	ClockRate      uint32  `json:"clock_rate,omitempty"`
+	Packets        int     `json:"packets"`
+	Expected       int     `json:"expected"`
+	Lost           int     `json:"lost"`
+	LossRatePct    float64 `json:"loss_rate_pct"`
+	OutOfOrder     int     `json:"out_of_order"`
+	Duplicates     int     `json:"duplicates"`
+	JitterMS       float64 `json:"jitter_ms"`
+	MaxJitterMS    float64 `json:"max_jitter_ms"`
+	Bytes          int64   `json:"bytes"`
+	FirstSeq       uint16  `json:"first_seq"`
+	LastSeq        uint16  `json:"last_seq"`
+	MarkerCount    int     `json:"marker_count"`
+	RTCPCount      int     `json:"rtcp_count,omitempty"`
+	RTCPSenderPkts uint32  `json:"rtcp_sender_packets,omitempty"`
+	RTCPFraction   float64 `json:"rtcp_fraction_lost_pct,omitempty"`
+}
+
+// OfflineTimeRange describes one detected event interval in seconds.
+type OfflineTimeRange struct {
+	StartSec    float64 `json:"start_sec"`
+	EndSec      float64 `json:"end_sec"`
+	DurationSec float64 `json:"duration_sec"`
+	Detail      string  `json:"detail,omitempty"`
+}
+
+// OfflineDecodeAudit holds FFmpeg decode/black/freeze/silence audit output.
+type OfflineDecodeAudit struct {
+	TaskID         string             `json:"task_id"`
+	FlowIndex      int                `json:"flow_index"`
+	InputPath      string             `json:"input_path"`
+	DurationMS     int64              `json:"duration_ms"`
+	DecodeErrors   int                `json:"decode_errors"`
+	ErrorSamples   []string           `json:"error_samples,omitempty"`
+	BlackFrames    []OfflineTimeRange `json:"black_frames,omitempty"`
+	FreezeFrames   []OfflineTimeRange `json:"freeze_frames,omitempty"`
+	SilenceRanges  []OfflineTimeRange `json:"silence_ranges,omitempty"`
+	Warnings       []string           `json:"warnings,omitempty"`
+	GeneratedAt    time.Time          `json:"generated_at"`
+}
+
+// OfflineDiffRow is one field-level comparison entry between Task A and Task B.
+type OfflineDiffRow struct {
+	Category string `json:"category"`
+	Label    string `json:"label"`
+	ValueA   string `json:"value_a"`
+	ValueB   string `json:"value_b"`
+	Changed  bool   `json:"changed"`
+	Severity string `json:"severity,omitempty"` // "" | "warn" | "error"
+}
+
+// OfflineCompareSide summarizes one side of an A/B offline comparison.
+type OfflineCompareSide struct {
+	TaskID     string               `json:"task_id"`
+	InputName  string               `json:"input_name"`
+	InputSize  int64                `json:"input_size"`
+	Mode       OfflineMode          `json:"mode"`
+	FlowIndex  int                  `json:"flow_index"`
+	FlowLabel  string               `json:"flow_label"`
+	VideoCodec string               `json:"video_codec,omitempty"`
+	AudioCodec string               `json:"audio_codec,omitempty"`
+	Profile    *OfflineMediaProfile `json:"profile,omitempty"`
+}
+
+// OfflineCompareResult holds the full side-by-side comparison of two offline tasks.
+type OfflineCompareResult struct {
+	SideA         OfflineCompareSide `json:"side_a"`
+	SideB         OfflineCompareSide `json:"side_b"`
+	Rows          []OfflineDiffRow   `json:"rows"`
+	SummaryNotes  []string           `json:"summary_notes,omitempty"`
+	ChangedCount  int                `json:"changed_count"`
+}
+
