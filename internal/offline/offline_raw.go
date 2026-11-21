@@ -1,6 +1,8 @@
 package offline
 
 import (
+	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -10,6 +12,7 @@ import (
 )
 
 func (m *Manager) runRaw(task *models.OfflineTask, taskDir string, summary *models.OfflineSummary) error {
+	ctx := m.taskContext(task.ID)
 	outDir := filepath.Join(taskDir, "raw")
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return err
@@ -23,6 +26,16 @@ func (m *Manager) runRaw(task *models.OfflineTask, taskDir string, summary *mode
 	}
 	defer in.Close()
 
+	var totalSize int64
+	if st, err := in.Stat(); err == nil {
+		totalSize = st.Size()
+	}
+	m.updateProgress(task.ID, "解析 RTMP 裸流", 0, totalSize)
+
+	pr := newProgressReader(ctx, in, totalSize, func(read int64) {
+		m.updateProgress(task.ID, "解析 RTMP 裸流", read, totalSize)
+	})
+
 	vf, err := os.Create(videoPath)
 	if err != nil {
 		return err
@@ -34,22 +47,52 @@ func (m *Manager) runRaw(task *models.OfflineTask, taskDir string, summary *mode
 	}
 
 	frameDetails := make([]models.OfflineFrameDetail, 0, 2048)
-	res, parseErr := rtmpraw.ParseRTMPRaw(in, rtmpraw.Options{SkipBytes: task.SkipBytes}, rtmpraw.Output{
+	samples := make([]timedSample, 0, 2048)
+	hasContainerSeq := false
+	res, parseErr := rtmpraw.ParseRTMPRaw(pr, rtmpraw.Options{SkipBytes: task.SkipBytes, Context: ctx}, rtmpraw.Output{
 		VideoWriter: vf,
 		AudioWriter: af,
 		OnFrame: func(fi rtmpraw.FrameInfo) {
+			idx := len(frameDetails)
+			if fi.HasContainerParams {
+				hasContainerSeq = true
+			}
 			frameDetails = append(frameDetails, models.OfflineFrameDetail{
-				MediaType: fi.MediaType,
-				DTS:       fi.DTS,
-				PTS:       fi.PTS,
-				CTS:       fi.CTS,
-				FrameLen:  fi.FrameLen,
-				FrameType: fi.FrameType,
+				MediaType:    fi.MediaType,
+				DTS:          fi.DTS,
+				PTS:          fi.PTS,
+				CTS:          fi.CTS,
+				FrameLen:     fi.FrameLen,
+				FrameType:    fi.FrameType,
+				StreamSource: fi.StreamSource,
+				StreamOffset: fi.StreamOffset,
+				StreamLen:    fi.StreamLen,
+			})
+			samples = append(samples, timedSample{
+				frameIndex:         idx,
+				media:              fi.MediaType,
+				dts:                fi.DTS,
+				pts:                fi.PTS,
+				cts:                fi.CTS,
+				size:               fi.FrameLen,
+				key:                isKeyframe(fi.FrameType),
+				b:                  isBFrame(fi.FrameType),
+				sliceKnown:         isExplicitSliceType(fi.FrameType),
+				hasContainerParams: fi.HasContainerParams,
+				hasInbandParams:    fi.HasInbandParams,
+				paramHash:          fi.ParamHash,
+				videoWidth:         fi.VideoWidth,
+				videoHeight:        fi.VideoHeight,
+				audioSampleRate:    fi.AudioSampleRate,
+				audioChannels:      fi.AudioChannels,
 			})
 		},
 	})
 	_ = vf.Close()
 	_ = af.Close()
+	if errors.Is(parseErr, context.Canceled) || ctx.Err() != nil {
+		return context.Canceled
+	}
 
 	flow := models.OfflineFlowResult{
 		FlowID:     1,
@@ -65,7 +108,13 @@ func (m *Manager) runRaw(task *models.OfflineTask, taskDir string, summary *mode
 		flow.Error = parseErr.Error()
 	}
 	retargetAudioFile(&flow.AudioPath, res.AudioCodec)
-	attachMediaProfile(&flow, frameDetails, profileFromRTMP(res))
+	hctx := healthContext{
+		Mode:                  models.OfflineModeRaw,
+		IsHEVC:                res.HEVC,
+		HasContainerSeqHeader: hasContainerSeq,
+		CheckIDRParams:        res.VideoCodec == "h264" || res.VideoCodec == "h265",
+	}
+	attachMediaProfileWithSamples(&flow, frameDetails, samples, profileFromRTMP(res), hctx)
 	summary.Flows = append(summary.Flows, flow)
 
 	// Cleanup: if audio file is empty, delete and hide it, and compute payload size
