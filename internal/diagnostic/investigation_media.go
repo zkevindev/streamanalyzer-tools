@@ -266,6 +266,12 @@ func investigationMediaInterrupted(result InvestigationMedia, ctx context.Contex
 }
 
 func investigationMediaTool(name, alongside string) (string, error) {
+	if override := strings.TrimSpace(os.Getenv("STREAMANALYZER_" + strings.ToUpper(name))); override != "" {
+		if path, err := exec.LookPath(override); err == nil {
+			return path, nil
+		}
+		return "", os.ErrNotExist
+	}
 	dirs := []string{}
 	if alongside != "" {
 		dirs = append(dirs, alongside)
