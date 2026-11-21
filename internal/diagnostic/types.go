@@ -26,6 +26,7 @@ const (
 	ProtocolRTPTS   = "rtp-ts"
 	ProtocolRTSP    = "rtsp"
 	ProtocolRTSPS   = "rtsps"
+	ProtocolWHEP    = "whep"
 )
 
 const (
@@ -36,6 +37,7 @@ const (
 	udpStreamName  = "stream.udp"
 	rtpStreamName  = "stream.rtp"
 	rtspStreamName = "stream.rtsp.zip"
+	whepStreamName = "stream.whep.zip"
 	timelineName   = "timeline.ndjson"
 	manifestName   = "manifest.json"
 	reportName     = "report.json"
@@ -56,9 +58,11 @@ type SampleRequest struct {
 	AutoInvestigate   bool                `json:"auto_investigate,omitempty"`
 	URL               string              `json:"url"`
 	Seconds           int                 `json:"seconds"`
-	Protocol          string              `json:"protocol,omitempty"`
-	Transport         string              `json:"transport,omitempty"`
-	Playback          bool                `json:"playback,omitempty"`
+	Protocol           string              `json:"protocol,omitempty"`
+	Transport          string              `json:"transport,omitempty"`
+	ICETransportPolicy string              `json:"ice_transport_policy,omitempty"`
+	ICEServers         []WHEPICEServer     `json:"ice_servers,omitempty"`
+	Playback           bool                `json:"playback,omitempty"`
 	Headers           map[string]string   `json:"headers,omitempty"`
 	ProxyURL          string              `json:"proxy_url,omitempty"`
 	CACertificate     string              `json:"ca_certificate,omitempty"`
@@ -225,6 +229,7 @@ type Report struct {
 	HLS                    *HLSMetrics          `json:"hls,omitempty"`
 	MPEGTS                 *MPEGTSMetrics       `json:"mpegts,omitempty"`
 	RTSP                   *RTSPMetrics         `json:"rtsp,omitempty"`
+	WHEP                   *WHEPMetrics         `json:"whep,omitempty"`
 	Findings               []Finding            `json:"findings"`
 	Player                 *PlayerReport        `json:"player,omitempty"`
 	PlayerNetwork          *PlayerNetworkReport `json:"player_network,omitempty"`

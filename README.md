@@ -8,7 +8,7 @@
 
 | 模块 | 访问路由 | 说明 |
 | --- | --- | --- |
-| **排障工作台** | `/diagnostics` | 支持 HTTP-FLV、RTMP/S、RTSP/S、HLS、HTTP/UDP/RTP MPEG-TS 采样，记录网络阶段耗时、HTTP 头与播放器体验，生成可离线复盘的 SHA-256 证据包及 AI 辅助汇总 |
+| **排障工作台** | `/diagnostics` | 支持 HTTP-FLV、RTMP/S、RTSP/S、WHEP (WebRTC)、HLS、HTTP/UDP/RTP MPEG-TS 采样，记录网络/信令/ICE/DTLS 阶段耗时、HTTP 头、RTP/RTCP/PLI 与浏览器原生 WebRTC `getStats()` 播放器体验，生成可离线复盘的 SHA-256 证据包及 AI 辅助汇总 |
 | **ONVIF 探测** | `/diagnostics/onvif` | 局域网 WS-Discovery 设备发现、凭据鉴权与 Media Profile 读取，一键回填 RTSP 采样地址 |
 | **协议模拟器** | `/simulators` | 内置 GB28181（含平台侧收流）、ONVIF、通用 SIP、HLS、RTMP/S、HTTP-FLV/MPEG-TS、WHEP 故障源、多路 RTMP/RTSP/WHIP 推流器与自动化场景回归 |
 | **离线复盘** | `/diagnostics/review`、`/offline` | 支持排障证据包（ZIP）离线校验与重算，以及 `raw` / `pcap`（RTMP·RTP/RTCP·HTTP-FLV·TS）/ `flv` / `ts` / `ps`（含 G.711 转 WAV）/ `webm`（含 AV1）/ `mp4` / `annexb` 离线解析、逐帧深钻、MP4 Box 树、FFmpeg 黑帧/冻结/静音体检与无损切片、两文件 A/B 对比和独立 HTML/Markdown 诊断报告导出 |

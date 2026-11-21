@@ -294,6 +294,8 @@ func readBundle(dir string, source io.Reader) (Report, error) {
 		report, err = replayTS(dir, manifest)
 	case ProtocolRTSP, ProtocolRTSPS:
 		report, err = replayRTSP(dir, manifest)
+	case ProtocolWHEP:
+		report, err = replayWHEP(dir, manifest)
 	default:
 		return Report{}, fmt.Errorf("%w: 不支持的采样协议", ErrInvalid)
 	}
@@ -380,6 +382,8 @@ func dumpName(protocol string) string {
 		return rtpStreamName
 	case ProtocolRTSP, ProtocolRTSPS:
 		return rtspStreamName
+	case ProtocolWHEP:
+		return whepStreamName
 	default:
 		return ""
 	}
@@ -389,7 +393,7 @@ func bundleEntries(files []*zip.File) (map[string]*zip.File, error) {
 	limits := map[string]uint64{
 		manifestName: maxManifestBytes, timelineName: maxTimeline,
 		streamName: maxStreamBytes, rtmpStreamName: maxStreamBytes, hlsStreamName: maxStreamBytes,
-		tsStreamName: maxStreamBytes, udpStreamName: maxStreamBytes, rtpStreamName: maxStreamBytes, rtspStreamName: maxStreamBytes,
+		tsStreamName: maxStreamBytes, udpStreamName: maxStreamBytes, rtpStreamName: maxStreamBytes, rtspStreamName: maxStreamBytes, whepStreamName: maxStreamBytes,
 		reportName: 8 << 20, htmlName: 20 << 20, investigationName: maxInvestigationBytes,
 		playerName: maxPlayerBytes, playerNetworkName: maxPlayerNetworkBytes,
 		explanationName:            maxReportExplanationBytes,

@@ -42,6 +42,29 @@ func addPlayerFindings(report *Report) {
 	case "error":
 		add("player_error", "warn", "播放器发生播放错误，记录已保留。", "查看播放器事件并对照同一时间的拉流报告。", player.StartOffsetMS, player.StartOffsetMS+player.ElapsedMS)
 	}
+	if w := player.WebRTC; w != nil {
+		if w.FreezeCount > 0 {
+			add("player_webrtc_freeze", "warn",
+				fmt.Sprintf("浏览器原生 WebRTC 播放观测到 %d 次画面冻结，累计冻结 %d ms", w.FreezeCount, w.TotalFreezesDurationMS),
+				"对照服务端 RTP 丢包/抖动、PLI 次数与浏览器抖动缓冲延迟，定位网络波动还是端侧解码卡顿。",
+				player.StartOffsetMS, player.StartOffsetMS+player.ElapsedMS)
+		}
+		if w.JitterBufferAvgMS >= 150 {
+			add("player_webrtc_jitter_buffer_high", "warn",
+				fmt.Sprintf("浏览器 WebRTC 抖动缓冲平均延迟偏高（%.1f ms，Jitter %.1f ms）", w.JitterBufferAvgMS, w.JitterMS),
+				"检查网络抖动或丢包重传（NACK）导致的抖动缓冲膨胀。",
+				player.StartOffsetMS, player.StartOffsetMS+player.ElapsedMS)
+		}
+		if w.PacketsLost > 0 && w.PacketsReceived > 0 {
+			lossPct := float64(w.PacketsLost) * 100.0 / float64(w.PacketsLost+w.PacketsReceived)
+			if lossPct >= 1.0 {
+				add("player_webrtc_packet_loss", "warn",
+					fmt.Sprintf("浏览器 WebRTC 接收侧报告丢包 %d 包（%.2f%%），已发 NACK %d / PLI %d", w.PacketsLost, lossPct, w.NACKCount, w.PLICount),
+					"结合服务端采样丢包对比，判断丢包发生在公网下发还是本机无线网卡。",
+					player.StartOffsetMS, player.StartOffsetMS+player.ElapsedMS)
+			}
+		}
+	}
 	addPlayerSchedulingFindings(report)
 	addPlayerPresentationFindings(report)
 	slices.SortStableFunc(report.Findings, func(a, b Finding) int { return cmp.Compare(a.StartMS, b.StartMS) })

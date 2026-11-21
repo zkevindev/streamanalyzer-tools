@@ -153,6 +153,12 @@ func buildThroughput(dir string, report Report) (*ThroughputReport, error) {
 		if err != nil {
 			return nil, err
 		}
+	case ProtocolWHEP:
+		if err := walkWHEPThroughput(dir, func(kind string, size int64, arrivalMS int64) {
+			account(throughputEvent{kind: kind, size: size, arrivalMS: arrivalMS})
+		}); err != nil {
+			return nil, err
+		}
 	default:
 		return nil, nil
 	}

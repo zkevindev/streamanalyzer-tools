@@ -42,6 +42,7 @@
                             <option value="rtmp">RTMP / RTMPS</option>
                             <option value="rtsp">RTSP · TCP / UDP</option>
                             <option value="rtsps">RTSPS · TLS/TCP</option>
+                            <option value="whep">WHEP (WebRTC)</option>
                             <option value="hls">HLS</option>
                             <option value="http-ts">HTTP MPEG-TS</option>
                             <option value="udp-ts">UDP MPEG-TS</option>
@@ -63,6 +64,13 @@
                         <select id="rtsp-transport" aria-describedby="url-hint">
                             <option value="tcp">TCP 交织 RTP/RTCP</option>
                             <option value="udp">UDP 单播 RTP/RTCP</option>
+                        </select>
+                    </div>
+                    <div id="whep-options" hidden>
+                        <label for="whep-ice-policy">WebRTC ICE 策略</label>
+                        <select id="whep-ice-policy" aria-describedby="url-hint">
+                            <option value="all">自动（直连优先 / all）</option>
+                            <option value="relay">强制中继（仅 TURN / relay）</option>
                         </select>
                     </div>
                     <div id="hls-variant-option" hidden>
@@ -119,6 +127,7 @@
                     <select id="batch-protocol">
                         <option value="http-flv">HTTP-FLV</option><option value="rtmp">RTMP / RTMPS</option>
                         <option value="rtsp">RTSP · TCP</option><option value="rtsps">RTSPS · TLS/TCP</option>
+                        <option value="whep">WHEP (WebRTC)</option>
                         <option value="hls">HLS</option><option value="http-ts">HTTP MPEG-TS</option>
                         <option value="udp-ts">UDP MPEG-TS</option><option value="rtp-ts">RTP MPEG-TS</option>
                     </select>
@@ -270,6 +279,12 @@
                             <div id="rtsp-sequence-table"></div>
                         </details>
                     </section>
+                    <section id="whep-report" aria-labelledby="whep-title" hidden>
+                        <h3 id="whep-title" class="report-title">WHEP 信令、ICE/DTLS 与 RTP 接收</h3>
+                        <p id="whep-note" class="timing-note muted"></p>
+                        <dl id="whep-metrics" class="metrics"></dl>
+                        <div id="whep-tracks-table"></div>
+                    </section>
                     <section id="player-report" aria-labelledby="player-report-title" hidden>
                         <h3 id="player-report-title" class="report-title">播放器体验</h3>
                         <p class="timing-note muted">首屏与开始播放从提交采样计时。缓冲曲线和卡顿区间从后端采样开始计时。</p>
@@ -282,6 +297,7 @@
                         </section>
                         <div id="player-presentation-report"></div>
                         <div id="player-scheduling-report"></div>
+                        <div id="player-webrtc-report"></div>
                         <div id="player-buffer"></div>
                         <div id="player-stalls"></div>
                         <section id="stall-investigations" aria-labelledby="stall-investigations-title" hidden>

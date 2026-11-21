@@ -31,6 +31,8 @@ func playerStart(id string, state *playerSessionState) *PlayerStart {
 	path := "/api/diagnostics/runs/" + id + "/player/stream"
 	if state.session.Transport() == "hls" {
 		path = "/api/diagnostics/runs/" + id + "/player/hls/index.m3u8"
+	} else if state.session.Transport() == "whep" {
+		path = "/api/diagnostics/runs/" + id + "/player/whep"
 	}
 	return &PlayerStart{
 		Token: state.token, Transport: state.session.Transport(), Source: state.session.Source(),
@@ -215,7 +217,7 @@ func attachPlayerArtifact(dir string, report *Report) error {
 		return fmt.Errorf("%w: RTSP 播放器缺少同次采样转封装证据", ErrInvalid)
 	}
 	expectedSource := "same_capture"
-	if report.Manifest.Protocol == ProtocolHLS {
+	if report.Manifest.Protocol == ProtocolHLS || report.Manifest.Protocol == ProtocolWHEP {
 		expectedSource = "independent_pull"
 	}
 	if record.Source != expectedSource {

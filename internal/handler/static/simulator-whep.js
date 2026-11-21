@@ -36,6 +36,11 @@ function renderSource() {
   el('endpoint-info').hidden = !active;
   el('endpoint').textContent = active ? new URL(source.endpoint, location.origin).href : '';
   el('sessions').textContent = source?.sessions ?? 0;
+  const diagLink = el('diagnose-link');
+  if (diagLink && active && source.endpoint) {
+    const m = source.endpoint.match(/\/stream\/([a-f0-9-]{36})$/);
+    diagLink.href = m ? '/diagnostics?whep_simulator=' + m[1] : '/diagnostics';
+  }
 }
 
 function offset(value) {

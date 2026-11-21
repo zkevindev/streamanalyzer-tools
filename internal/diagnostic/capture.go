@@ -42,7 +42,7 @@ func parseProtocolURL(rawURL, protocol string) (*url.URL, error) {
 		return nil, fmt.Errorf("%w: 播放地址格式无效", ErrInvalid)
 	}
 	switch protocol {
-	case ProtocolHTTPFLV, ProtocolHLS, ProtocolHTTPTS:
+	case ProtocolHTTPFLV, ProtocolHLS, ProtocolHTTPTS, ProtocolWHEP:
 		if target.Scheme != "http" && target.Scheme != "https" {
 			return nil, fmt.Errorf("%w: 请输入 HTTP 或 HTTPS 播放地址", ErrInvalid)
 		}

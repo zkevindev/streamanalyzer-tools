@@ -11,6 +11,8 @@ const endLabels = {
     http_status: 'HTTP 状态异常', request_error: '请求失败',
     invalid_flv: 'FLV 头部异常', truncated_tag: 'FLV 标签提前结束', body_error: '读取响应体中断',
     rtmp_error: 'RTMP 连接或读取失败', rtsp_error: 'RTSP 控制或接收失败', hls_error: 'HLS 播放列表不可用',
+    whep_signaling_error: 'WHEP 信令失败', whep_sdp_error: 'WHEP SDP 协商失败',
+    whep_ice_failed: 'WHEP ICE 连接失败', whep_dtls_failed: 'WHEP DTLS 握手失败', whep_error: 'WHEP 接收失败',
     udp_bind_error: '无法监听 UDP 地址', udp_read_error: '读取 UDP 数据报失败', timeline_limit: '达到证据时间线上限',
 };
 const protocols = {
@@ -18,6 +20,7 @@ const protocols = {
     rtmp: { label: 'RTMP', example: 'rtmp://live.example.com/app/stream', dump: '原始 RTMP' },
     rtsp: { label: 'RTSP', example: 'rtsp://camera.example/stream', dump: '原始 RTSP/RTP ZIP', nativeRTSP: true },
     rtsps: { label: 'RTSPS', example: 'rtsps://camera.example/stream', dump: '原始 RTSP/RTP ZIP', nativeRTSP: true },
+    whep: { label: 'WHEP (WebRTC)', example: 'https://webrtc.example.com/whep/stream', dump: '原始 WHEP/RTP ZIP', nativeWHEP: true },
     hls: { label: 'HLS', example: 'https://live.example.com/app/playlist.m3u8', dump: '原始 HLS ZIP' },
     'http-ts': { label: 'HTTP MPEG-TS', example: 'https://live.example.com/app/stream.ts', dump: '原始 TS', mpegTS: true },
     'udp-ts': { label: 'UDP MPEG-TS', example: 'udp://127.0.0.1:5000', dump: '原始 UDP 载荷', mpegTS: true, receive: true },
@@ -28,6 +31,8 @@ const stageLabels = {
     response_first_byte: '等待响应首字节', response_headers: 'HTTP 响应头',
     listen: '建立监听', receive: '接收数据', handshake: 'RTMP 握手', app_connect: 'RTMP 应用连接',
     create_stream: 'RTMP 创建流', play: 'RTMP 播放协商',
+    whep_ice_gather: 'ICE 候选收集', whep_signaling: 'WHEP 信令交换',
+    whep_ice: 'ICE 连通性建连', whep_dtls: 'DTLS 握手', whep_receive: 'RTP/RTCP 媒体接收',
 };
 const httpStages = [
     ['dns', 'DNS'], ['connect', 'TCP'], ['tls', 'TLS'], ['request_send', '发送请求'],
@@ -193,7 +198,7 @@ function renderRTSPReport(report) {
     ])) : element('p', '轨道序号统计未观测。', 'timing-note muted'));
     for (const table of node('rtsp-report').querySelectorAll('.scroll')) { table.tabIndex = 0; table.setAttribute('role', 'region'); table.setAttribute('aria-label', 'RTSP 与 RTP 证据表，可横向滚动'); }
 }
-const playerSources = { same_capture: '同一采样流', independent_pull: '独立 HLS 拉流' };
+const playerSources = { same_capture: '同一采样流', independent_pull: '独立拉流' };
 const playerStates = {
     awaiting: '等待播放器数据', recording: '采集中', complete: '采集完成',
     unsupported: '当前环境不支持该播放格式', autoplay_blocked: '自动播放受限', error: '播放失败',
@@ -978,6 +983,109 @@ function renderPlayerScheduling(scheduling, stall, intervalKind = 'buffering') {
     return block;
 }
 
+function renderPlayerWebRTC(w) {
+    const container = node('player-webrtc-report');
+    if (!container) return;
+    if (!w) { container.replaceChildren(); return; }
+    const box = element('div', '');
+    box.append(element('h4', '浏览器 WebRTC 实时统计（RTCPeerConnection.getStats）'));
+    const dl = element('dl', '', 'metrics');
+    const pair = [w.selected_candidate_type, w.selected_remote_type].filter(Boolean).join(' ↔ ') + (w.selected_protocol ? ` (${w.selected_protocol})` : '');
+    const items = [
+        ['ICE / Peer 状态', `${w.ice_state || '未记录'} / ${w.connection_state || '未记录'}`],
+        ['候选路径', pair || '未记录'],
+        ['当前 RTT', w.current_rtt_ms != null ? `${w.current_rtt_ms.toFixed(1)} ms` : '未观测'],
+        ['视频 / 音频编码', `${w.video_codec || '无'} / ${w.audio_codec || '无'}`],
+        ['收包 / 丢包', `${w.packets_received || 0} / ${w.packets_lost || 0}`],
+        ['RTP 抖动 / JitterBuffer', `${(w.jitter_ms || 0).toFixed(2)} ms / ${(w.jitter_buffer_avg_ms || 0).toFixed(1)} ms`],
+        ['解码帧 / 丢帧', `${w.frames_decoded || 0} / ${w.frames_dropped || 0}`],
+        ['画面冻结', `${w.freeze_count || 0} 次（累计 ${w.total_freezes_duration_ms || 0} ms）`],
+        ['PLI / NACK / FIR', `${w.pli_count || 0} / ${w.nack_count || 0} / ${w.fir_count || 0}`],
+        ['接收码率', `${(w.bitrate_kbps || 0).toFixed(1)} kbps`],
+    ];
+    for (const [label, value] of items) {
+        const div = element('div', '');
+        div.append(element('dt', label), element('dd', String(value)));
+        dl.append(div);
+    }
+    box.append(dl);
+    container.replaceChildren(box);
+}
+
+function renderWHEPReport(report) {
+    const section = node('whep-report');
+    if (!section) return;
+    const w = report?.whep;
+    section.hidden = !w;
+    if (!w) return;
+    const noteParts = [
+        w.boundary || '服务端 Pion WebRTC 探针记录 WHEP HTTP 信令、ICE/DTLS 握手与已解密 RTP/RTCP 原始证据包（stream.whep.zip）。',
+    ];
+    if (w.link_ice_servers?.length) noteParts.push(`服务端通过 Link 头下发了 ${w.link_ice_servers.length} 个 ICE Server。`);
+    if (w.delete_status > 0) noteParts.push(`采样结束已执行 DELETE 会话清理（HTTP ${w.delete_status}）。`);
+    node('whep-note').textContent = noteParts.join(' ');
+
+    const pair = w.selected_pair
+        ? `${w.selected_pair.local_type || '?'} ↔ ${w.selected_pair.remote_type || '?'} (${w.selected_pair.local_protocol || w.selected_pair.remote_protocol || 'udp'})`
+        : '未建立';
+    const codecs = [
+        ...(w.answer_sdp?.video_codecs || []),
+        ...(w.answer_sdp?.audio_codecs || []),
+    ].join(', ') || '未协商';
+    const tracks = w.tracks || [];
+    const totalPLI = tracks.reduce((sum, t) => sum + (t.pli_count || 0), 0);
+    const totalSR = tracks.reduce((sum, t) => sum + (t.rtcp_sr_count || 0), 0);
+    const totalRR = tracks.reduce((sum, t) => sum + (t.rtcp_rr_count || 0), 0);
+    const pliRecovered = tracks.find((t) => t.pli_first_recovery_ms != null)?.pli_first_recovery_ms;
+    const values = [
+        ['信令 HTTP 状态', w.http_status ? `HTTP ${w.http_status}` : '未完成'],
+        ['ICE 策略 / 状态', `${w.ice_transport_policy || 'all'} · ${w.ice_state || 'new'}${w.ice_connect_ms != null ? ` (${time(w.ice_connect_ms)})` : ''}`],
+        ['DTLS / Peer 状态', `${w.dtls_state || 'new'}${w.dtls_connect_ms != null ? ` (${time(w.dtls_connect_ms)})` : ''} / ${w.peer_state || 'new'}`],
+        ['Selected Candidate Pair', pair],
+        ['本地 / 远端候选数', `${w.local_candidates || w.offer_sdp?.candidate_count || 0} / ${w.remote_candidates || w.answer_sdp?.candidate_count || 0}`],
+        ['协商编解码', codecs],
+        ['会话 Location', w.location_recorded ? (w.delete_status > 0 ? `已返回并已 DELETE（${w.delete_status}）` : '已返回') : '未返回'],
+        ['PLI 请求 / 恢复', `${totalPLI} 次${pliRecovered != null ? ` · 首次恢复 ${time(pliRecovered)}` : ''}`],
+        ['RTCP SR / RR', `${totalSR} / ${totalRR}`],
+        ['最大断流间隔', w.media_stopped_gap_ms > 0 ? time(w.media_stopped_gap_ms) : '无明显断流'],
+    ];
+    renderMetrics('whep-metrics', values);
+
+    if (!tracks.length) {
+        node('whep-tracks-table').replaceChildren(element('p', '未收到任何 RTP 媒体轨道。', 'muted'));
+        return;
+    }
+    const table = element('table', '', 'timing-table');
+    const thead = element('thead', '');
+    const hr = element('tr', '');
+    for (const h of ['轨道 / 编码', 'SSRC / PT', '收包 / 字节', '缺口丢包 / 失序 / 重复', 'RTP Jitter', '帧 / 关键帧 / 最大 GOP', '平均码率']) {
+        hr.append(element('th', h));
+    }
+    thead.append(hr);
+    const tbody = element('tbody', '');
+    for (const t of tracks) {
+        const tr = element('tr', '');
+        const lossText = `${t.missing_sequence_packets || 0} (${(t.loss_rate_pct || 0).toFixed(2)}%) / ${t.out_of_order_packets || 0} / ${t.duplicate_packets || 0}`;
+        const frameText = t.kind === 'video'
+            ? `${t.frames || 0} / ${t.keyframes || 0} / ${t.max_gop_ms > 0 ? `${t.max_gop_ms} ms` : '—'}`
+            : `${t.frames || 0} 包`;
+        for (const cell of [
+            `${t.kind || '?'} · ${t.codec || '?'} (${t.clock_rate || 0}Hz)`,
+            `${t.ssrc} / PT=${t.payload_type}`,
+            `${t.packets || 0} · ${bytes(t.bytes || 0)}`,
+            lossText,
+            `${(t.jitter_ms || 0).toFixed(2)} ms (max ${(t.max_jitter_ms || 0).toFixed(2)})`,
+            frameText,
+            `${(t.bitrate_kbps || 0).toFixed(1)} kbps`,
+        ]) {
+            tr.append(element('td', cell));
+        }
+        tbody.append(tr);
+    }
+    table.append(thead, tbody);
+    node('whep-tracks-table').replaceChildren(element('h4', '媒体轨道 RTP / 帧质量'), table);
+}
+
 function renderPlayerReport(player, elapsed) {
     node('player-report').hidden = !player;
     if (!player) return;
@@ -1003,6 +1111,7 @@ function renderPlayerReport(player, elapsed) {
     renderPlayerVideo(player.video);
     node('player-presentation-report').replaceChildren(renderPresentationReport(player.presentation, true));
     node('player-scheduling-report').replaceChildren(renderPlayerScheduling(player.scheduling));
+    renderPlayerWebRTC(player.webrtc);
     const stalls = player.stalls || [];
     const samples = player.buffer_samples || [];
     node('player-buffer').replaceChildren(...(samples.length ? [renderBufferChart(samples, stalls, elapsed)] : []));
@@ -1960,6 +2069,7 @@ function renderReport(report) {
     renderAutomaticInvestigation(report);
     renderSamplingTiming(report, requests);
     renderRTSPReport(report);
+    renderWHEPReport(report);
     renderPlayerReport(report.player, observed.elapsed_ms);
     renderPlayerNetwork(report);
     renderStallInvestigations(report);
@@ -2242,13 +2352,20 @@ node('protocol').addEventListener('change', () => {
     node('url').placeholder = selected.example;
     node('url-label').textContent = selected.receive ? '监听地址' : '播放地址';
     const hint = node('url-hint');
-    hint.hidden = !selected.receive && !selected.nativeRTSP;
-    hint.textContent = selected.nativeRTSP ? '填写摄像头或 NVR 的播放地址，支持 URL 用户信息认证。采用 TCP 交织传输；RTSPS 使用 TLS 并校验服务端证书。报告仅显示协议和主机。' : selected.receive ? `填写本机 IPv4 和端口。组播示例 ${protocol.split('-')[0]}://239.1.1.1:5000?interface=en0` : '';
+    hint.hidden = !selected.receive && !selected.nativeRTSP && !selected.nativeWHEP;
+    hint.textContent = selected.nativeRTSP
+        ? '填写摄像头或 NVR 的播放地址，支持 URL 用户信息认证。采用 TCP 交织传输；RTSPS 使用 TLS 并校验服务端证书。报告仅显示协议和主机。'
+        : selected.nativeWHEP
+            ? '填写 WHEP HTTP/HTTPS 拉流端点（如 MediaMTX / SRS / LiveKit / Cloudflare Stream）。支持在“请求头”填写 Authorization: Bearer <token>，并可同步开启浏览器原生 WebRTC 实播采集 getStats()。'
+            : selected.receive
+                ? `填写本机 IPv4 和端口。组播示例 ${protocol.split('-')[0]}://239.1.1.1:5000?interface=en0`
+                : '';
     const playback = node('analyze-playback');
     playback.disabled = false;
     node('playback-capability-note').hidden = !selected.nativeRTSP;
-    const httpAccess = ['http-flv', 'hls', 'http-ts'].includes(protocol);
+    const httpAccess = ['http-flv', 'hls', 'http-ts', 'whep'].includes(protocol);
     node('http-access-options').hidden = !httpAccess && !['rtmp', 'rtsps'].includes(protocol);
+    node('whep-options').hidden = protocol !== 'whep';
     node('reconnect-options').hidden = !['http-flv', 'rtmp'].includes(protocol);
     node('hls-variant-option').hidden = protocol !== 'hls';
     node('rolling-options').hidden = !['http-flv', 'rtmp', 'hls'].includes(protocol);
@@ -2271,6 +2388,16 @@ if (simulatedHLS && /^[a-f0-9-]{36}$/.test(simulatedHLS)) {
     simulatorURL = new URL('/api/simulators/hls/stream/' + simulatedHLS + '/playlist.m3u8', location.origin).href;
     node('url').value = simulatorURL;
     node('seconds').value = '30';
+    node('analyze-playback').checked = true;
+    updateAutomaticOption();
+}
+
+const simulatedWHEP = launchOptions.get('whep_simulator');
+if (simulatedWHEP && /^[a-f0-9-]{36}$/.test(simulatedWHEP)) {
+    node('protocol').value = 'whep';
+    node('protocol').dispatchEvent(new Event('change'));
+    node('url').value = new URL('/api/simulators/whep/stream/' + simulatedWHEP, location.origin).href;
+    node('seconds').value = '15';
     node('analyze-playback').checked = true;
     updateAutomaticOption();
 }
@@ -2343,7 +2470,7 @@ async function changeRTSPReplay(start) {
 node('rtsp-replay').addEventListener('click', () => { void changeRTSPReplay(true); });
 node('rtsp-replay-stop').addEventListener('click', () => { void changeRTSPReplay(false); });
 function captureAccessOptions(protocol) {
-    const httpAccess = ['http-flv', 'hls', 'http-ts'].includes(protocol);
+    const httpAccess = ['http-flv', 'hls', 'http-ts', 'whep'].includes(protocol);
     const tlsAccess = httpAccess || ['rtmp', 'rtsps'].includes(protocol);
     if (!tlsAccess) return {};
     const headers = {};
@@ -2477,7 +2604,7 @@ bindForm('sample', async () => {
     const protocol = node('protocol').value;
     const run = await api('/runs', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ protocol, transport: protocols[protocol]?.nativeRTSP ? node('rtsp-transport').value : undefined, url, seconds, playback, auto_investigate: autoInvestigate, reconnect_attempts: ['http-flv', 'rtmp'].includes(protocol) ? node('reconnect-attempts').valueAsNumber : 0, reconnect_delay_ms: ['http-flv', 'rtmp'].includes(protocol) ? node('reconnect-delay').valueAsNumber : 0, hls_variant: protocol === 'hls' ? node('hls-variant').valueAsNumber : undefined, segment_seconds: ['http-flv', 'rtmp', 'hls'].includes(protocol) ? node('segment-seconds').valueAsNumber : 0, rolling_segments: ['http-flv', 'rtmp', 'hls'].includes(protocol) ? node('rolling-segments').valueAsNumber : 0, profile: node('analysis-profile').value, custom_thresholds: node('analysis-profile').value === 'custom' ? { first_frame_warn_ms: node('threshold-first-frame').valueAsNumber, video_gap_warn_ms: node('threshold-video-gap').valueAsNumber, dts_gap_warn_ms: node('threshold-dts-gap').valueAsNumber, gop_warn_ms: node('threshold-gop').valueAsNumber } : undefined, ...captureAccessOptions(protocol) }),
+        body: JSON.stringify({ protocol, transport: protocols[protocol]?.nativeRTSP ? node('rtsp-transport').value : undefined, ice_transport_policy: protocol === 'whep' ? node('whep-ice-policy').value : undefined, url, seconds, playback, auto_investigate: autoInvestigate, reconnect_attempts: ['http-flv', 'rtmp'].includes(protocol) ? node('reconnect-attempts').valueAsNumber : 0, reconnect_delay_ms: ['http-flv', 'rtmp'].includes(protocol) ? node('reconnect-delay').valueAsNumber : 0, hls_variant: protocol === 'hls' ? node('hls-variant').valueAsNumber : undefined, segment_seconds: ['http-flv', 'rtmp', 'hls'].includes(protocol) ? node('segment-seconds').valueAsNumber : 0, rolling_segments: ['http-flv', 'rtmp', 'hls'].includes(protocol) ? node('rolling-segments').valueAsNumber : 0, profile: node('analysis-profile').value, custom_thresholds: node('analysis-profile').value === 'custom' ? { first_frame_warn_ms: node('threshold-first-frame').valueAsNumber, video_gap_warn_ms: node('threshold-video-gap').valueAsNumber, dts_gap_warn_ms: node('threshold-dts-gap').valueAsNumber, gop_warn_ms: node('threshold-gop').valueAsNumber } : undefined, ...captureAccessOptions(protocol) }),
     });
     stopPlayback(activePlayer);
     startPlayback(run, startedAt, startedAtPerformanceMS, seconds, hlsRecovery, hlsABR, hlsLowLatency);

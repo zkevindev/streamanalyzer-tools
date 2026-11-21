@@ -20,12 +20,22 @@ func RegisterDiagnosticPlayerMedia(api *gin.RouterGroup, service *diagnostic.Ser
 			diagnosticError(c, err)
 			return
 		}
-		if player.Transport() == "hls" {
+		if player.Transport() == "hls" || player.Transport() == "whep" {
 			diagnosticError(c, diagnostic.ErrNotFound)
 			return
 		}
 		serveDiagnosticPlayerSocket(c, player)
 	})
+	whepProxy := func(c *gin.Context) {
+		player, err := service.PlayerSession(c.Param("id"), c.Query("token"))
+		if err != nil {
+			diagnosticError(c, err)
+			return
+		}
+		player.ServeWHEP(c.Writer, c.Request)
+	}
+	api.POST("/runs/:id/player/whep", whepProxy)
+	api.DELETE("/runs/:id/player/whep", whepProxy)
 	proxy := func(c *gin.Context) {
 		player, err := service.PlayerSession(c.Param("id"), c.Query("token"))
 		if err != nil {

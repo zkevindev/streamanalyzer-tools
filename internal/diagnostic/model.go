@@ -233,6 +233,7 @@ type modelPlayer struct {
 	Video             *PlayerVideoReport       `json:"video,omitempty"`
 	Scheduling        *modelPlayerScheduling   `json:"scheduling,omitempty"`
 	Presentation      *modelPlayerPresentation `json:"presentation,omitempty"`
+	WebRTC            *PlayerWebRTCStats       `json:"webrtc,omitempty"`
 }
 
 // Keep connection metadata and header text local even as the report grows.
@@ -339,6 +340,7 @@ func modelInputWithImages(report Report, images []ModelImage) ([]byte, error) {
 		HLS                 *HLSMetrics               `json:"hls,omitempty"`
 		MPEGTS              *MPEGTSMetrics            `json:"mpegts,omitempty"`
 		RTSP                *modelRTSPMetrics         `json:"rtsp,omitempty"`
+		WHEP                *modelWHEPMetrics         `json:"whep,omitempty"`
 		FirstPayloadMS      *int64                    `json:"first_payload_ms,omitempty"`
 		Stages              []CaptureStage            `json:"stages,omitempty"`
 		Requests            []modelHTTPRequest        `json:"requests,omitempty"`
@@ -352,7 +354,7 @@ func modelInputWithImages(report Report, images []ModelImage) ([]byte, error) {
 	}{
 		AnalysisScope: report.modelScope,
 		Protocol:      report.Manifest.Protocol, ElapsedMS: obs.ElapsedMS, HTTPStatus: obs.HTTPStatus, TTFBMS: obs.TTFBMS,
-		EndReason: obs.EndReason, Metrics: report.Metrics, HLS: report.HLS, MPEGTS: report.MPEGTS, RTSP: modelRTSP(report.RTSP),
+		EndReason: obs.EndReason, Metrics: report.Metrics, HLS: report.HLS, MPEGTS: report.MPEGTS, RTSP: modelRTSP(report.RTSP), WHEP: modelWHEP(report.WHEP),
 		FirstPayloadMS: obs.FirstPayloadMS, Stages: obs.Stages, FailureStage: obs.FailureStage, FailureCode: obs.FailureCode,
 		Findings: []modelFinding{},
 	}
@@ -373,7 +375,7 @@ func modelInputWithImages(report Report, images []ModelImage) ([]byte, error) {
 			StallCount: player.StallCount, TotalStallMS: player.TotalStallMS, MaxStallMS: player.MaxStallMS, ActiveMS: player.ActiveMS,
 			StallRatio: player.StallRatio, MinBufferMS: player.MinBufferMS, MaxBufferMS: player.MaxBufferMS, StallThresholdMS: player.StallThresholdMS,
 			Stalls: player.Stalls[:min(20, len(player.Stalls))],
-			Video:  player.Video, Scheduling: modelScheduling(player.Scheduling), Presentation: modelPresentation(player.Presentation),
+			Video:  player.Video, Scheduling: modelScheduling(player.Scheduling), Presentation: modelPresentation(player.Presentation), WebRTC: player.WebRTC,
 		}
 	}
 	if len(input.Requests) == 0 {

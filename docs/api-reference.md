@@ -7,7 +7,7 @@
 | 方法与路径 | 说明 |
 | --- | --- |
 | `GET /api/diagnostics/config` | 返回当前模型配置状态及 `capture_limit_bytes` 原始产物上限 |
-| `POST /api/diagnostics/runs` | 发起采样。请求体示例：`{"protocol":"hls","url":"<stream-url>","seconds":60,"playback":true,"auto_investigate":true}`。`protocol` 可选 `http-flv` / `rtmp` / `rtsp` / `rtsps` / `hls` / `http-ts` / `udp-ts` / `rtp-ts`（默认 `http-flv`）；RTSP 可传 `"transport":"udp"`（默认 `tcp`）。HTTP-FLV、HLS、HTTP-TS 可附加 `headers`（字符串映射，最多 16 项）、`proxy_url` 和 `ca_certificate`（PEM）；RTMPS/RTSPS 也可附加 `ca_certificate`。这些配置仅用于本次连接且不会保存原始值。HTTP-FLV/RTMP 可附加 `reconnect_attempts`（0–3）和 `reconnect_delay_ms`（0–5000），异常 EOF/读取失败时创建独立重连 Run。HLS 可附加 `hls_variant`：-1 为最高码率，0 起为主清单常规变体序号；实际选择和带宽写入 manifest。HTTP-FLV/RTMP/HLS 可附加 `segment_seconds`（1–300）和 `rolling_segments`（1–12，默认 3）启用持续滚动分段 |
+| `POST /api/diagnostics/runs` | 发起采样。请求体示例：`{"protocol":"hls","url":"<stream-url>","seconds":60,"playback":true,"auto_investigate":true}`。`protocol` 可选 `http-flv` / `rtmp` / `rtsp` / `rtsps` / `whep` / `hls` / `http-ts` / `udp-ts` / `rtp-ts`（默认 `http-flv`）；RTSP 可传 `"transport":"udp"`（默认 `tcp`）；WHEP 可传 `"ice_transport_policy":"all"|"relay"` 与 `"ice_servers"`（最多 8 个 STUN/TURN 项，凭据不落盘）。HTTP-FLV、WHEP、HLS、HTTP-TS 可附加 `headers`（字符串映射，最多 16 项）、`proxy_url` 和 `ca_certificate`（PEM）；RTMPS/RTSPS 也可附加 `ca_certificate`。这些配置仅用于本次连接且不会保存原始值。HTTP-FLV/RTMP 可附加 `reconnect_attempts`（0–3）和 `reconnect_delay_ms`（0–5000），异常 EOF/读取失败时创建独立重连 Run。HLS 可附加 `hls_variant`：-1 为最高码率，0 起为主清单常规变体序号；实际选择和带宽写入 manifest。HTTP-FLV/RTMP/HLS 可附加 `segment_seconds`（1–300）和 `rolling_segments`（1–12，默认 3）启用持续滚动分段 |
 | `GET /api/diagnostics/sessions/:id` | 查询 HTTP-FLV/RTMP 自动重连或 HTTP-FLV/RTMP/HLS 滚动分段会话及各段独立 Run；会话索引仅保存在当前服务内存 |
 | `POST /api/diagnostics/sessions/:id/stop` | 停止滚动会话及当前分段，不再创建下一段；已保留证据不受影响 |
 | `POST /api/diagnostics/batches` | 创建 2–4 路批量采样，请求体 `{"samples":[<SampleRequest>,...]}`。批量模式不接受 `playback` / `auto_investigate`；批次只在本服务内存保存运行 ID，不保存访问条件 |
@@ -24,7 +24,8 @@
 | `DELETE /api/diagnostics/runs/:id` | 永久删除已结束且未保护记录及其本地产物 |
 | `POST /api/diagnostics/runs/:id/protection` | 用 `{"protected":true}` 保护重要证据，或用 `false` 取消保护 |
 | `POST /api/diagnostics/runs/:id/stop` | 停止采样并保留已采集数据 |
-| `POST /api/diagnostics/runs/:id/player` | 使用授权头 `X-StreamAnalyzer-Player` 追加播放器事件与缓冲样本（`complete` 后锁定） |
+| `POST /api/diagnostics/runs/:id/player` | 使用授权头 `X-StreamAnalyzer-Player` 追加播放器事件、缓冲样本与 WebRTC `getStats()` 统计（`complete` 后锁定） |
+| `POST / DELETE /api/diagnostics/runs/:id/player/whep` | 本机 WHEP 播放器信令代理（携带授权 `token` 转发 Offer SDP 并透传上游 `headers`/代理/CA，规避 CORS 并在结束时向远端 `Location` 发送 `DELETE` 清理会话） |
 | `POST /api/diagnostics/runs/:id/automatic/retry` | 用 `{}` 显式重新运行自动补查与汇总流程 |
 | `POST /api/diagnostics/runs/:id/automatic/stop` | 用 `{}` 停止自动补查流程并保留已有产物 |
 | `POST /api/diagnostics/runs/:id/stalls` | 手动补查：缓冲卡顿传 `{"stall_index":1}`，呈帧回调间隔传 `{"interval_kind":"presentation_gap","interval_index":1}`；终态无媒体任务可附加 `"retry":true` |

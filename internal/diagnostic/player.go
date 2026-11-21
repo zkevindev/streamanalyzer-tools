@@ -55,6 +55,7 @@ type PlayerRecording struct {
 	Samples      []PlayerSample               `json:"samples"`
 	Scheduling   *PlayerSchedulingRecording   `json:"scheduling,omitempty"`
 	Presentation *PlayerPresentationRecording `json:"presentation,omitempty"`
+	WebRTC       *PlayerWebRTCStats           `json:"webrtc,omitempty"`
 }
 
 type PlayerBufferSample struct {
@@ -98,6 +99,7 @@ type PlayerReport struct {
 	Video             *PlayerVideoReport        `json:"video,omitempty"`
 	Scheduling        *PlayerSchedulingReport   `json:"scheduling,omitempty"`
 	Presentation      *PlayerPresentationReport `json:"presentation,omitempty"`
+	WebRTC            *PlayerWebRTCStats        `json:"webrtc,omitempty"`
 }
 
 func validatePlayerRecording(record PlayerRecording, reference time.Time) error {
@@ -124,9 +126,17 @@ func validatePlayerRecording(record PlayerRecording, reference time.Time) error 
 		return invalid()
 	}
 	switch record.Engine {
-	case "", "mpegtsjs", "native-hls", "hlsjs":
+	case "", "mpegtsjs", "native-hls", "hlsjs", "webrtc":
 	default:
 		return invalid()
+	}
+	if record.WebRTC != nil {
+		w := record.WebRTC
+		if w.PacketsReceived < 0 || w.PacketsLost < 0 || w.FramesDecoded < 0 || w.FramesDropped < 0 ||
+			w.FreezeCount < 0 || w.TotalFreezesDurationMS < 0 || w.PLICount < 0 || w.NACKCount < 0 || w.FIRCount < 0 ||
+			w.JitterMS < 0 || w.JitterBufferAvgMS < 0 || w.StatsSamples < 0 || w.StatsSamples > 10000 {
+			return invalid()
+		}
 	}
 	last := int64(0)
 	for _, event := range record.Events {
@@ -292,5 +302,9 @@ func analyzePlayer(record PlayerRecording, observation Observation) *PlayerRepor
 	result.Video = analyzePlayerVideo(record.Samples, activeSpans)
 	result.Scheduling = analyzePlayerScheduling(record, activeSpans, observation)
 	result.Presentation = analyzePlayerPresentation(record, activeSpans, observation, result.Stalls)
+	if record.WebRTC != nil {
+		cp := *record.WebRTC
+		result.WebRTC = &cp
+	}
 	return result
 }

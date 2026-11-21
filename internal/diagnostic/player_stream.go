@@ -29,6 +29,7 @@ type PlayerSession struct {
 	cancel    context.CancelFunc
 	transport string
 	hls       *playerHLS
+	whep      *playerWHEP
 	ready     chan struct{}
 
 	mu             sync.Mutex
@@ -52,6 +53,9 @@ func newPlayerSession(ctx context.Context, protocol string, target *url.URL, cli
 	case ProtocolHLS:
 		session.transport = "hls"
 		session.hls = newPlayerHLS(target, client)
+	case ProtocolWHEP:
+		session.transport = "whep"
+		session.whep = newPlayerWHEP(target, client)
 	}
 	return session
 }
@@ -70,10 +74,18 @@ func capturePlayer(ctx context.Context) *PlayerSession {
 func (p *PlayerSession) Transport() string { return p.transport }
 
 func (p *PlayerSession) Source() string {
-	if p.hls != nil {
+	if p.hls != nil || p.whep != nil {
 		return "independent_pull"
 	}
 	return "same_capture"
+}
+
+func (p *PlayerSession) ServeWHEP(w http.ResponseWriter, r *http.Request) {
+	if p == nil || p.whep == nil {
+		http.Error(w, "whep player unavailable", http.StatusNotFound)
+		return
+	}
+	p.whep.ServeHTTP(w, r)
 }
 
 func (p *PlayerSession) Done() <-chan struct{} { return p.ctx.Done() }
@@ -131,6 +143,9 @@ func (p *PlayerSession) Close() {
 	p.EndMedia()
 	if p.hls != nil {
 		p.hls.close()
+	}
+	if p.whep != nil {
+		p.whep.Close()
 	}
 }
 
