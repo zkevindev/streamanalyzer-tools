@@ -1883,11 +1883,18 @@ async function refreshMediaTools() {
 }
 node('media-tools-settings').addEventListener('click', async () => {
     const panel = node('media-tools-panel');
-    panel.hidden = !panel.hidden;
-    if (!panel.hidden) {
-        try { await refreshMediaTools(); } catch (err) { message(err.message, true); }
+    if (panel.open) {
+        panel.close();
+        return;
     }
+    panel.showModal();
+    try { await refreshMediaTools(); } catch (err) { message(err.message, true); }
 });
+node('close-media-tools').addEventListener('click', () => { node('media-tools-panel').close(); });
+node('media-tools-panel').addEventListener('click', event => {
+    if (event.target === event.currentTarget) event.currentTarget.close();
+});
+node('media-tools-panel').addEventListener('close', () => { node('media-tools-settings').focus(); });
 node('media-tools-form').addEventListener('submit', async event => {
     event.preventDefault();
     const button = event.currentTarget.querySelector('button[type="submit"]');

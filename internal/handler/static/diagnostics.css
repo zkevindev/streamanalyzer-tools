@@ -200,6 +200,20 @@ button:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
 .comparison-state[data-state="improved"] { color: var(--success); }
 .comparison-state[data-state="worse"] { color: var(--danger); }
 .comparison-warnings { color: var(--warn); }
+.media-tools-dialog {
+    width: min(42rem, calc(100vw - 2rem)); max-height: min(46rem, calc(100dvh - 3rem));
+    padding: 0; color: var(--text); background: var(--surface); border: 1px solid var(--border-strong);
+    border-radius: var(--radius); box-shadow: 0 1.5rem 4rem rgba(0, 0, 0, 0.22); overflow: auto;
+}
+.media-tools-dialog::backdrop { background: rgba(15, 23, 42, 0.48); backdrop-filter: blur(2px); }
+.media-tools-dialog-heading { position: sticky; top: 0; z-index: 1; background: var(--surface); border-bottom: 1px solid var(--border); }
+.media-tools-dialog-heading button { min-height: 2rem; padding: 0.25rem 0.65rem; }
+.media-tools-capabilities { padding-top: 0; }
+.media-tools-dialog form { display: grid; gap: 0.65rem; }
+.media-tools-dialog form button[type="submit"] { justify-self: start; }
+@media (max-width: 640px) {
+    .media-tools-dialog { width: calc(100vw - 1rem); max-height: calc(100dvh - 1rem); border-radius: var(--radius-sm); }
+}
 #storage-summary { margin-block: 0.4rem; }
 #runs { padding: 0.45rem; margin: 0; list-style: none; max-height: 38rem; overflow: auto; }
 #runs li { display: flex; align-items: center; gap: 0.25rem; }

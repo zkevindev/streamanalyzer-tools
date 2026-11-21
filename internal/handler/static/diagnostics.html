@@ -192,18 +192,21 @@
     </div>
     <p id="notice" role="status" hidden></p>
 
-    <section id="media-tools-panel" class="panel" aria-labelledby="media-tools-title" hidden>
-        <div class="panel-heading"><h2 id="media-tools-title">FFmpeg 工具设置</h2></div>
+    <dialog id="media-tools-panel" class="media-tools-dialog" aria-labelledby="media-tools-title">
+        <div class="panel-heading media-tools-dialog-heading">
+            <h2 id="media-tools-title">FFmpeg 工具设置</h2>
+            <button id="close-media-tools" type="button" class="secondary" aria-label="关闭工具设置">关闭</button>
+        </div>
         <form id="media-tools-form" class="panel-body">
             <p class="field-hint muted">留空表示按程序目录、PATH 和 macOS 常见目录自动检测。路径仅保存到本机数据目录，保存前自动测试版本与能力。</p>
             <label for="media-ffmpeg-path">FFmpeg 可执行文件路径</label>
-            <input id="media-ffmpeg-path" type="text" autocomplete="off" spellcheck="false" placeholder="/opt/homebrew/bin/ffmpeg">
+            <input id="media-ffmpeg-path" type="text" autocomplete="off" spellcheck="false" placeholder="/opt/homebrew/bin/ffmpeg" autofocus>
             <label for="media-ffprobe-path">FFprobe 可执行文件路径</label>
             <input id="media-ffprobe-path" type="text" autocomplete="off" spellcheck="false" placeholder="/opt/homebrew/bin/ffprobe">
             <button type="submit">测试并保存</button>
         </form>
-        <div id="media-tools-capabilities" class="panel-body"></div>
-    </section>
+        <div id="media-tools-capabilities" class="panel-body media-tools-capabilities"></div>
+    </dialog>
 
     <div class="workspace">
         <section class="panel history" aria-labelledby="history-heading">
