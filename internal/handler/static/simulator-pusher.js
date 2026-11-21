@@ -901,7 +901,39 @@
     }
   });
 
-  syncFormVisibility();
+  function applyQueryPrefill() {
+    const params = new URLSearchParams(window.location.search);
+    const proto = (params.get('protocol') || '').trim().toLowerCase();
+    const srcKind = (params.get('source_kind') || '').trim().toLowerCase();
+    const filePath = (params.get('file_path') || '').trim();
+    const name = (params.get('name') || '').trim();
+
+    if (proto && ['rtmp', 'rtsp', 'whip'].includes(proto)) {
+      els.protocol.value = proto;
+    }
+    if (srcKind && ['upload', 'file', 'pattern', 'browser'].includes(srcKind)) {
+      els.sourceKind.value = srcKind;
+    } else if (filePath) {
+      els.sourceKind.value = 'file';
+    }
+    if (filePath) {
+      els.filePath.value = filePath;
+      els.loopEnabled.checked = true;
+      els.loopCount.disabled = false;
+    }
+    if (name) {
+      els.taskName.value = name;
+    }
+    syncFormVisibility();
+    if (filePath) {
+      showNotice(`已自动载入本机文件「${filePath}」并开启循环推流，请填写目标推流地址后启动。`);
+      if (els.targetURL && !els.targetURL.value) {
+        els.targetURL.focus();
+      }
+    }
+  }
+
+  applyQueryPrefill();
   pollTasks();
   setInterval(pollTasks, 1500);
 })();

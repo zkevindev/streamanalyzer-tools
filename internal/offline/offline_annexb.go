@@ -10,19 +10,60 @@ import (
 	"streamanalyzer/internal/models"
 )
 
+type annexBNALUSpan struct {
+	start int
+	end   int
+	nalu  []byte
+}
+
+func splitAnnexBNALUSpans(b []byte) []annexBNALUSpan {
+	starts := findStartCodes(b)
+	if len(starts) == 0 {
+		return nil
+	}
+	out := make([]annexBNALUSpan, 0, len(starts))
+	for i, start := range starts {
+		next := len(b)
+		if i+1 < len(starts) {
+			next = starts[i+1]
+		}
+		scLen := startCodeLenAt(b, start)
+		naluStart := start + scLen
+		if naluStart >= next {
+			continue
+		}
+		out = append(out, annexBNALUSpan{
+			start: start,
+			end:   next,
+			nalu:  b[naluStart:next],
+		})
+	}
+	return out
+}
+
 func (m *Manager) runAnnexB(task *models.OfflineTask, taskDir string, summary *models.OfflineSummary) error {
+	ctx := m.taskContext(task.ID)
 	outDir := filepath.Join(taskDir, "annexb")
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return err
 	}
 
+	m.setProgressPercent(task.ID, "读取 Annex B 裸流", 10, 0)
 	raw, err := os.ReadFile(task.InputPath)
 	if err != nil {
 		return err
 	}
-	nalus := splitAnnexBNALUs(raw)
-	if len(nalus) == 0 {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
+	spans := splitAnnexBNALUSpans(raw)
+	if len(spans) == 0 {
 		return fmt.Errorf("未检测到有效的 Annex B 起始码 (0x000001 / 0x00000001)")
+	}
+	nalus := make([][]byte, len(spans))
+	for i, sp := range spans {
+		nalus[i] = sp.nalu
 	}
 
 	isHEVC, videoMeta := detectAnnexBCodecAndMeta(nalus, task.InputName)
@@ -39,13 +80,37 @@ func (m *Manager) runAnnexB(task *models.OfflineTask, taskDir string, summary *m
 
 	histogram := make(map[string]int)
 	type accessUnit struct {
-		bytes     int
-		frameType string
-		hasVCL    bool
-		isKey     bool
+		startOff        int
+		endOff          int
+		hasSpan         bool
+		frameType       string
+		hasVCL          bool
+		isKey           bool
+		hasVPS          bool
+		hasSPS          bool
+		hasPPS          bool
+		hasInbandParams bool
+		paramHash       string
+		width           int
+		height          int
 	}
 	var units []accessUnit
 	var cur accessUnit
+
+	var curVPS, curSPS, curPPS [][]byte
+	var activeParamHash string
+	var activeW, activeH int
+	if videoMeta != nil {
+		activeW, activeH = videoMeta.Width, videoMeta.Height
+	}
+
+	addSpan := func(sp annexBNALUSpan) {
+		if !cur.hasSpan {
+			cur.startOff = sp.start
+			cur.hasSpan = true
+		}
+		cur.endOff = sp.end
+	}
 
 	flush := func() {
 		if !cur.hasVCL {
@@ -58,15 +123,30 @@ func (m *Manager) runAnnexB(task *models.OfflineTask, taskDir string, summary *m
 				cur.frameType = "P"
 			}
 		}
+		if isHEVC {
+			cur.hasInbandParams = cur.hasVPS && cur.hasSPS && cur.hasPPS
+		} else {
+			cur.hasInbandParams = cur.hasSPS && cur.hasPPS
+		}
+		cur.paramHash = activeParamHash
+		cur.width = activeW
+		cur.height = activeH
 		units = append(units, cur)
 		cur = accessUnit{}
 	}
 
-	for _, nalu := range nalus {
+	totalLen := int64(len(raw))
+	for i, sp := range spans {
+		if i%256 == 0 {
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			m.updateProgress(task.ID, "切分与聚合 Annex B NALU", int64(sp.end), totalLen)
+		}
+		nalu := sp.nalu
 		if len(nalu) == 0 {
 			continue
 		}
-		nalBytes := len(nalu) + 4
 		if isHEVC {
 			typ := int(h265NALUType(nalu))
 			name := codec.NALUTypeName(typ, true)
@@ -76,14 +156,31 @@ func (m *Manager) runAnnexB(task *models.OfflineTask, taskDir string, summary *m
 				if cur.hasVCL {
 					flush()
 				}
-				cur.bytes += nalBytes
+				addSpan(sp)
+				switch typ {
+				case 32:
+					cur.hasVPS = true
+					curVPS = [][]byte{nalu}
+				case 33:
+					cur.hasSPS = true
+					curSPS = [][]byte{nalu}
+					if meta := codec.VideoMetaFromNAL(nalu); meta != nil && meta.Width > 0 {
+						activeW, activeH = meta.Width, meta.Height
+					}
+				case 34:
+					cur.hasPPS = true
+					curPPS = [][]byte{nalu}
+				}
+				if len(curSPS) > 0 || len(curPPS) > 0 || len(curVPS) > 0 {
+					activeParamHash = hashNALSlices(curVPS, curSPS, curPPS)
+				}
 			case typ <= 31:
 				firstSlice := len(nalu) >= 3 && (nalu[2]&0x80) != 0
 				if cur.hasVCL && firstSlice {
 					flush()
 				}
 				cur.hasVCL = true
-				cur.bytes += nalBytes
+				addSpan(sp)
 				if isH265KeyNALUType(uint8(typ)) {
 					cur.isKey = true
 					cur.frameType = "I"
@@ -91,7 +188,7 @@ func (m *Manager) runAnnexB(task *models.OfflineTask, taskDir string, summary *m
 					cur.frameType = "P"
 				}
 			default:
-				cur.bytes += nalBytes
+				addSpan(sp)
 			}
 			continue
 		}
@@ -104,7 +201,20 @@ func (m *Manager) runAnnexB(task *models.OfflineTask, taskDir string, summary *m
 			if cur.hasVCL {
 				flush()
 			}
-			cur.bytes += nalBytes
+			addSpan(sp)
+			if typ == 7 {
+				cur.hasSPS = true
+				curSPS = [][]byte{nalu}
+				if meta, err := codec.ParseH264SPS(nalu); err == nil && meta.Width > 0 {
+					activeW, activeH = meta.Width, meta.Height
+				}
+			} else if typ == 8 {
+				cur.hasPPS = true
+				curPPS = [][]byte{nalu}
+			}
+			if len(curSPS) > 0 || len(curPPS) > 0 {
+				activeParamHash = hashNALSlices(curSPS, curPPS)
+			}
 		case 1, 5:
 			// New picture starts when first_mb_in_slice == 0 (top bit of RBSP byte 0 is 1 in Exp-Golomb for 0).
 			firstMBZero := len(nalu) >= 2 && (nalu[1]&0x80) != 0
@@ -112,7 +222,7 @@ func (m *Manager) runAnnexB(task *models.OfflineTask, taskDir string, summary *m
 				flush()
 			}
 			cur.hasVCL = true
-			cur.bytes += nalBytes
+			addSpan(sp)
 			if typ == 5 {
 				cur.isKey = true
 				cur.frameType = "I"
@@ -127,7 +237,7 @@ func (m *Manager) runAnnexB(task *models.OfflineTask, taskDir string, summary *m
 				}
 			}
 		default:
-			cur.bytes += nalBytes
+			addSpan(sp)
 		}
 	}
 	flush()
@@ -140,14 +250,36 @@ func (m *Manager) runAnnexB(task *models.OfflineTask, taskDir string, summary *m
 	}
 
 	frames := make([]models.OfflineFrameDetail, 0, len(units))
+	samples := make([]timedSample, 0, len(units))
 	for i, u := range units {
 		dts := int64(float64(i) * 1000.0 / fps)
+		auLen := u.endOff - u.startOff
+		if auLen < 0 {
+			auLen = 0
+		}
 		frames = append(frames, models.OfflineFrameDetail{
-			MediaType: "video",
-			DTS:       dts,
-			PTS:       dts,
-			FrameLen:  u.bytes,
-			FrameType: u.frameType,
+			MediaType:    "video",
+			DTS:          dts,
+			PTS:          dts,
+			FrameLen:     auLen,
+			FrameType:    u.frameType,
+			StreamSource: "video",
+			StreamOffset: int64(u.startOff),
+			StreamLen:    auLen,
+		})
+		samples = append(samples, timedSample{
+			frameIndex:      i,
+			media:           "video",
+			dts:             dts,
+			pts:             dts,
+			size:            auLen,
+			key:             u.isKey,
+			b:               isBFrame(u.frameType),
+			sliceKnown:      isExplicitSliceType(u.frameType),
+			hasInbandParams: u.hasInbandParams,
+			paramHash:       u.paramHash,
+			videoWidth:      u.width,
+			videoHeight:     u.height,
 		})
 	}
 
@@ -170,7 +302,14 @@ func (m *Manager) runAnnexB(task *models.OfflineTask, taskDir string, summary *m
 	} else {
 		seed.Warnings = append(seed.Warnings, fmt.Sprintf("Annex B 裸码流不含容器时间戳，时间线按 SPS 帧率 %.2f fps 推算", fps))
 	}
-	attachMediaProfile(&flow, frames, seed)
+	hctx := healthContext{
+		Mode:                  models.OfflineModeAnnexB,
+		IsHEVC:                isHEVC,
+		HasContainerSeqHeader: false,
+		SyntheticTimestamps:   true,
+		CheckIDRParams:        true,
+	}
+	attachMediaProfileWithSamples(&flow, frames, samples, seed, hctx)
 	summary.Flows = append(summary.Flows, flow)
 	return nil
 }

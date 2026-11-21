@@ -55,10 +55,20 @@
   - `server_port`：仅 `pcap` 模式有效（RTMP 端口，默认 `1935`）
   - `skip_bytes`：握手跳过字节数（`raw` / `pcap` 有效，默认 `3073`，无握手可传 `0`）
   - `file`：上传媒体或抓包文件
-- `GET /api/offline/tasks`：列出离线解析任务
-- `GET /api/offline/tasks/:id`：获取任务状态与 `summary.json`（含 flow、编解码、逐帧或 TS PAT/PMT/PES/NALU 明细，以及 `profile`：分辨率、Profile、时长、帧率、码率曲线、帧大小、帧间隔、GOP、音画偏移、TS 传输层 CC/TEI/PCR 与告警）
+- `POST /api/offline/tasks/local`（仅本机访问）：零拷贝直读本机大文件并创建解析任务
+  - JSON 请求体：`{ "path": "/abs/path/to/media.mp4", "mode": "auto", "server_port": 1935, "skip_bytes": 3073 }`
+  - 不复制原文件，任务标记 `source_type: "local"`；删除任务时仅清理 `data/offline/<taskID>` 产物目录，不会删除用户原始文件
+- `GET /api/offline/tasks`：列出离线解析任务（运行中任务包含 `progress_pct`、`progress_stage`、`bytes_processed` 实时进度字段，状态含 `running` / `done` / `failed` / `canceled`）
+- `GET /api/offline/tasks/:id`：获取任务状态与 `summary.json`（含 flow、编解码、逐帧字节定位 `stream_source`/`stream_offset`/`stream_len`/`nalu_len_size` 或 TS PAT/PMT/PES/NALU 明细，以及 `profile`：分辨率、Profile、时长、帧率、码率曲线、200ms 瞬时峰值码率 `peak_200ms_kbps`/`peak_to_avg_ratio`、帧大小、帧间隔、GOP、音画偏移、TS 传输层 CC/TEI/PCR、告警及结构化深度体检明细 `health_checks`）
+- `POST /api/offline/tasks/:id/cancel`：取消正在运行中的离线解析任务（任务状态变为 `canceled`）
 - `POST /api/offline/tasks/:id/reparse`：保留原始输入文件并重新解析任务
-- `DELETE /api/offline/tasks/:id`：删除非运行中的离线解析任务及其磁盘产物
+- `DELETE /api/offline/tasks/:id`：删除非运行中的离线解析任务及其磁盘产物目录（本机直读模式不删除原始文件）
+- `GET /api/offline/tasks/:id/inspect/frame`：按需读取单帧或 TS PES 原始字节（单帧读取上限 4 MiB）并进行深度解码
+  - Query 参数：`flow_idx`（默认 `0`）、`frame_idx`（0-based 帧序号）或 `pes_idx`（TS 模式 0-based PES 序号）、`hex_offset`（默认 `0`）、`hex_limit`（默认 `2048`，上限 `8192`）
+  - 返回字段：帧/PES 基础信息、NALU 列表（偏移/长度/类型/Slice 类型/关键帧标记）、H.264 SPS（含 VUI）/ PPS 与 H.265 VPS / SPS / PPS 字段解码、SEI 载荷解码（含 `user_data_unregistered` UUID 与可读明文）、ADTS AAC / MP3 音频帧头、以及 16 列分页 Hex+ASCII 视图与 NALU 边界区间
+- `GET /api/offline/tasks/:id/mp4/boxes`：解析 MP4 / fMP4 任务的完整递归 Box 树结构
+  - Query 参数：`max_nodes`（可选，默认 `2500`，超限时返回 `truncated: true`）
+  - 返回字段：文件大小、FastStart / 分片标记，以及递归 `boxes`（每节点含 `type`、`offset`、`size`、`header_size`、`percent`、可读 `summary`、`highlight`/`highlight_reason` 如 `elst` 与非 FastStart `moov` 标黄提示、`children`）
 - `GET /api/offline/tasks/:id/files/*name`：下载提取产物（如 `video.annexb`、`audio.adts.aac`、`audio.mp3`、`mp4_report.txt`、`summary.json`）
 
 ---

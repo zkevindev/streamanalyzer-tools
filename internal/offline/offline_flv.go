@@ -2,6 +2,7 @@ package offline
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 )
 
 func (m *Manager) runFLV(task *models.OfflineTask, taskDir string, summary *models.OfflineSummary) error {
+	ctx := m.taskContext(task.ID)
 	outDir := filepath.Join(taskDir, "flv")
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return err
@@ -27,8 +29,21 @@ func (m *Manager) runFLV(task *models.OfflineTask, taskDir string, summary *mode
 	}
 	defer in.Close()
 
-	decoder, err := flv.NewDecoder(in)
+	var totalSize int64
+	if st, err := in.Stat(); err == nil {
+		totalSize = st.Size()
+	}
+	m.updateProgress(task.ID, "解析 FLV Tag", 0, totalSize)
+
+	pr := newProgressReader(ctx, in, totalSize, func(read int64) {
+		m.updateProgress(task.ID, "解析 FLV Tag", read, totalSize)
+	})
+
+	decoder, err := flv.NewDecoder(pr)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || ctx.Err() != nil {
+			return context.Canceled
+		}
 		return fmt.Errorf("invalid flv header: %w", err)
 	}
 
@@ -40,13 +55,20 @@ func (m *Manager) runFLV(task *models.OfflineTask, taskDir string, summary *mode
 	defer ext.close()
 
 	frameDetails := make([]models.OfflineFrameDetail, 0, 4096)
+	samples := make([]timedSample, 0, 4096)
 	var totalTags, videoTags, audioTags, scriptTags int
 	var metadataJSON string
 	var metadata models.OfflineMediaProfile
 
 	for {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		var flvTag tag.FlvTag
 		err = decoder.Decode(&flvTag)
+		if errors.Is(err, context.Canceled) || ctx.Err() != nil {
+			return context.Canceled
+		}
 		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 			break
 		}
@@ -67,7 +89,25 @@ func (m *Manager) runFLV(task *models.OfflineTask, taskDir string, summary *mode
 				return handleErr
 			}
 			if fd != nil {
+				idx := len(frameDetails)
+				sig := ext.lastVideoSig
 				frameDetails = append(frameDetails, *fd)
+				samples = append(samples, timedSample{
+					frameIndex:         idx,
+					media:              fd.MediaType,
+					dts:                fd.DTS,
+					pts:                fd.PTS,
+					cts:                fd.CTS,
+					size:               fd.FrameLen,
+					key:                isKeyframe(fd.FrameType),
+					b:                  isBFrame(fd.FrameType),
+					sliceKnown:         isExplicitSliceType(fd.FrameType),
+					hasContainerParams: sig.hasContainerParams,
+					hasInbandParams:    sig.hasInbandParams,
+					paramHash:          sig.paramHash,
+					videoWidth:         sig.width,
+					videoHeight:        sig.height,
+				})
 			}
 		case *tag.AudioData:
 			audioTags++
@@ -76,7 +116,18 @@ func (m *Manager) runFLV(task *models.OfflineTask, taskDir string, summary *mode
 				return handleErr
 			}
 			if fd != nil {
+				idx := len(frameDetails)
 				frameDetails = append(frameDetails, *fd)
+				samples = append(samples, timedSample{
+					frameIndex:      idx,
+					media:           fd.MediaType,
+					dts:             fd.DTS,
+					pts:             fd.PTS,
+					cts:             fd.CTS,
+					size:            fd.FrameLen,
+					audioSampleRate: ext.lastAudioSR,
+					audioChannels:   ext.lastAudioCh,
+				})
 			}
 		case *tag.ScriptData:
 			scriptTags++
@@ -91,6 +142,8 @@ func (m *Manager) runFLV(task *models.OfflineTask, taskDir string, summary *mode
 		}
 		flvTag.Close()
 	}
+
+	m.setProgressPercent(task.ID, "生成 FLV 媒体体检报告", 96, totalSize)
 
 	flow := models.OfflineFlowResult{
 		FlowID:      1,
@@ -107,12 +160,21 @@ func (m *Manager) runFLV(task *models.OfflineTask, taskDir string, summary *mode
 	seed.VideoCodec = ext.videoCodec
 	seed.AudioCodec = ext.audioCodec
 	seed.Warnings = append([]string(nil), ext.warnings...)
+	if len(ext.naluHist) > 0 {
+		seed.NALUHistogram = ext.naluHist
+	}
 	if ext.audioMeta != nil {
 		seed.AudioSampleRate = ext.audioMeta.SampleRate
 		seed.AudioChannels = ext.audioMeta.Channels
 	}
 	fillProfile(&seed, metadata)
-	attachMediaProfile(&flow, frameDetails, seed)
+	hctx := healthContext{
+		Mode:                  models.OfflineModeFLV,
+		IsHEVC:                ext.hevc,
+		HasContainerSeqHeader: ext.hasSeqHeader,
+		CheckIDRParams:        ext.videoCodec == "h264" || ext.videoCodec == "h265",
+	}
+	attachMediaProfileWithSamples(&flow, frameDetails, samples, seed, hctx)
 
 	cleanupEmptyFile(&flow.VideoPath)
 	cleanupEmptyFile(&flow.AudioPath)
@@ -200,12 +262,22 @@ func normalizeFLVMetadata(sd *tag.ScriptData) (any, bool) {
 	return sd.Objects, true
 }
 
+type videoFrameSignals struct {
+	hasContainerParams bool
+	hasInbandParams    bool
+	paramHash          string
+	width              int
+	height             int
+}
+
 type flvExtractor struct {
 	outDir    string
 	videoOut  *os.File
 	audioOut  *os.File
 	videoPath string
 	audioPath string
+	videoPos  int64
+	audioPos  int64
 
 	videoCodec string
 	audioCodec string
@@ -213,6 +285,13 @@ type flvExtractor struct {
 	videoMeta  *codec.VideoMeta
 	audioMeta  *codec.AudioMeta
 	warnings   []string
+	naluHist   map[string]int
+
+	hasSeqHeader bool
+	paramHash    string
+	lastVideoSig videoFrameSignals
+	lastAudioSR  int
+	lastAudioCh  int
 
 	avccNALUSize int
 	avcSPSList   [][]byte
@@ -280,6 +359,7 @@ func (e *flvExtractor) ensureAudio(codecName string) error {
 }
 
 func (e *flvExtractor) handleVideo(ts int64, video *tag.VideoData) (*models.OfflineFrameDetail, error) {
+	e.lastVideoSig = videoFrameSignals{}
 	if video == nil {
 		return nil, nil
 	}
@@ -318,7 +398,7 @@ func (e *flvExtractor) handleVideo(ts int64, video *tag.VideoData) (*models.Offl
 	if err := e.ensureVideo(); err != nil {
 		return nil, err
 	}
-	annexb, kind, err := e.writeCodedVideo(video, hevc, body)
+	annexb, kind, startPos, written, sig, err := e.writeCodedVideo(video, hevc, body)
 	if err != nil {
 		return nil, err
 	}
@@ -328,13 +408,17 @@ func (e *flvExtractor) handleVideo(ts int64, video *tag.VideoData) (*models.Offl
 	if kind == "" {
 		kind = flvFrameType(video.FrameType)
 	}
+	e.lastVideoSig = sig
 	return &models.OfflineFrameDetail{
-		MediaType: "video",
-		DTS:       ts,
-		PTS:       ts + int64(video.CompositionTime),
-		CTS:       int64(video.CompositionTime),
-		FrameLen:  len(annexb),
-		FrameType: kind,
+		MediaType:    "video",
+		DTS:          ts,
+		PTS:          ts + int64(video.CompositionTime),
+		CTS:          int64(video.CompositionTime),
+		FrameLen:     len(annexb),
+		FrameType:    kind,
+		StreamSource: "video",
+		StreamOffset: startPos,
+		StreamLen:    written,
 	}, nil
 }
 
@@ -361,6 +445,10 @@ func (e *flvExtractor) takeVideoSequence(hevc bool, body []byte) {
 				e.h265PPSList = append(e.h265PPSList, cloneNALs(arr.NALUnits)...)
 			}
 		}
+		if len(e.h265VPSList) > 0 && len(e.h265SPSList) > 0 && len(e.h265PPSList) > 0 {
+			e.hasSeqHeader = true
+		}
+		e.paramHash = hashNALSlices(e.h265VPSList, e.h265SPSList, e.h265PPSList)
 		if meta, err := codec.ParseHEVCDecoderConfig(body); err == nil {
 			e.videoMeta = meta
 		}
@@ -376,58 +464,164 @@ func (e *flvExtractor) takeVideoSequence(hevc bool, body []byte) {
 	e.avccNALUSize = int(rec.LengthSizeMinusOne) + 1
 	e.avcSPSList = cloneNALs(rec.SequenceParameterSets)
 	e.avcPPSList = cloneNALs(rec.PictureParameterSets)
+	if len(e.avcSPSList) > 0 && len(e.avcPPSList) > 0 {
+		e.hasSeqHeader = true
+	}
+	e.paramHash = hashNALSlices(e.avcSPSList, e.avcPPSList)
 	if meta, err := codec.ParseAVCDecoderConfig(body); err == nil {
 		e.videoMeta = meta
 	}
 }
 
-func (e *flvExtractor) writeCodedVideo(video *tag.VideoData, hevc bool, body []byte) ([]byte, string, error) {
+func (e *flvExtractor) writeCodedVideo(video *tag.VideoData, hevc bool, body []byte) ([]byte, string, int64, int, videoFrameSignals, error) {
+	if e.naluHist == nil {
+		e.naluHist = make(map[string]int)
+	}
+	startPos := e.videoPos
+	sig := videoFrameSignals{paramHash: e.paramHash}
+
 	if hevc {
 		annexb, err := hevcToAnnexB(body, e.hvcNALUSize)
 		if err != nil {
 			e.warn("H.265 帧无法转换为 Annex B")
-			return nil, "", nil
+			return nil, "", 0, 0, sig, nil
 		}
-		if video.FrameType == tag.FrameTypeKeyFrame &&
-			len(e.h265VPSList) > 0 && len(e.h265SPSList) > 0 && len(e.h265PPSList) > 0 {
-			if err := writeStartCodedNALs(e.videoOut, e.h265VPSList, e.h265SPSList, e.h265PPSList); err != nil {
-				return nil, "", err
+		nalus := codec.SplitAVCC(body, e.hvcNALUSize, true)
+		var hasV, hasS, hasP bool
+		var inbandVPS, inbandSPS, inbandPPS [][]byte
+		off := 0
+		for _, n := range nalus {
+			e.naluHist[n.Name]++
+			off += e.hvcNALUSize
+			nal := body[off : off+n.Len]
+			off += n.Len
+			switch n.Type {
+			case 32:
+				hasV = true
+				inbandVPS = append(inbandVPS, nal)
+			case 33:
+				hasS = true
+				inbandSPS = append(inbandSPS, nal)
+				if meta := codec.VideoMetaFromNAL(nal); meta != nil {
+					e.videoMeta = meta
+				}
+			case 34:
+				hasP = true
+				inbandPPS = append(inbandPPS, nal)
 			}
 		}
-		if _, err := e.videoOut.Write(annexb); err != nil {
-			return nil, "", err
+		if hasS || hasP || hasV {
+			if len(inbandVPS) > 0 {
+				e.h265VPSList = cloneNALs(inbandVPS)
+			}
+			if len(inbandSPS) > 0 {
+				e.h265SPSList = cloneNALs(inbandSPS)
+			}
+			if len(inbandPPS) > 0 {
+				e.h265PPSList = cloneNALs(inbandPPS)
+			}
+			e.paramHash = hashNALSlices(e.h265VPSList, e.h265SPSList, e.h265PPSList)
 		}
-		return annexb, codec.FrameKindFromNALUs(body, e.hvcNALUSize, true), nil
+		sig.hasInbandParams = hasV && hasS && hasP
+		sig.hasContainerParams = e.hasSeqHeader
+		sig.paramHash = e.paramHash
+		if e.videoMeta != nil {
+			sig.width = e.videoMeta.Width
+			sig.height = e.videoMeta.Height
+		}
+
+		if video.FrameType == tag.FrameTypeKeyFrame && !sig.hasInbandParams &&
+			len(e.h265VPSList) > 0 && len(e.h265SPSList) > 0 && len(e.h265PPSList) > 0 {
+			n, err := writeStartCodedNALsCount(e.videoOut, e.h265VPSList, e.h265SPSList, e.h265PPSList)
+			if err != nil {
+				return nil, "", 0, 0, sig, err
+			}
+			e.videoPos += int64(n)
+		}
+		n, err := e.videoOut.Write(annexb)
+		if err != nil {
+			return nil, "", 0, 0, sig, err
+		}
+		e.videoPos += int64(n)
+		return annexb, codec.FrameKindFromNALUs(body, e.hvcNALUSize, true), startPos, int(e.videoPos - startPos), sig, nil
 	}
+
 	annexb, hasIDR, err := avccToAnnexB(body, e.avccNALUSize)
 	if err != nil {
 		e.warn("H.264 帧无法转换为 Annex B")
-		return nil, "", nil
+		return nil, "", 0, 0, sig, nil
 	}
-	if hasIDR && len(e.avcSPSList) > 0 && len(e.avcPPSList) > 0 {
-		if err := writeStartCodedNALs(e.videoOut, e.avcSPSList, e.avcPPSList); err != nil {
-			return nil, "", err
+	nalus := codec.SplitAVCC(body, e.avccNALUSize, false)
+	var hasS, hasP bool
+	var inbandSPS, inbandPPS [][]byte
+	off := 0
+	for _, n := range nalus {
+		e.naluHist[n.Name]++
+		off += e.avccNALUSize
+		nal := body[off : off+n.Len]
+		off += n.Len
+		switch n.Type {
+		case 7:
+			hasS = true
+			inbandSPS = append(inbandSPS, nal)
+			if meta, err := codec.ParseH264SPS(nal); err == nil {
+				e.videoMeta = meta
+			}
+		case 8:
+			hasP = true
+			inbandPPS = append(inbandPPS, nal)
 		}
 	}
-	if _, err := e.videoOut.Write(annexb); err != nil {
-		return nil, "", err
+	if hasS || hasP {
+		if len(inbandSPS) > 0 {
+			e.avcSPSList = cloneNALs(inbandSPS)
+		}
+		if len(inbandPPS) > 0 {
+			e.avcPPSList = cloneNALs(inbandPPS)
+		}
+		e.paramHash = hashNALSlices(e.avcSPSList, e.avcPPSList)
 	}
-	return annexb, codec.FrameKindFromNALUs(body, e.avccNALUSize, false), nil
+	sig.hasInbandParams = hasS && hasP
+	sig.hasContainerParams = e.hasSeqHeader
+	sig.paramHash = e.paramHash
+	if e.videoMeta != nil {
+		sig.width = e.videoMeta.Width
+		sig.height = e.videoMeta.Height
+	}
+
+	if hasIDR && !sig.hasInbandParams && len(e.avcSPSList) > 0 && len(e.avcPPSList) > 0 {
+		n, err := writeStartCodedNALsCount(e.videoOut, e.avcSPSList, e.avcPPSList)
+		if err != nil {
+			return nil, "", 0, 0, sig, err
+		}
+		e.videoPos += int64(n)
+	}
+	n, err := e.videoOut.Write(annexb)
+	if err != nil {
+		return nil, "", 0, 0, sig, err
+	}
+	e.videoPos += int64(n)
+	return annexb, codec.FrameKindFromNALUs(body, e.avccNALUSize, false), startPos, int(e.videoPos - startPos), sig, nil
 }
 
-func writeStartCodedNALs(w io.Writer, groups ...[][]byte) error {
+func writeStartCodedNALsCount(w io.Writer, groups ...[][]byte) (int, error) {
 	start := []byte{0x00, 0x00, 0x00, 0x01}
+	total := 0
 	for _, group := range groups {
 		for _, nal := range group {
-			if _, err := w.Write(start); err != nil {
-				return err
+			n, err := w.Write(start)
+			total += n
+			if err != nil {
+				return total, err
 			}
-			if _, err := w.Write(nal); err != nil {
-				return err
+			n, err = w.Write(nal)
+			total += n
+			if err != nil {
+				return total, err
 			}
 		}
 	}
-	return nil
+	return total, nil
 }
 
 func classifyFLVVideo(video *tag.VideoData) (name string, hevc bool, lengthPrefixed bool) {
@@ -481,6 +675,7 @@ func flvVideoCoded(video *tag.VideoData) bool {
 }
 
 func (e *flvExtractor) handleAudio(ts int64, audio *tag.AudioData) (*models.OfflineFrameDetail, error) {
+	e.lastAudioSR, e.lastAudioCh = 0, 0
 	if audio == nil {
 		return nil, nil
 	}
@@ -508,26 +703,41 @@ func (e *flvExtractor) handleAudio(ts int64, audio *tag.AudioData) (*models.Offl
 		if err := e.ensureAudio(name); err != nil {
 			return nil, err
 		}
-		if _, err := e.audioOut.Write(body); err != nil {
+		startPos := e.audioPos
+		n, err := e.audioOut.Write(body)
+		if err != nil {
 			return nil, err
 		}
-		if e.audioMeta == nil {
+		e.audioPos += int64(n)
+		if hdr, ok := codec.ParseAudioFrameHeader(body, "mp3"); ok {
+			e.lastAudioSR, e.lastAudioCh = hdr.SampleRate, hdr.Channels
+			if e.audioMeta == nil {
+				e.audioMeta = &codec.AudioMeta{SampleRate: hdr.SampleRate, Channels: hdr.Channels}
+			}
+		} else if e.audioMeta == nil {
 			if rate, channels := flvSoundLayout(audio); rate > 0 {
 				e.audioMeta = &codec.AudioMeta{SampleRate: rate, Channels: channels}
+				e.lastAudioSR, e.lastAudioCh = rate, channels
 			}
+		} else {
+			e.lastAudioSR, e.lastAudioCh = e.audioMeta.SampleRate, e.audioMeta.Channels
 		}
 		return &models.OfflineFrameDetail{
-			MediaType: "audio",
-			DTS:       ts,
-			PTS:       ts,
-			FrameLen:  len(body),
-			FrameType: "-",
+			MediaType:    "audio",
+			DTS:          ts,
+			PTS:          ts,
+			FrameLen:     len(body),
+			FrameType:    "-",
+			StreamSource: "audio",
+			StreamOffset: startPos,
+			StreamLen:    n,
 		}, nil
 	}
 	e.warn("音频编码 " + name + " 已识别，当前仅导出 AAC ADTS 与 MP3")
 	if len(body) == 0 {
 		return nil, nil
 	}
+	e.lastAudioSR, e.lastAudioCh = flvSoundLayout(audio)
 	return &models.OfflineFrameDetail{
 		MediaType: "audio",
 		DTS:       ts,
@@ -563,18 +773,29 @@ func (e *flvExtractor) writeAAC(ts int64, audio *tag.AudioData, body []byte) (*m
 	if err := e.ensureAudio("aac"); err != nil {
 		return nil, err
 	}
-	if _, err := e.audioOut.Write(adts); err != nil {
+	startPos := e.audioPos
+	n1, err := e.audioOut.Write(adts)
+	if err != nil {
 		return nil, err
 	}
-	if _, err := e.audioOut.Write(body); err != nil {
+	e.audioPos += int64(n1)
+	n2, err := e.audioOut.Write(body)
+	if err != nil {
 		return nil, err
+	}
+	e.audioPos += int64(n2)
+	if e.audioMeta != nil {
+		e.lastAudioSR, e.lastAudioCh = e.audioMeta.SampleRate, e.audioMeta.Channels
 	}
 	return &models.OfflineFrameDetail{
-		MediaType: "audio",
-		DTS:       ts,
-		PTS:       ts,
-		FrameLen:  len(adts) + len(body),
-		FrameType: "-",
+		MediaType:    "audio",
+		DTS:          ts,
+		PTS:          ts,
+		FrameLen:     len(adts) + len(body),
+		FrameType:    "-",
+		StreamSource: "audio",
+		StreamOffset: startPos,
+		StreamLen:    n1 + n2,
 	}, nil
 }
 

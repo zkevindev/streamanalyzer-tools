@@ -4,44 +4,83 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 
 	"streamanalyzer/internal/codec"
 	"streamanalyzer/internal/models"
 )
 
 const (
-	maxStoredFrames  = 2000
-	maxGOPPoints     = 480
-	maxSeriesPoints  = 360
-	maxBitratePoints = 240
-	largeGapMS       = 1000
+	maxStoredFrames        = 2000
+	maxGOPPoints           = 480
+	maxSeriesPoints        = 360
+	maxBitratePoints       = 240
+	largeGapMS             = 1000
+	maxNormalAudioFrameLen = 65536
 )
 
 type timedSample struct {
-	pid   int
-	media string
-	dts   int64
-	pts   int64
-	cts   int64
-	size  int
-	key   bool
-	b     bool
+	pid        int
+	frameIndex int
+	media      string
+	dts        int64
+	pts        int64
+	cts        int64
+	size       int
+	key        bool
+	b          bool
+	sliceKnown bool
+
+	hasContainerParams bool
+	hasInbandParams    bool
+	paramHash          string
+	videoWidth         int
+	videoHeight        int
+	audioSampleRate    int
+	audioChannels      int
+}
+
+type healthContext struct {
+	Mode                  models.OfflineMode
+	IsHEVC                bool
+	HasContainerSeqHeader bool
+	SyntheticTimestamps   bool
+	CheckIDRParams        bool
+}
+
+func intPtr(v int) *int {
+	if v < 0 {
+		return nil
+	}
+	cp := v
+	return &cp
 }
 
 func attachMediaProfile(flow *models.OfflineFlowResult, frames []models.OfflineFrameDetail, seed models.OfflineMediaProfile) {
 	samples := make([]timedSample, 0, len(frames))
-	for _, frame := range frames {
+	for idx, frame := range frames {
 		samples = append(samples, timedSample{
-			media: frame.MediaType,
-			dts:   frame.DTS,
-			pts:   frame.PTS,
-			cts:   frame.CTS,
-			size:  frame.FrameLen,
-			key:   isKeyframe(frame.FrameType),
-			b:     isBFrame(frame.FrameType),
+			frameIndex: idx,
+			media:      frame.MediaType,
+			dts:        frame.DTS,
+			pts:        frame.PTS,
+			cts:        frame.CTS,
+			size:       frame.FrameLen,
+			key:        isKeyframe(frame.FrameType),
+			b:          isBFrame(frame.FrameType),
+			sliceKnown: isExplicitSliceType(frame.FrameType),
 		})
 	}
-	attachSampleProfile(flow, samples, seed)
+	attachSampleProfileWithContext(flow, samples, seed, healthContext{})
+	storeFlowFrames(flow, frames)
+}
+
+func attachMediaProfileWithSamples(flow *models.OfflineFlowResult, frames []models.OfflineFrameDetail, samples []timedSample, seed models.OfflineMediaProfile, hctx healthContext) {
+	attachSampleProfileWithContext(flow, samples, seed, hctx)
+	storeFlowFrames(flow, frames)
+}
+
+func storeFlowFrames(flow *models.OfflineFlowResult, frames []models.OfflineFrameDetail) {
 	flow.FrameDetails = frames
 	if len(frames) > maxStoredFrames {
 		flow.FrameDetails = append([]models.OfflineFrameDetail(nil), frames[:maxStoredFrames]...)
@@ -52,13 +91,19 @@ func attachMediaProfile(flow *models.OfflineFlowResult, frames []models.OfflineF
 }
 
 func attachSampleProfile(flow *models.OfflineFlowResult, samples []timedSample, seed models.OfflineMediaProfile) {
-	stats := analyzeSamples(samples)
+	attachSampleProfileWithContext(flow, samples, seed, healthContext{})
+}
+
+func attachSampleProfileWithContext(flow *models.OfflineFlowResult, samples []timedSample, seed models.OfflineMediaProfile, hctx healthContext) {
+	stats := analyzeSamplesWithContext(samples, hctx)
 	fillProfile(stats, seed)
 	stats.Warnings = mergeWarnings(seed.Warnings, stats.Warnings)
 	if (seed.VideoCodec == "h264" || seed.VideoCodec == "h265" || stats.VideoCodec == "h264" || stats.VideoCodec == "h265") &&
 		stats.VideoFrames > 0 && stats.Keyframes == 0 {
 		stats.Warnings = mergeWarnings(stats.Warnings, []string{"未识别到视频关键帧"})
 	}
+	// Append container/transport-specific health checks using merged seed fields.
+	stats.HealthChecks = appendContainerTransportChecks(stats.HealthChecks, stats, hctx)
 	if stats.VideoCodec == "" {
 		stats.VideoCodec = flow.VideoCodec
 	}
@@ -79,13 +124,21 @@ func attachSampleProfile(flow *models.OfflineFlowResult, samples []timedSample, 
 }
 
 func analyzeSamples(samples []timedSample) *models.OfflineMediaProfile {
+	return analyzeSamplesWithContext(samples, healthContext{})
+}
+
+func analyzeSamplesWithContext(samples []timedSample, hctx healthContext) *models.OfflineMediaProfile {
 	stats := &models.OfflineMediaProfile{FrameTotal: len(samples)}
 	videoPID := dominantPID(samples, "video")
 	audioPID := dominantPID(samples, "audio")
 
 	var video []timedSample
 	var audio []timedSample
-	for _, sample := range samples {
+	for i, sample := range samples {
+		if sample.frameIndex == 0 && i > 0 && len(samples) > 1 && samples[0].frameIndex == 0 && samples[1].frameIndex == 0 {
+			// Caller did not populate frameIndex; assign sequential index.
+			sample.frameIndex = i
+		}
 		switch sample.media {
 		case "video":
 			if sample.pid == videoPID {
@@ -156,12 +209,60 @@ func analyzeSamples(samples []timedSample) *models.OfflineMediaProfile {
 	var prevPTS int64
 	var hasPrevPTS bool
 
+	firstDTSRegIdx := -1
+	var firstDTSRegDTS int64
+	firstGapIdx := -1
+	var firstGapDTS int64
+
+	// Rule 3 trackers (PTS/CTS)
+	ptsLtDtsCount := 0
+	firstPtsLtDtsIdx := -1
+	var firstPtsLtDtsDTS int64
+	nonZeroCTSCount := 0
+	firstNonZeroCTSIdx := -1
+	var firstNonZeroCTSDTS int64
+	ptsRegCount := 0
+	firstPTSRegIdx := -1
+	var firstPTSRegDTS int64
+	firstBIdx := -1
+	var firstBDTS int64
+	sliceKnownCount := 0
+
+	// Rule 1 trackers (IDR missing SPS/PPS)
+	idrMissingInband := 0
+	firstMissingInbandIdx := -1
+	var firstMissingInbandDTS int64
+	idrMissingAny := 0
+	firstMissingAnyIdx := -1
+	var firstMissingAnyDTS int64
+	firstIDRSeen := false
+	firstIDRMissingAny := false
+
+	// Rule 2 trackers (SPS/PPS / resolution changes)
+	lastParamHash := ""
+	lastW, lastH := 0, 0
+	paramChanges := 0
+	firstParamChangeIdx := -1
+	var firstParamChangeDTS int64
+	paramChangeResDesc := ""
+
 	for _, sample := range video {
+		if sample.sliceKnown {
+			sliceKnownCount++
+		}
+		if sample.b && firstBIdx < 0 {
+			firstBIdx = sample.frameIndex
+			firstBDTS = sample.dts
+		}
 		if hasPrev {
 			delta := sample.dts - prev
 			videoDeltas = append(videoDeltas, delta)
 			if delta < 0 {
 				stats.DTSRegressions++
+				if firstDTSRegIdx < 0 {
+					firstDTSRegIdx = sample.frameIndex
+					firstDTSRegDTS = sample.dts
+				}
 			} else {
 				if deltaCount == 0 || delta < stats.VideoDeltaMinMS {
 					stats.VideoDeltaMinMS = delta
@@ -173,24 +274,98 @@ func analyzeSamples(samples []timedSample) *models.OfflineMediaProfile {
 				deltaCount++
 				if delta > largeGapMS {
 					stats.LargeGaps++
+					if firstGapIdx < 0 {
+						firstGapIdx = sample.frameIndex
+						firstGapDTS = sample.dts
+					}
 					if delta > stats.MaxGapMS {
 						stats.MaxGapMS = delta
 					}
 				}
 			}
 		}
+
+		// PTS/CTS tracking
+		if !hctx.SyntheticTimestamps {
+			if sample.cts < 0 || (sample.pts != 0 && sample.pts < sample.dts) || (sample.pts == 0 && sample.dts > 0 && sample.cts < 0) {
+				ptsLtDtsCount++
+				if firstPtsLtDtsIdx < 0 {
+					firstPtsLtDtsIdx = sample.frameIndex
+					firstPtsLtDtsDTS = sample.dts
+				}
+			}
+			if sample.cts != 0 {
+				nonZeroCTSCount++
+				if firstNonZeroCTSIdx < 0 {
+					firstNonZeroCTSIdx = sample.frameIndex
+					firstNonZeroCTSDTS = sample.dts
+				}
+			}
+			if hasPrevPTS && sample.pts < prevPTS {
+				ptsRegCount++
+				if firstPTSRegIdx < 0 {
+					firstPTSRegIdx = sample.frameIndex
+					firstPTSRegDTS = sample.dts
+				}
+			}
+		}
 		if hasPrevPTS && sample.pts != 0 && prevPTS != 0 && sample.pts < prevPTS {
 			stats.HasBFrames = true
 		}
-		if sample.pts != 0 {
+		if !hctx.SyntheticTimestamps || sample.pts != 0 {
 			prevPTS = sample.pts
 			hasPrevPTS = true
 		}
+
+		// Rule 2: Parameter set / resolution change tracking
+		if sample.paramHash != "" {
+			if lastParamHash != "" && sample.paramHash != lastParamHash {
+				paramChanges++
+				if firstParamChangeIdx < 0 {
+					firstParamChangeIdx = sample.frameIndex
+					firstParamChangeDTS = sample.dts
+					if lastW > 0 && lastH > 0 && sample.videoWidth > 0 && sample.videoHeight > 0 &&
+						(lastW != sample.videoWidth || lastH != sample.videoHeight) {
+						paramChangeResDesc = fmt.Sprintf("%dx%d -> %dx%d", lastW, lastH, sample.videoWidth, sample.videoHeight)
+					}
+				}
+			}
+			lastParamHash = sample.paramHash
+			if sample.videoWidth > 0 && sample.videoHeight > 0 {
+				lastW = sample.videoWidth
+				lastH = sample.videoHeight
+			}
+		}
+
 		prev = sample.dts
 		hasPrev = true
 		if !sample.key {
 			continue
 		}
+
+		// Rule 1: IDR parameter set check
+		if hctx.CheckIDRParams {
+			hasContainer := sample.hasContainerParams || hctx.HasContainerSeqHeader
+			if !sample.hasInbandParams {
+				idrMissingInband++
+				if firstMissingInbandIdx < 0 {
+					firstMissingInbandIdx = sample.frameIndex
+					firstMissingInbandDTS = sample.dts
+				}
+				if !hasContainer {
+					idrMissingAny++
+					if firstMissingAnyIdx < 0 {
+						firstMissingAnyIdx = sample.frameIndex
+						firstMissingAnyDTS = sample.dts
+					}
+					if !firstIDRSeen {
+						firstIDRMissingAny = true
+					}
+				}
+			}
+			firstIDRSeen = true
+		}
+
 		if hasKey {
 			gap := sample.dts - lastKey
 			if gap >= 0 {
@@ -210,14 +385,67 @@ func analyzeSamples(samples []timedSample) *models.OfflineMediaProfile {
 		stats.FrameSizeSeries = downsampleFrameSizes(video, maxSeriesPoints)
 	}
 
-	// Audio gap check
+	// Rule 5: Audio gap, parameter change, and abnormal frame length checks
 	var prevAudio int64
 	var hasPrevAudio bool
+	firstAudioGapIdx := -1
+	var firstAudioGapDTS int64
+	var maxAudioGapMS int64
+
+	lastAudioSR, lastAudioCh := 0, 0
+	audioParamChanges := 0
+	firstAudioParamIdx := -1
+	var firstAudioParamDTS int64
+	audioParamDesc := ""
+
+	zeroAudioFrames := 0
+	oversizedAudioFrames := 0
+	firstBadAudioSizeIdx := -1
+	var firstBadAudioSizeDTS int64
+
 	for _, sample := range audio {
 		if hasPrevAudio {
 			delta := sample.dts - prevAudio
 			if delta > largeGapMS {
 				stats.AudioLargeGaps++
+				if firstAudioGapIdx < 0 {
+					firstAudioGapIdx = sample.frameIndex
+					firstAudioGapDTS = sample.dts
+				}
+				if delta > maxAudioGapMS {
+					maxAudioGapMS = delta
+				}
+			}
+		}
+		if sample.audioSampleRate > 0 || sample.audioChannels > 0 {
+			sr := sample.audioSampleRate
+			ch := sample.audioChannels
+			if (lastAudioSR > 0 && sr > 0 && sr != lastAudioSR) || (lastAudioCh > 0 && ch > 0 && ch != lastAudioCh) {
+				audioParamChanges++
+				if firstAudioParamIdx < 0 {
+					firstAudioParamIdx = sample.frameIndex
+					firstAudioParamDTS = sample.dts
+					audioParamDesc = fmt.Sprintf("%dHz/%dch -> %dHz/%dch", lastAudioSR, lastAudioCh, sr, ch)
+				}
+			}
+			if sr > 0 {
+				lastAudioSR = sr
+			}
+			if ch > 0 {
+				lastAudioCh = ch
+			}
+		}
+		if sample.size <= 0 {
+			zeroAudioFrames++
+			if firstBadAudioSizeIdx < 0 {
+				firstBadAudioSizeIdx = sample.frameIndex
+				firstBadAudioSizeDTS = sample.dts
+			}
+		} else if sample.size > maxNormalAudioFrameLen {
+			oversizedAudioFrames++
+			if firstBadAudioSizeIdx < 0 {
+				firstBadAudioSizeIdx = sample.frameIndex
+				firstBadAudioSizeDTS = sample.dts
 			}
 		}
 		prevAudio = sample.dts
@@ -244,6 +472,15 @@ func analyzeSamples(samples []timedSample) *models.OfflineMediaProfile {
 	// Bitrate timeline (1-second or scaled buckets)
 	stats.BitrateTimeline = computeBitrateTimeline(video, audio, originDTS, stats.DurationMS)
 
+	// Rule 4: 200ms short-window peak bitrate & burst spike detection
+	peak200Kbps, peakFrameIdx, peakDTS := computePeak200msBitrate(video)
+	if peak200Kbps > 0 {
+		stats.Peak200msKbps = round1(peak200Kbps)
+		if stats.VideoBitrateKbps > 0 {
+			stats.PeakToAvgRatio = round2(peak200Kbps / stats.VideoBitrateKbps)
+		}
+	}
+
 	// A/V sync offset & timeline
 	if len(video) > 0 && len(audio) > 0 {
 		stats.HasAVOffset = true
@@ -251,6 +488,7 @@ func analyzeSamples(samples []timedSample) *models.OfflineMediaProfile {
 		stats.AVSyncTimeline, stats.AVDriftMaxMS = computeAVSyncTimeline(video, audio, originDTS)
 	}
 
+	// Legacy warnings
 	if stats.LargeGaps > 0 {
 		stats.Warnings = append(stats.Warnings, fmt.Sprintf("视频时间戳有 %d 处间隔超过 1 秒，最大 %d ms", stats.LargeGaps, stats.MaxGapMS))
 	}
@@ -269,7 +507,400 @@ func analyzeSamples(samples []timedSample) *models.OfflineMediaProfile {
 			stats.Warnings = append(stats.Warnings, fmt.Sprintf("音视频时间线存在明显漂移（最大偏差 %d ms）", stats.AVDriftMaxMS))
 		}
 	}
+
+	// Build structured HealthChecks
+	var checks []models.OfflineHealthCheck
+	paramLabel := "SPS/PPS"
+	if hctx.IsHEVC {
+		paramLabel = "VPS/SPS/PPS"
+	}
+
+	// Check 1: IDR missing SPS/PPS (or VPS/SPS/PPS)
+	if hctx.CheckIDRParams && stats.Keyframes > 0 {
+		if idrMissingAny > 0 {
+			sev := "warn"
+			title := fmt.Sprintf("IDR 前缺失 %s", paramLabel)
+			detail := fmt.Sprintf("流内有 %d/%d 个 IDR 关键帧前未携带 %s（且无容器外带 Sequence Header），影响中途接入与 HLS 切片独立解码",
+				idrMissingAny, stats.Keyframes, paramLabel)
+			if firstIDRMissingAny {
+				sev = "error"
+				detail = fmt.Sprintf("首帧 IDR 即缺失 %s（共 %d/%d 个 IDR 缺失），无法独立起播且影响中途接入/HLS 切片解码",
+					paramLabel, idrMissingAny, stats.Keyframes)
+			}
+			checks = append(checks, models.OfflineHealthCheck{
+				Code:            "idr_missing_params",
+				Category:        "codec",
+				Severity:        sev,
+				Title:           title,
+				Detail:          detail,
+				Count:           idrMissingAny,
+				FirstFrameIndex: intPtr(firstMissingAnyIdx),
+				FirstDTSMS:      firstMissingAnyDTS,
+			})
+			stats.Warnings = append(stats.Warnings, detail)
+		} else if idrMissingInband > 0 {
+			checks = append(checks, models.OfflineHealthCheck{
+				Code:            "idr_missing_params",
+				Category:        "codec",
+				Severity:        "ok",
+				Title:           fmt.Sprintf("IDR 参数集（容器外带 %s）", paramLabel),
+				Detail:          fmt.Sprintf("容器已携带外带 Sequence Header，流内 %d/%d 个 IDR 未重复内嵌 %s；当前封装可正常解码，转封 TS/HLS 时需自动补齐参数集", idrMissingInband, stats.Keyframes, paramLabel),
+				Count:           idrMissingInband,
+				FirstFrameIndex: intPtr(firstMissingInbandIdx),
+				FirstDTSMS:      firstMissingInbandDTS,
+			})
+		} else {
+			checks = append(checks, models.OfflineHealthCheck{
+				Code:     "idr_missing_params",
+				Category: "codec",
+				Severity: "ok",
+				Title:    fmt.Sprintf("IDR 参数集完整 (%s)", paramLabel),
+				Detail:   fmt.Sprintf("全部 %d 个 IDR 关键帧前均携带完整 %s，支持中途接入与 HLS 切片独立解码", stats.Keyframes, paramLabel),
+			})
+		}
+	}
+
+	// Check 2: Dynamic resolution / SPS·PPS parameter switch
+	if lastParamHash != "" {
+		if paramChanges > 0 {
+			detail := fmt.Sprintf("检测到 %d 次 %s 参数切换，首次位于帧 #%d (DTS %d ms)", paramChanges, paramLabel, firstParamChangeIdx+1, firstParamChangeDTS)
+			if paramChangeResDesc != "" {
+				detail = fmt.Sprintf("检测到 %d 次分辨率/编码参数切换（%s），首次位于帧 #%d (DTS %d ms)，部分播放器可能花屏或重初始化解码器",
+					paramChanges, paramChangeResDesc, firstParamChangeIdx+1, firstParamChangeDTS)
+			}
+			checks = append(checks, models.OfflineHealthCheck{
+				Code:            "param_set_change",
+				Category:        "codec",
+				Severity:        "warn",
+				Title:           "分辨率 / 编码参数动态切换",
+				Detail:          detail,
+				Count:           paramChanges,
+				FirstFrameIndex: intPtr(firstParamChangeIdx),
+				FirstDTSMS:      firstParamChangeDTS,
+			})
+			stats.Warnings = append(stats.Warnings, detail)
+		} else {
+			checks = append(checks, models.OfflineHealthCheck{
+				Code:     "param_set_change",
+				Category: "codec",
+				Severity: "ok",
+				Title:    "分辨率与编码参数稳定",
+				Detail:   fmt.Sprintf("全程 %s 参数哈希与分辨率未发生动态切换", paramLabel),
+			})
+		}
+	}
+
+	// Check 3: PTS regression & B-frame CTS consistency
+	if len(video) > 0 && !hctx.SyntheticTimestamps {
+		allSlicesKnown := sliceKnownCount > 0 && sliceKnownCount >= len(video)/2
+		hasExplicitB := stats.BFrames > 0
+		switch {
+		case ptsLtDtsCount > 0:
+			detail := fmt.Sprintf("共 %d 帧出现 PTS < DTS（负 CTS），首次位于帧 #%d (DTS %d ms)，可能导致解码顺序或渲染时间戳异常",
+				ptsLtDtsCount, firstPtsLtDtsIdx+1, firstPtsLtDtsDTS)
+			checks = append(checks, models.OfflineHealthCheck{
+				Code:            "pts_cts_anomaly",
+				Category:        "timeline",
+				Severity:        "error",
+				Title:           "PTS < DTS 异常",
+				Detail:          detail,
+				Count:           ptsLtDtsCount,
+				FirstFrameIndex: intPtr(firstPtsLtDtsIdx),
+				FirstDTSMS:      firstPtsLtDtsDTS,
+			})
+			stats.Warnings = append(stats.Warnings, detail)
+		case hasExplicitB && nonZeroCTSCount == 0:
+			detail := fmt.Sprintf("检测到 %d 个 B 帧但全部视频帧 CTS 均为 0（PTS == DTS），播放时易出现画面回跳闪烁", stats.BFrames)
+			checks = append(checks, models.OfflineHealthCheck{
+				Code:            "pts_cts_anomaly",
+				Category:        "timeline",
+				Severity:        "warn",
+				Title:           "B 帧 CTS 异常（全为 0）",
+				Detail:          detail,
+				Count:           stats.BFrames,
+				FirstFrameIndex: intPtr(firstBIdx),
+				FirstDTSMS:      firstBDTS,
+			})
+			stats.Warnings = append(stats.Warnings, detail)
+		case !hasExplicitB && allSlicesKnown && nonZeroCTSCount > 0 && ptsRegCount == 0:
+			detail := fmt.Sprintf("未检测到 B 帧但有 %d 帧携带非零 CTS 偏移，首次位于帧 #%d (DTS %d ms)",
+				nonZeroCTSCount, firstNonZeroCTSIdx+1, firstNonZeroCTSDTS)
+			checks = append(checks, models.OfflineHealthCheck{
+				Code:            "pts_cts_anomaly",
+				Category:        "timeline",
+				Severity:        "warn",
+				Title:           "无 B 帧却存在非零 CTS",
+				Detail:          detail,
+				Count:           nonZeroCTSCount,
+				FirstFrameIndex: intPtr(firstNonZeroCTSIdx),
+				FirstDTSMS:      firstNonZeroCTSDTS,
+			})
+			stats.Warnings = append(stats.Warnings, detail)
+		case !hasExplicitB && nonZeroCTSCount == 0 && ptsRegCount > 0:
+			detail := fmt.Sprintf("无 B 帧序列检测到 %d 次 PTS 倒退，首次位于帧 #%d (DTS %d ms)",
+				ptsRegCount, firstPTSRegIdx+1, firstPTSRegDTS)
+			checks = append(checks, models.OfflineHealthCheck{
+				Code:            "pts_cts_anomaly",
+				Category:        "timeline",
+				Severity:        "error",
+				Title:           "非 B 帧序列 PTS 倒退",
+				Detail:          detail,
+				Count:           ptsRegCount,
+				FirstFrameIndex: intPtr(firstPTSRegIdx),
+				FirstDTSMS:      firstPTSRegDTS,
+			})
+			stats.Warnings = append(stats.Warnings, detail)
+		default:
+			checks = append(checks, models.OfflineHealthCheck{
+				Code:     "pts_cts_anomaly",
+				Category: "timeline",
+				Severity: "ok",
+				Title:    "PTS / CTS 时序正常",
+				Detail:   "未检测到 PTS < DTS、非 B 帧 PTS 倒退或 B 帧 CTS 失配",
+			})
+		}
+	}
+
+	// Check 4: 200ms short-window bitrate burst spike
+	if len(video) >= 2 && stats.DurationMS > 0 && stats.Peak200msKbps > 0 {
+		if stats.VideoBitrateKbps > 100 && stats.PeakToAvgRatio >= 3.0 {
+			detail := fmt.Sprintf("200ms 瞬时峰值码率 %.1f kbps，为平均码率 (%.1f kbps) 的 %.2f 倍（>=3.0x），存在 VBV 溢出与弱网卡顿风险",
+				stats.Peak200msKbps, stats.VideoBitrateKbps, stats.PeakToAvgRatio)
+			checks = append(checks, models.OfflineHealthCheck{
+				Code:            "bitrate_spike_200ms",
+				Category:        "bitrate",
+				Severity:        "warn",
+				Title:           "短窗口 (200ms) 瞬时码率突刺",
+				Detail:          detail,
+				Count:           1,
+				FirstFrameIndex: intPtr(peakFrameIdx),
+				FirstDTSMS:      peakDTS,
+			})
+			stats.Warnings = append(stats.Warnings, detail)
+		} else {
+			checks = append(checks, models.OfflineHealthCheck{
+				Code:     "bitrate_spike_200ms",
+				Category: "bitrate",
+				Severity: "ok",
+				Title:    "短窗口 (200ms) 码率平稳",
+				Detail:   fmt.Sprintf("200ms 瞬时峰值 %.1f kbps，峰均比 %.2fx（均值 %.1f kbps）", stats.Peak200msKbps, stats.PeakToAvgRatio, stats.VideoBitrateKbps),
+			})
+		}
+	}
+
+	// Check 5: Audio anomalies (param switches, gaps, zero/oversized frames)
+	if len(audio) > 0 {
+		var parts []string
+		sev := "ok"
+		totalAudioIssues := audioParamChanges + stats.AudioLargeGaps + zeroAudioFrames + oversizedAudioFrames
+		firstIdx := -1
+		var firstDTS int64
+		pickFirst := func(idx int, dts int64) {
+			if idx < 0 {
+				return
+			}
+			if firstIdx < 0 || idx < firstIdx {
+				firstIdx = idx
+				firstDTS = dts
+			}
+		}
+		if audioParamChanges > 0 {
+			sev = "error"
+			msg := fmt.Sprintf("采样率/声道突变 %d 次（%s）", audioParamChanges, audioParamDesc)
+			parts = append(parts, msg)
+			stats.Warnings = append(stats.Warnings, "音频"+msg)
+			pickFirst(firstAudioParamIdx, firstAudioParamDTS)
+		}
+		if stats.AudioLargeGaps > 0 {
+			if sev == "ok" {
+				sev = "warn"
+			}
+			parts = append(parts, fmt.Sprintf("断音大间隔 %d 处（最大 %d ms）", stats.AudioLargeGaps, maxAudioGapMS))
+			pickFirst(firstAudioGapIdx, firstAudioGapDTS)
+		}
+		if zeroAudioFrames > 0 || oversizedAudioFrames > 0 {
+			if zeroAudioFrames > 0 {
+				sev = "error"
+			} else if sev == "ok" {
+				sev = "warn"
+			}
+			msg := fmt.Sprintf("异常音频帧长（零长 %d 帧 / 超大 %d 帧）", zeroAudioFrames, oversizedAudioFrames)
+			parts = append(parts, msg)
+			stats.Warnings = append(stats.Warnings, msg)
+			pickFirst(firstBadAudioSizeIdx, firstBadAudioSizeDTS)
+		}
+		if totalAudioIssues > 0 {
+			checks = append(checks, models.OfflineHealthCheck{
+				Code:            "audio_health",
+				Category:        "audio",
+				Severity:        sev,
+				Title:           "音频流异常",
+				Detail:          strings.Join(parts, "；"),
+				Count:           totalAudioIssues,
+				FirstFrameIndex: intPtr(firstIdx),
+				FirstDTSMS:      firstDTS,
+			})
+		} else {
+			checks = append(checks, models.OfflineHealthCheck{
+				Code:     "audio_health",
+				Category: "audio",
+				Severity: "ok",
+				Title:    "音频流连续正常",
+				Detail:   fmt.Sprintf("共 %d 个音频帧，采样率/声道稳定，无断音或异常帧长", len(audio)),
+			})
+		}
+	}
+
+	// Check 6: Video DTS continuity
+	if len(video) > 1 && !hctx.SyntheticTimestamps {
+		if stats.DTSRegressions > 0 || stats.LargeGaps > 0 {
+			sev := "warn"
+			idx := firstGapIdx
+			dts := firstGapDTS
+			if stats.DTSRegressions > 0 {
+				sev = "error"
+				idx = firstDTSRegIdx
+				dts = firstDTSRegDTS
+			}
+			checks = append(checks, models.OfflineHealthCheck{
+				Code:            "dts_continuity",
+				Category:        "timeline",
+				Severity:        sev,
+				Title:           "视频 DTS 连续性异常",
+				Detail:          fmt.Sprintf("DTS 回退 %d 次，超过 1s 大间隔 %d 处（最大 %d ms）", stats.DTSRegressions, stats.LargeGaps, stats.MaxGapMS),
+				Count:           stats.DTSRegressions + stats.LargeGaps,
+				FirstFrameIndex: intPtr(idx),
+				FirstDTSMS:      dts,
+			})
+		} else {
+			checks = append(checks, models.OfflineHealthCheck{
+				Code:     "dts_continuity",
+				Category: "timeline",
+				Severity: "ok",
+				Title:    "视频 DTS 连续性正常",
+				Detail:   fmt.Sprintf("平均帧间隔 %d ms（范围 %d~%d ms），无回退或卡顿间隔", stats.VideoDeltaAvgMS, stats.VideoDeltaMinMS, stats.VideoDeltaMaxMS),
+			})
+		}
+	}
+
+	// Check 7: A/V sync
+	if stats.HasAVOffset {
+		absStart := abs64(stats.AVStartOffsetMS)
+		absDrift := abs64(stats.AVDriftMaxMS)
+		if absStart > 500 || absDrift > 500 {
+			checks = append(checks, models.OfflineHealthCheck{
+				Code:     "av_sync",
+				Category: "timeline",
+				Severity: "warn",
+				Title:    "音视频同步偏差",
+				Detail:   fmt.Sprintf("首帧偏差 %d ms，最大时间线漂移 %d ms（建议 <=500 ms）", stats.AVStartOffsetMS, stats.AVDriftMaxMS),
+			})
+		} else {
+			checks = append(checks, models.OfflineHealthCheck{
+				Code:     "av_sync",
+				Category: "timeline",
+				Severity: "ok",
+				Title:    "音视频同步良好",
+				Detail:   fmt.Sprintf("首帧偏差 %d ms，最大漂移 %d ms", stats.AVStartOffsetMS, stats.AVDriftMaxMS),
+			})
+		}
+	}
+
+	stats.HealthChecks = checks
 	return stats
+}
+
+func appendContainerTransportChecks(checks []models.OfflineHealthCheck, stats *models.OfflineMediaProfile, hctx healthContext) []models.OfflineHealthCheck {
+	if stats == nil {
+		return checks
+	}
+	if hctx.Mode == models.OfflineModeMP4 && stats.MP4FastStart != nil {
+		if !*stats.MP4FastStart && !stats.MP4Fragmented {
+			checks = append(checks, models.OfflineHealthCheck{
+				Code:     "container_faststart",
+				Category: "container",
+				Severity: "warn",
+				Title:    "MP4 非 FastStart 结构",
+				Detail:   "moov 位于 mdat 之后，边下边播起播前需额外 Range 请求，建议 ffmpeg -movflags +faststart 优化",
+			})
+		} else if stats.MP4Fragmented {
+			checks = append(checks, models.OfflineHealthCheck{
+				Code:     "container_faststart",
+				Category: "container",
+				Severity: "ok",
+				Title:    "fMP4 分片封装",
+				Detail:   "检测到 moof/trun 分片结构，适合流式/低延迟分段播放",
+			})
+		} else {
+			checks = append(checks, models.OfflineHealthCheck{
+				Code:     "container_faststart",
+				Category: "container",
+				Severity: "ok",
+				Title:    "MP4 FastStart 就绪",
+				Detail:   "moov 位于 mdat 之前，支持边下边播快速起播",
+			})
+		}
+	}
+	if hctx.Mode == models.OfflineModeTS && stats.TSPacketCount > 0 {
+		errTotal := stats.TSCCErrors + stats.TSTEIErrors + stats.TSSyncErrors
+		if errTotal > 0 || stats.PCRMaxGapMS > 100 {
+			sev := "warn"
+			if stats.TSCCErrors > 0 || stats.TSTEIErrors > 0 || stats.TSSyncErrors > 0 {
+				sev = "error"
+			}
+			checks = append(checks, models.OfflineHealthCheck{
+				Code:     "ts_transport",
+				Category: "transport",
+				Severity: sev,
+				Title:    "TS 传输层异常",
+				Detail:   fmt.Sprintf("CC 错误 %d、TEI 错误 %d、Sync 丢失 %d、PCR 最大间隔 %d ms", stats.TSCCErrors, stats.TSTEIErrors, stats.TSSyncErrors, stats.PCRMaxGapMS),
+				Count:    errTotal,
+			})
+		} else {
+			checks = append(checks, models.OfflineHealthCheck{
+				Code:     "ts_transport",
+				Category: "transport",
+				Severity: "ok",
+				Title:    "TS 传输层健康",
+				Detail:   fmt.Sprintf("共 %d 个 TS 包，无 CC/TEI/Sync 异常，PCR 最大间隔 %d ms", stats.TSPacketCount, stats.PCRMaxGapMS),
+			})
+		}
+	}
+	return checks
+}
+
+func computePeak200msBitrate(video []timedSample) (peakKbps float64, peakFrameIdx int, peakDTS int64) {
+	if len(video) < 2 {
+		return 0, -1, 0
+	}
+	type pt struct {
+		dts  int64
+		size int
+		idx  int
+	}
+	pts := make([]pt, len(video))
+	for i, s := range video {
+		pts[i] = pt{dts: s.dts, size: s.size, idx: s.frameIndex}
+	}
+	sort.SliceStable(pts, func(i, j int) bool { return pts[i].dts < pts[j].dts })
+
+	left := 0
+	var winBytes int64
+	peakFrameIdx = -1
+	for right := 0; right < len(pts); right++ {
+		winBytes += int64(pts[right].size)
+		for left < right && pts[right].dts-pts[left].dts >= 200 {
+			winBytes -= int64(pts[left].size)
+			left++
+		}
+		kbps := float64(winBytes) * 8.0 / 200.0
+		if kbps > peakKbps {
+			peakKbps = kbps
+			peakFrameIdx = pts[right].idx
+			peakDTS = pts[right].dts
+		}
+	}
+	return peakKbps, peakFrameIdx, peakDTS
 }
 
 func computeBitrateTimeline(video, audio []timedSample, originDTS, durationMS int64) []models.OfflineBitratePoint {
@@ -532,7 +1163,7 @@ func mergeWarnings(groups ...[]string) []string {
 			}
 			seen[warning] = true
 			out = append(out, warning)
-			if len(out) >= 12 {
+			if len(out) >= 16 {
 				return out
 			}
 		}
@@ -552,6 +1183,15 @@ func isBFrame(frameType string) bool {
 		return false
 	}
 	return frameType == "B" || frameType == "b"
+}
+
+func isExplicitSliceType(frameType string) bool {
+	switch frameType {
+	case "I", "P", "B", "SP", "SI":
+		return true
+	default:
+		return false
+	}
 }
 
 func abs64(v int64) int64 {

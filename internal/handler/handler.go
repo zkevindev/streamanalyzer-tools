@@ -31,10 +31,14 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 		offlineAPI := api.Group("/offline")
 		{
 			offlineAPI.POST("/tasks", h.CreateOfflineTask)
+			offlineAPI.POST("/tasks/local", localDiagnostics, h.CreateLocalOfflineTask)
 			offlineAPI.GET("/tasks", h.ListOfflineTasks)
 			offlineAPI.GET("/tasks/:id", h.GetOfflineTask)
 			offlineAPI.DELETE("/tasks/:id", h.DeleteOfflineTask)
 			offlineAPI.POST("/tasks/:id/reparse", h.ReparseOfflineTask)
+			offlineAPI.POST("/tasks/:id/cancel", h.CancelOfflineTask)
+			offlineAPI.GET("/tasks/:id/inspect/frame", h.InspectOfflineFrame)
+			offlineAPI.GET("/tasks/:id/mp4/boxes", h.InspectOfflineMP4Boxes)
 			offlineAPI.GET("/tasks/:id/files/*name", h.DownloadOfflineFile)
 		}
 	}
@@ -188,6 +192,169 @@ func (h *Handler) ReparseOfflineTask(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, task)
+}
+
+type localOfflineTaskRequest struct {
+	Path       string `json:"path"`
+	FilePath   string `json:"file_path"`
+	Mode       string `json:"mode"`
+	ServerPort uint16 `json:"server_port"`
+	SkipBytes  *int   `json:"skip_bytes"`
+}
+
+func (h *Handler) CreateLocalOfflineTask(c *gin.Context) {
+	if h.offline == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "offline manager not configured"})
+		return
+	}
+	var body localOfflineTaskRequest
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body: " + err.Error()})
+		return
+	}
+	localPath := strings.TrimSpace(body.Path)
+	if localPath == "" {
+		localPath = strings.TrimSpace(body.FilePath)
+	}
+	if localPath == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "path is required"})
+		return
+	}
+
+	mode := strings.ToLower(strings.TrimSpace(body.Mode))
+	if mode == "" {
+		mode = string(models.OfflineModeAuto)
+	}
+	req := models.OfflineTaskRequest{
+		Mode:       models.OfflineMode(mode),
+		ServerPort: body.ServerPort,
+	}
+	switch req.Mode {
+	case models.OfflineModeAuto,
+		models.OfflineModeRaw,
+		models.OfflineModePCAP,
+		models.OfflineModeTS,
+		models.OfflineModeFLV,
+		models.OfflineModeMP4,
+		models.OfflineModeAnnexB:
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid mode"})
+		return
+	}
+	if req.Mode == models.OfflineModePCAP && req.ServerPort == 0 {
+		req.ServerPort = 1935
+	}
+
+	skipExplicit := false
+	if body.SkipBytes != nil {
+		if *body.SkipBytes < 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid skip_bytes"})
+			return
+		}
+		req.SkipBytes = *body.SkipBytes
+		skipExplicit = true
+	} else if req.Mode == models.OfflineModeRaw || req.Mode == models.OfflineModePCAP {
+		req.SkipBytes = rtmpraw.DefaultHandshakeSkipBytes
+	}
+
+	task, err := h.offline.CreateLocalTask(&req, localPath)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	prepared, err := h.offline.PrepareTask(task.ID, skipExplicit)
+	if err != nil {
+		_ = h.offline.DeleteTask(task.ID)
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.offline.StartTask(prepared.ID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	prepared.Status = models.OfflineStatusRunning
+	c.JSON(http.StatusOK, prepared)
+}
+
+func (h *Handler) CancelOfflineTask(c *gin.Context) {
+	if h.offline == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "offline manager not configured"})
+		return
+	}
+	taskID := c.Param("id")
+	if err := h.offline.CancelTask(taskID); err != nil {
+		code := http.StatusBadRequest
+		if strings.Contains(err.Error(), "not found") {
+			code = http.StatusNotFound
+		}
+		c.JSON(code, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"canceling": taskID})
+}
+
+func (h *Handler) InspectOfflineFrame(c *gin.Context) {
+	if h.offline == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "offline manager not configured"})
+		return
+	}
+	taskID := c.Param("id")
+	flowIdx, _ := strconv.Atoi(strings.TrimSpace(c.DefaultQuery("flow_idx", "0")))
+	hexOffset, _ := strconv.Atoi(strings.TrimSpace(c.DefaultQuery("hex_offset", "0")))
+	hexLimit, _ := strconv.Atoi(strings.TrimSpace(c.DefaultQuery("hex_limit", "2048")))
+
+	if pesStr := strings.TrimSpace(c.Query("pes_idx")); pesStr != "" {
+		pesIdx, err := strconv.Atoi(pesStr)
+		if err != nil || pesIdx < 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid pes_idx"})
+			return
+		}
+		resp, err := h.offline.InspectPES(taskID, flowIdx, pesIdx, hexOffset, hexLimit)
+		if err != nil {
+			code := http.StatusBadRequest
+			if strings.Contains(err.Error(), "not found") {
+				code = http.StatusNotFound
+			}
+			c.JSON(code, gin.H{"error": err.Error()})
+			return
+		}
+		c.JSON(http.StatusOK, resp)
+		return
+	}
+
+	frameIdx, err := strconv.Atoi(strings.TrimSpace(c.DefaultQuery("frame_idx", "0")))
+	if err != nil || frameIdx < 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid frame_idx"})
+		return
+	}
+	resp, err := h.offline.InspectFrame(taskID, flowIdx, frameIdx, hexOffset, hexLimit)
+	if err != nil {
+		code := http.StatusBadRequest
+		if strings.Contains(err.Error(), "not found") {
+			code = http.StatusNotFound
+		}
+		c.JSON(code, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, resp)
+}
+
+func (h *Handler) InspectOfflineMP4Boxes(c *gin.Context) {
+	if h.offline == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "offline manager not configured"})
+		return
+	}
+	taskID := c.Param("id")
+	tree, err := h.offline.InspectMP4Boxes(taskID)
+	if err != nil {
+		code := http.StatusBadRequest
+		if strings.Contains(err.Error(), "not found") {
+			code = http.StatusNotFound
+		}
+		c.JSON(code, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, tree)
 }
 
 func (h *Handler) DownloadOfflineFile(c *gin.Context) {

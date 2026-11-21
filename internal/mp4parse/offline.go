@@ -1,6 +1,7 @@
 package mp4parse
 
 import (
+	"context"
 	"io"
 	"os"
 	"sort"
@@ -27,6 +28,14 @@ func CollectTrakRoots(r io.ReadSeeker) ([]mp4.BoxInfo, error) {
 // OfflineFrameDetailsFromPath 打开文件、Probe，生成与离线页图表兼容的帧明细（DTS/PTS/CTS 为毫秒）；
 // 并返回视频/音频编码简写（如 h264、aac）和可从样本描述与容器头中读到的媒体参数。
 func OfflineFrameDetailsFromPath(inputPath string) ([]models.OfflineFrameDetail, string, string, *models.OfflineMediaProfile, error) {
+	return OfflineFrameDetailsWithContext(context.Background(), inputPath)
+}
+
+// OfflineFrameDetailsWithContext 支持取消信号的 MP4 帧明细提取，并附带每帧字节定位信息。
+func OfflineFrameDetailsWithContext(ctx context.Context, inputPath string) ([]models.OfflineFrameDetail, string, string, *models.OfflineMediaProfile, error) {
+	if ctx != nil && ctx.Err() != nil {
+		return nil, "", "", nil, ctx.Err()
+	}
 	f, err := os.Open(inputPath)
 	if err != nil {
 		return nil, "", "", nil, err
@@ -37,6 +46,9 @@ func OfflineFrameDetailsFromPath(inputPath string) ([]models.OfflineFrameDetail,
 	if err != nil {
 		return nil, "", "", nil, err
 	}
+	if ctx != nil && ctx.Err() != nil {
+		return nil, "", "", nil, ctx.Err()
+	}
 	if _, err := r.Seek(0, io.SeekStart); err != nil {
 		return nil, "", "", nil, err
 	}
@@ -44,10 +56,16 @@ func OfflineFrameDetailsFromPath(inputPath string) ([]models.OfflineFrameDetail,
 	if err != nil {
 		return nil, "", "", nil, err
 	}
+	if ctx != nil && ctx.Err() != nil {
+		return nil, "", "", nil, ctx.Err()
+	}
 	if _, err := r.Seek(0, io.SeekStart); err != nil {
 		return nil, "", "", nil, err
 	}
-	frames, v, a, profile := offlineFrameDetails(r, info, trakRoots)
+	frames, v, a, profile, err := offlineFrameDetails(ctx, r, info, trakRoots)
+	if err != nil {
+		return nil, "", "", nil, err
+	}
 	return frames, v, a, profile, nil
 }
 
@@ -68,35 +86,52 @@ type trackMeta struct {
 	isVideo   bool
 	isAudio   bool
 	isAAC     bool
+	naluLen   int
 }
 
-func offlineFrameDetails(r io.ReadSeeker, info *mp4.ProbeInfo, trakRoots []mp4.BoxInfo) ([]models.OfflineFrameDetail, string, string, *models.OfflineMediaProfile) {
+func sampleOffsetsForTrack(tr *mp4.Track) []int64 {
+	offsets := make([]int64, len(tr.Samples))
+	si := 0
+	for _, chunk := range tr.Chunks {
+		end := si + int(chunk.SamplesPerChunk)
+		off := chunk.DataOffset
+		for si < end && si < len(tr.Samples) {
+			offsets[si] = int64(off)
+			off += uint64(tr.Samples[si].Size)
+			si++
+		}
+	}
+	return offsets
+}
+
+func offlineFrameDetails(ctx context.Context, r io.ReadSeeker, info *mp4.ProbeInfo, trakRoots []mp4.BoxInfo) ([]models.OfflineFrameDetail, string, string, *models.OfflineMediaProfile, error) {
 	var rows []frameRow
 	videoCodec := ""
 	audioCodec := ""
 	profile := &models.OfflineMediaProfile{}
 	trackByID := map[uint32]trackMeta{}
+	firstAACExported := false
 
 	for ti, tr := range info.Tracks {
+		if ctx != nil && ctx.Err() != nil {
+			return nil, "", "", nil, ctx.Err()
+		}
 		if ti >= len(trakRoots) {
 			break
 		}
 		hType, isVideo := trackHandlerAndVideo(r, &trakRoots[ti])
 		isAudio := !isVideo && hType == "soun"
-		trackByID[tr.TrackID] = trackMeta{
-			timescale: tr.Timescale,
-			isVideo:   isVideo,
-			isAudio:   isAudio,
-			isAAC:     tr.Codec == mp4.CodecMP4A,
-		}
-		syncSet, _ := loadStss(r, &trakRoots[ti])
 
-		if isVideo && videoCodec == "" {
+		naluLen := 0
+		if isVideo {
 			if ve, ok := videoExportInfoFromTrak(r, tr, &trakRoots[ti]); ok {
-				if strings.HasPrefix(ve.codecLabel, "H.264") {
-					videoCodec = "h264"
-				} else if strings.HasPrefix(ve.codecLabel, "H.265") {
-					videoCodec = "h265"
+				naluLen = ve.naluLen
+				if videoCodec == "" {
+					if strings.HasPrefix(ve.codecLabel, "H.264") {
+						videoCodec = "h264"
+					} else if strings.HasPrefix(ve.codecLabel, "H.265") {
+						videoCodec = "h265"
+					}
 				}
 				if meta := codec.VideoMetaFromAnnexB(ve.paramAnnexB); meta != nil && profile.Width == 0 {
 					profile.Width = meta.Width
@@ -120,26 +155,58 @@ func offlineFrameDetails(r io.ReadSeeker, info *mp4.ProbeInfo, trakRoots []mp4.B
 				profile.Level = int(tr.AVC.Level)
 				profile.LevelName = codec.H264LevelName(int(tr.AVC.Level))
 			}
+			if naluLen == 0 && tr.AVC != nil {
+				naluLen = int(tr.AVC.LengthSize)
+			}
+			if naluLen == 0 {
+				naluLen = 4
+			}
 		}
-		if isAudio && audioCodec == "" {
+
+		trackByID[tr.TrackID] = trackMeta{
+			timescale: tr.Timescale,
+			isVideo:   isVideo,
+			isAudio:   isAudio,
+			isAAC:     tr.Codec == mp4.CodecMP4A,
+			naluLen:   naluLen,
+		}
+		syncSet, _ := loadStss(r, &trakRoots[ti])
+
+		useAudioADTS := false
+		if isAudio {
+			if audioCodec == "" {
+				if tr.Codec == mp4.CodecMP4A {
+					audioCodec = "aac"
+				} else {
+					audioCodec = "unknown"
+				}
+			}
 			if tr.Codec == mp4.CodecMP4A {
-				audioCodec = "aac"
 				if asc, err := loadAudioSpecificConfig(r, &trakRoots[ti]); err == nil && len(asc) >= 2 {
-					if am, err := codec.ParseAACAudioSpecificConfig(asc); err == nil {
-						profile.AudioSampleRate = am.SampleRate
-						profile.AudioChannels = am.Channels
+					if !firstAACExported {
+						firstAACExported = true
+						useAudioADTS = true
+					}
+					if profile.AudioSampleRate == 0 {
+						if am, err := codec.ParseAACAudioSpecificConfig(asc); err == nil {
+							profile.AudioSampleRate = am.SampleRate
+							profile.AudioChannels = am.Channels
+						}
 					}
 				}
-			} else {
-				audioCodec = "unknown"
 			}
 			if tr.MP4A != nil && profile.AudioChannels == 0 {
 				profile.AudioChannels = int(tr.MP4A.ChannelCount)
 			}
 		}
 
+		sampleOffsets := sampleOffsetsForTrack(tr)
+		var adtsOffset int64
 		var dts int64
 		for i := 0; i < len(tr.Samples); i++ {
+			if ctx != nil && i%2048 == 0 && ctx.Err() != nil {
+				return nil, "", "", nil, ctx.Err()
+			}
 			s := tr.Samples[i]
 			pts := dts + s.CompositionTimeOffset
 			dtsMs := tickToMs(dts, tr.Timescale)
@@ -149,26 +216,42 @@ func offlineFrameDetails(r io.ReadSeeker, info *mp4.ProbeInfo, trakRoots []mp4.B
 			media := "other"
 			ft := "-"
 			flen := int(s.Size)
+			streamSrc := "input"
+			streamOff := sampleOffsets[i]
+			streamLen := int(s.Size)
+			nalSize := 0
+
 			if isVideo {
 				media = "video"
 				ft = frameLabel(true, idx1, syncSet)
+				nalSize = naluLen
 			} else if isAudio {
 				media = "audio"
 				ft = "-"
 				if tr.Codec == mp4.CodecMP4A {
 					flen = 7 + int(s.Size)
+					if useAudioADTS && s.Size > 0 {
+						streamSrc = "audio"
+						streamOff = adtsOffset
+						streamLen = 7 + int(s.Size)
+						adtsOffset += int64(streamLen)
+					}
 				}
 			}
 
 			rows = append(rows, frameRow{
 				dts: dtsMs,
 				d: models.OfflineFrameDetail{
-					MediaType: media,
-					DTS:       dtsMs,
-					PTS:       ptsMs,
-					CTS:       ptsMs - dtsMs,
-					FrameLen:  flen,
-					FrameType: ft,
+					MediaType:    media,
+					DTS:          dtsMs,
+					PTS:          ptsMs,
+					CTS:          ptsMs - dtsMs,
+					FrameLen:     flen,
+					FrameType:    ft,
+					StreamSource: streamSrc,
+					StreamOffset: streamOff,
+					StreamLen:    streamLen,
+					NALULenSize:  nalSize,
 				},
 			})
 			dts += int64(s.TimeDelta)
@@ -176,7 +259,10 @@ func offlineFrameDetails(r io.ReadSeeker, info *mp4.ProbeInfo, trakRoots []mp4.B
 	}
 
 	// Support fragmented MP4 (moof/traf/trun) when segments exist or stbl has no samples.
-	fragRows, hasMoof := extractFragmentedSamples(r, trackByID)
+	fragRows, hasMoof, err := extractFragmentedSamples(ctx, r, trackByID)
+	if err != nil {
+		return nil, "", "", nil, err
+	}
 	if hasMoof || (info != nil && len(info.Segments) > 0) {
 		profile.MP4Fragmented = true
 	}
@@ -204,28 +290,36 @@ func offlineFrameDetails(r io.ReadSeeker, info *mp4.ProbeInfo, trakRoots []mp4.B
 			profile.DurationMS = int64(info.Duration) * 1000 / int64(info.Timescale)
 		}
 	}
-	return out, videoCodec, audioCodec, profile
+	return out, videoCodec, audioCodec, profile, nil
 }
 
-func extractFragmentedSamples(r io.ReadSeeker, trackByID map[uint32]trackMeta) ([]frameRow, bool) {
+func extractFragmentedSamples(ctx context.Context, r io.ReadSeeker, trackByID map[uint32]trackMeta) ([]frameRow, bool, error) {
 	if _, err := r.Seek(0, io.SeekStart); err != nil {
-		return nil, false
+		return nil, false, nil
 	}
 
 	trexByID := map[uint32]*mp4.Trex{}
 	var (
-		rows        []frameRow
-		hasMoof     bool
-		curTrackID  uint32
-		curDefDur   uint32
-		curDefSize  uint32
-		curDefFlags uint32
-		curDTS      int64
-		hasTFDT     bool
-		trackCursor = map[uint32]int64{}
+		rows              []frameRow
+		hasMoof           bool
+		moofOffset        int64
+		curTrackID        uint32
+		curDefDur         uint32
+		curDefSize        uint32
+		curDefFlags       uint32
+		curDTS            int64
+		hasTFDT           bool
+		curBaseDataOffset int64
+		hasBaseDataOffset bool
+		trafDataCursor    int64
+		hasTrafDataCursor bool
+		trackCursor       = map[uint32]int64{}
 	)
 
-	_, _ = mp4.ReadBoxStructure(r, func(h *mp4.ReadHandle) (interface{}, error) {
+	_, err := mp4.ReadBoxStructure(r, func(h *mp4.ReadHandle) (interface{}, error) {
+		if ctx != nil && ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		switch h.BoxInfo.Type {
 		case mp4.BoxTypeMdat(), mp4.BoxTypeFree(), mp4.BoxTypeSkip():
 			return nil, nil
@@ -239,6 +333,7 @@ func extractFragmentedSamples(r io.ReadSeeker, trackByID map[uint32]trackMeta) (
 			return nil, nil
 		case mp4.BoxTypeMoof():
 			hasMoof = true
+			moofOffset = int64(h.BoxInfo.Offset)
 			return h.Expand()
 		case mp4.BoxTypeTraf():
 			curTrackID = 0
@@ -247,6 +342,10 @@ func extractFragmentedSamples(r io.ReadSeeker, trackByID map[uint32]trackMeta) (
 			curDefFlags = 0
 			curDTS = 0
 			hasTFDT = false
+			curBaseDataOffset = moofOffset
+			hasBaseDataOffset = false
+			trafDataCursor = moofOffset
+			hasTrafDataCursor = false
 			return h.Expand()
 		case mp4.BoxTypeTfhd():
 			box, _, err := h.ReadPayload()
@@ -259,6 +358,13 @@ func extractFragmentedSamples(r io.ReadSeeker, trackByID map[uint32]trackMeta) (
 						curDefFlags = trex.DefaultSampleFlags
 					}
 					flags := tfhd.GetFlags()
+					if flags&mp4.TfhdBaseDataOffsetPresent != 0 {
+						curBaseDataOffset = int64(tfhd.BaseDataOffset)
+						hasBaseDataOffset = true
+					} else {
+						curBaseDataOffset = moofOffset
+						hasBaseDataOffset = (flags & 0x020000) != 0 // default-base-is-moof
+					}
 					if flags&mp4.TfhdDefaultSampleDurationPresent != 0 {
 						curDefDur = tfhd.DefaultSampleDuration
 					}
@@ -298,23 +404,43 @@ func extractFragmentedSamples(r io.ReadSeeker, trackByID map[uint32]trackMeta) (
 				timescale = 90000
 			}
 			media := "other"
+			nalSize := 0
 			if known {
 				if tm.isVideo {
 					media = "video"
+					nalSize = tm.naluLen
+					if nalSize <= 0 {
+						nalSize = 4
+					}
 				} else if tm.isAudio {
 					media = "audio"
 				}
 			} else if len(trackByID) == 0 {
 				// Standalone media segment without moov: still emit timing rows as video/media.
 				media = "video"
+				nalSize = 4
 			}
 
 			flags := trun.GetFlags()
+			hasDataOffset := flags&0x000001 != 0
 			hasDur := flags&0x000100 != 0
 			hasSize := flags&0x000200 != 0
 			hasSampleFlags := flags&0x000400 != 0
 			hasCTO := flags&0x000800 != 0
 			hasFirstFlags := flags&0x000004 != 0
+
+			var samplePos int64
+			hasValidPos := false
+			if hasDataOffset {
+				samplePos = curBaseDataOffset + int64(trun.DataOffset)
+				hasValidPos = samplePos >= 0
+			} else if hasTrafDataCursor {
+				samplePos = trafDataCursor
+				hasValidPos = samplePos >= 0
+			} else if hasBaseDataOffset {
+				samplePos = curBaseDataOffset
+				hasValidPos = samplePos >= 0
+			}
 
 			for i := 0; i < int(trun.SampleCount); i++ {
 				var entry mp4.TrunEntry
@@ -354,18 +480,27 @@ func extractFragmentedSamples(r io.ReadSeeker, trackByID map[uint32]trackMeta) (
 						ft = "non-I"
 					}
 				}
-				rows = append(rows, frameRow{
-					dts: dtsMs,
-					d: models.OfflineFrameDetail{
-						MediaType: media,
-						DTS:       dtsMs,
-						PTS:       ptsMs,
-						CTS:       ptsMs - dtsMs,
-						FrameLen:  int(sz),
-						FrameType: ft,
-					},
-				})
+				fd := models.OfflineFrameDetail{
+					MediaType: media,
+					DTS:       dtsMs,
+					PTS:       ptsMs,
+					CTS:       ptsMs - dtsMs,
+					FrameLen:  int(sz),
+					FrameType: ft,
+				}
+				if hasValidPos && sz > 0 {
+					fd.StreamSource = "input"
+					fd.StreamOffset = samplePos
+					fd.StreamLen = int(sz)
+					fd.NALULenSize = nalSize
+					samplePos += int64(sz)
+				}
+				rows = append(rows, frameRow{dts: dtsMs, d: fd})
 				curDTS += int64(dur)
+			}
+			if hasValidPos {
+				trafDataCursor = samplePos
+				hasTrafDataCursor = true
 			}
 			trackCursor[curTrackID] = curDTS
 			return nil, nil
@@ -373,5 +508,8 @@ func extractFragmentedSamples(r io.ReadSeeker, trackByID map[uint32]trackMeta) (
 			return h.Expand()
 		}
 	})
-	return rows, hasMoof
+	if err != nil && ctx != nil && ctx.Err() != nil {
+		return nil, hasMoof, ctx.Err()
+	}
+	return rows, hasMoof, nil
 }

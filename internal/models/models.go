@@ -198,10 +198,11 @@ const (
 type OfflineStatus string
 
 const (
-	OfflineStatusPending OfflineStatus = "pending"
-	OfflineStatusRunning OfflineStatus = "running"
-	OfflineStatusDone    OfflineStatus = "done"
-	OfflineStatusFailed  OfflineStatus = "failed"
+	OfflineStatusPending  OfflineStatus = "pending"
+	OfflineStatusRunning  OfflineStatus = "running"
+	OfflineStatusDone     OfflineStatus = "done"
+	OfflineStatusFailed   OfflineStatus = "failed"
+	OfflineStatusCanceled OfflineStatus = "canceled"
 )
 
 type OfflineTaskRequest struct {
@@ -218,10 +219,15 @@ type OfflineTask struct {
 	ServerPort uint16 `json:"server_port"`
 	SkipBytes  int    `json:"skip_bytes"`
 
+	SourceType string `json:"source_type,omitempty"` // "upload" | "local"
 	InputName  string `json:"input_name"`
 	InputPath  string `json:"input_path"`
 	InputSize  int64  `json:"input_size,omitempty"`
 	DetectedBy string `json:"detected_by,omitempty"`
+
+	ProgressPct    float64 `json:"progress_pct,omitempty"`
+	ProgressStage  string  `json:"progress_stage,omitempty"`
+	BytesProcessed int64   `json:"bytes_processed,omitempty"`
 
 	SummaryPath string `json:"summary_path"`
 	Error       string `json:"error,omitempty"`
@@ -377,16 +383,36 @@ type OfflineMediaProfile struct {
 	FrameTotal      int  `json:"frame_total,omitempty"`
 	FramesTruncated bool `json:"frames_truncated,omitempty"`
 
+	Peak200msKbps  float64              `json:"peak_200ms_kbps,omitempty"`
+	PeakToAvgRatio float64              `json:"peak_to_avg_ratio,omitempty"`
+	HealthChecks   []OfflineHealthCheck `json:"health_checks,omitempty"`
+
 	Warnings []string `json:"warnings,omitempty"`
 }
 
+// OfflineHealthCheck represents one structured rule result in the deep media health report.
+type OfflineHealthCheck struct {
+	Code            string `json:"code"`
+	Category        string `json:"category"` // codec / timeline / bitrate / audio / container / transport
+	Severity        string `json:"severity"` // ok / warn / error
+	Title           string `json:"title"`
+	Detail          string `json:"detail"`
+	Count           int    `json:"count,omitempty"`
+	FirstFrameIndex *int   `json:"first_frame_index,omitempty"` // 0-based index into FrameDetails
+	FirstDTSMS      int64  `json:"first_dts_ms,omitempty"`
+}
+
 type OfflineFrameDetail struct {
-	MediaType string `json:"media_type,omitempty"` // video/audio
-	DTS       int64  `json:"dts,omitempty"`
-	PTS       int64  `json:"pts,omitempty"`
-	CTS       int64  `json:"cts,omitempty"`
-	FrameLen  int    `json:"frame_len,omitempty"`
-	FrameType string `json:"frame_type,omitempty"` // I/P/B/- for audio
+	MediaType    string `json:"media_type,omitempty"`     // video/audio
+	DTS          int64  `json:"dts,omitempty"`
+	PTS          int64  `json:"pts,omitempty"`
+	CTS          int64  `json:"cts,omitempty"`
+	FrameLen     int    `json:"frame_len,omitempty"`
+	FrameType    string `json:"frame_type,omitempty"`     // I/P/B/- for audio
+	StreamSource string `json:"stream_source,omitempty"`  // "video" | "audio" | "input" | "pid:<n>"
+	StreamOffset int64  `json:"stream_offset,omitempty"`
+	StreamLen    int    `json:"stream_len,omitempty"`
+	NALULenSize  int    `json:"nalu_len_size,omitempty"`  // 0 = Annex B / raw audio; 1..4 = AVCC/HVCC
 }
 
 // OfflinePESDetail 对应 TS 每个 PES 包一行（与 example/parse_ts 输出字段对齐）。
@@ -404,6 +430,9 @@ type OfflinePESDetail struct {
 	PayloadLen    int                `json:"payload_len"`
 	NALUCount     int                `json:"nalu_count,omitempty"`
 	NALUs         []OfflineNALUBrief `json:"nalus,omitempty"`
+	StreamOffset  int64              `json:"stream_offset,omitempty"`
+	StreamLen     int                `json:"stream_len,omitempty"`
+	FrameIndex    *int               `json:"frame_index,omitempty"`
 }
 
 type OfflineNALUBrief struct {

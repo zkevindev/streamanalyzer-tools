@@ -2,6 +2,8 @@ package offline
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,6 +16,12 @@ import (
 )
 
 func (m *Manager) runPCAP(task *models.OfflineTask, taskDir string, summary *models.OfflineSummary) error {
+	ctx := m.taskContext(task.ID)
+	m.setProgressPercent(task.ID, "重组 PCAP TCP 流", 10, 0)
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+
 	opt := pcaprtmp.DefaultOptions(layers.TCPPort(task.ServerPort))
 	flows, err := pcaprtmp.ExtractFlowsFromPCAP(task.InputPath, opt)
 	if err != nil {
@@ -24,6 +32,12 @@ func (m *Manager) runPCAP(task *models.OfflineTask, taskDir string, summary *mod
 	}
 
 	for i, f := range flows {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		pct := 25.0 + float64(i)*70.0/float64(len(flows))
+		m.setProgressPercent(task.ID, fmt.Sprintf("解析 RTMP 流 %d/%d", i+1, len(flows)), pct, task.InputSize*int64(i+1)/int64(len(flows)))
+
 		flowID := i + 1
 		dir := pcaprtmp.DetectDirection(f, task.SkipBytes, opt.DetectLimitBytes)
 		raw := []byte(nil)
@@ -82,22 +96,52 @@ func (m *Manager) runPCAP(task *models.OfflineTask, taskDir string, summary *mod
 			return err
 		}
 		frameDetails := make([]models.OfflineFrameDetail, 0, 2048)
-		res, parseErr := rtmpraw.ParseRTMPRaw(bytes.NewReader(raw), rtmpraw.Options{SkipBytes: task.SkipBytes}, rtmpraw.Output{
+		samples := make([]timedSample, 0, 2048)
+		hasContainerSeq := false
+		res, parseErr := rtmpraw.ParseRTMPRaw(bytes.NewReader(raw), rtmpraw.Options{SkipBytes: task.SkipBytes, Context: ctx}, rtmpraw.Output{
 			VideoWriter: vf,
 			AudioWriter: af,
 			OnFrame: func(fi rtmpraw.FrameInfo) {
+				idx := len(frameDetails)
+				if fi.HasContainerParams {
+					hasContainerSeq = true
+				}
 				frameDetails = append(frameDetails, models.OfflineFrameDetail{
-					MediaType: fi.MediaType,
-					DTS:       fi.DTS,
-					PTS:       fi.PTS,
-					CTS:       fi.CTS,
-					FrameLen:  fi.FrameLen,
-					FrameType: fi.FrameType,
+					MediaType:    fi.MediaType,
+					DTS:          fi.DTS,
+					PTS:          fi.PTS,
+					CTS:          fi.CTS,
+					FrameLen:     fi.FrameLen,
+					FrameType:    fi.FrameType,
+					StreamSource: fi.StreamSource,
+					StreamOffset: fi.StreamOffset,
+					StreamLen:    fi.StreamLen,
+				})
+				samples = append(samples, timedSample{
+					frameIndex:         idx,
+					media:              fi.MediaType,
+					dts:                fi.DTS,
+					pts:                fi.PTS,
+					cts:                fi.CTS,
+					size:               fi.FrameLen,
+					key:                isKeyframe(fi.FrameType),
+					b:                  isBFrame(fi.FrameType),
+					sliceKnown:         isExplicitSliceType(fi.FrameType),
+					hasContainerParams: fi.HasContainerParams,
+					hasInbandParams:    fi.HasInbandParams,
+					paramHash:          fi.ParamHash,
+					videoWidth:         fi.VideoWidth,
+					videoHeight:        fi.VideoHeight,
+					audioSampleRate:    fi.AudioSampleRate,
+					audioChannels:      fi.AudioChannels,
 				})
 			},
 		})
 		_ = vf.Close()
 		_ = af.Close()
+		if errors.Is(parseErr, context.Canceled) || ctx.Err() != nil {
+			return context.Canceled
+		}
 		fr.VideoCodec = res.VideoCodec
 		fr.AudioCodec = res.AudioCodec
 		if parseErr != nil {
@@ -106,7 +150,13 @@ func (m *Manager) runPCAP(task *models.OfflineTask, taskDir string, summary *mod
 
 		cleanupEmptyFile(&fr.AudioPath)
 		retargetAudioFile(&fr.AudioPath, res.AudioCodec)
-		attachMediaProfile(&fr, frameDetails, profileFromRTMP(res))
+		hctx := healthContext{
+			Mode:                  models.OfflineModePCAP,
+			IsHEVC:                res.HEVC,
+			HasContainerSeqHeader: hasContainerSeq,
+			CheckIDRParams:        res.VideoCodec == "h264" || res.VideoCodec == "h265",
+		}
+		attachMediaProfileWithSamples(&fr, frameDetails, samples, profileFromRTMP(res), hctx)
 		summary.Flows = append(summary.Flows, fr)
 	}
 	return nil

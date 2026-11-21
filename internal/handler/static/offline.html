@@ -52,9 +52,80 @@
     .pill.running{border-color:var(--accent-border);background:var(--accent-light);color:var(--accent-hover)}
     .pill.done{border-color:var(--success-border);background:var(--success-bg);color:var(--success)}
     .pill.failed{border-color:var(--danger-border);background:var(--danger-bg);color:var(--danger)}
+    .pill.canceled{border-color:#d4d4d8;background:#f4f4f5;color:#52525b}
+    .pill.warn{border-color:#fcd34d;background:#fffbeb;color:#b45309}
+    .pill.ok{border-color:var(--success-border);background:var(--success-bg);color:var(--success)}
+    .pill.error{border-color:var(--danger-border);background:var(--danger-bg);color:var(--danger)}
     .pill.key{border-color:var(--danger-border);background:var(--danger-bg);color:var(--danger)}
     .pill.bframe{border-color:var(--accent-border);background:var(--accent-light);color:var(--accent-hover)}
     .pill.info{border-color:var(--border-strong);background:var(--bg);color:var(--text)}
+    .source-tabs{display:inline-flex;background:var(--surface-inset);border:1px solid var(--border);border-radius:.55rem;padding:3px;gap:3px;margin-bottom:.85rem}
+    .source-tabs button{padding:.36rem .9rem;font-size:.82rem;font-weight:580;border:none;border-radius:.42rem;background:transparent;color:var(--muted);cursor:pointer;transition:all .15s ease}
+    .source-tabs button.active{background:var(--surface);color:var(--text);box-shadow:0 1px 2px rgb(9 9 11 / .08)}
+    .local-input-box{border:1px solid var(--border-strong);border-radius:var(--radius-sm);background:var(--surface-inset);padding:.9rem 1rem;margin-bottom:.95rem}
+    .local-input-box input{font-family:var(--font-data)}
+    .progress-banner{border:1px solid var(--accent-border);background:var(--accent-light);border-radius:var(--radius-sm);padding:.8rem 1rem;margin-bottom:1rem;display:flex;flex-direction:column;gap:.45rem}
+    .progress-banner-head{display:flex;justify-content:space-between;align-items:center;gap:.75rem;flex-wrap:wrap;font-size:.84rem;font-weight:600;color:var(--accent-hover)}
+    .progress-bar-track{width:100%;height:7px;background:rgba(0,0,0,.08);border-radius:999px;overflow:hidden}
+    .progress-bar-fill{height:100%;background:var(--accent);border-radius:999px;transition:width .25s ease}
+    .mini-progress{min-width:120px;margin-top:.3rem}
+    .mini-progress .progress-bar-track{height:5px}
+    .health-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(265px,1fr));gap:.65rem;margin-top:.75rem}
+    .health-card{border:1px solid var(--border);border-radius:var(--radius-sm);padding:.72rem .85rem;background:var(--bg);display:flex;flex-direction:column;gap:.35rem}
+    .health-card.sev-ok{border-left:3px solid var(--success)}
+    .health-card.sev-warn{border-color:#fcd34d;border-left:3px solid #d97706;background:#fffbeb}
+    .health-card.sev-error{border-color:var(--danger-border);border-left:3px solid var(--danger);background:var(--danger-bg)}
+    .health-card-head{display:flex;justify-content:space-between;align-items:center;gap:.45rem;flex-wrap:wrap}
+    .health-card-title{font-size:.84rem;font-weight:650;color:var(--text)}
+    .health-card-detail{font-size:.78rem;color:var(--muted);line-height:1.48}
+    .health-card.sev-warn .health-card-detail{color:#92400e}
+    .health-card.sev-error .health-card-detail{color:var(--danger)}
+    .health-card-foot{display:flex;justify-content:space-between;align-items:center;gap:.5rem;margin-top:.2rem;flex-wrap:wrap}
+    .mp4-panel-tabs{display:inline-flex;background:var(--surface-inset);border:1px solid var(--border);border-radius:.5rem;padding:2px;gap:2px}
+    .mp4-panel-tabs button{padding:.28rem .72rem;font-size:.78rem;font-weight:560;border:none;border-radius:.38rem;background:transparent;color:var(--muted);cursor:pointer}
+    .mp4-panel-tabs button.active{background:var(--surface);color:var(--text);box-shadow:0 1px 2px rgb(9 9 11 / .08)}
+    .box-tree-toolbar{display:flex;justify-content:space-between;align-items:center;gap:.6rem;flex-wrap:wrap;margin:.6rem 0}
+    .box-tree-toolbar input{max-width:280px;min-height:2rem;padding:.25rem .6rem;font-size:.8rem}
+    .box-tree-wrap{border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);max-height:460px;overflow:auto;font-size:.8rem}
+    .box-row{display:flex;align-items:center;gap:.5rem;padding:.38rem .65rem;border-bottom:1px solid var(--border);line-height:1.4}
+    .box-row:last-child{border-bottom:none}
+    .box-row:hover{background:var(--bg)}
+    .box-row.hl-warn{background:#fffbeb}
+    .box-row.hl-info{background:rgba(59,130,246,.04)}
+    .box-toggle{width:18px;height:18px;border:none;background:transparent;cursor:pointer;color:var(--muted);font-size:.76rem;flex:none;padding:0;display:inline-flex;align-items:center;justify-content:center}
+    .box-toggle.leaf{visibility:hidden}
+    .box-type{font-family:var(--font-data);font-weight:700;color:var(--accent-hover);min-width:44px;flex:none}
+    .box-bar{width:64px;height:6px;background:var(--surface-inset);border-radius:999px;overflow:hidden;flex:none}
+    .box-bar-fill{height:100%;background:var(--accent);border-radius:999px}
+    .box-meta{font-family:var(--font-data);font-size:.73rem;color:var(--muted);white-space:nowrap;flex:none}
+    .box-summary{color:var(--text);font-size:.78rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:120px}
+    .clickable-row{cursor:pointer}
+    .drawer-backdrop{position:fixed;inset:0;background:rgba(9,9,11,.48);z-index:999;display:none;justify-content:flex-end}
+    .drawer-backdrop.open{display:flex}
+    .drawer-panel{width:min(900px,96vw);height:100dvh;background:var(--surface);border-left:1px solid var(--border);box-shadow:-12px 0 36px rgba(0,0,0,.18);display:flex;flex-direction:column;overflow:hidden}
+    .drawer-head{padding:1rem 1.25rem;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:flex-start;gap:.75rem;background:var(--surface-inset)}
+    .drawer-title{font-size:1rem;font-weight:700;display:flex;align-items:center;gap:.5rem;flex-wrap:wrap}
+    .drawer-sub{font-size:.78rem;color:var(--muted);margin-top:.2rem;font-family:var(--font-data)}
+    .drawer-body{flex:1;overflow:auto;padding:1rem 1.25rem;display:flex;flex-direction:column;gap:1.1rem}
+    .insp-sec-title{font-size:.84rem;font-weight:660;color:var(--text);margin-bottom:.45rem;display:flex;justify-content:space-between;align-items:center;gap:.5rem}
+    .insp-kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:.45rem}
+    .insp-kv-item{border:1px solid var(--border);border-radius:var(--radius-xs);padding:.45rem .62rem;background:var(--bg)}
+    .insp-kv-item .k{font-size:.71rem;color:var(--muted)}
+    .insp-kv-item .v{font-size:.82rem;font-weight:600;font-family:var(--font-data);margin-top:.1rem;word-break:break-word}
+    .sei-card{border:1px solid var(--border);border-radius:var(--radius-sm);padding:.65rem .8rem;background:var(--bg);margin-bottom:.5rem}
+    .sei-text{margin-top:.45rem;background:#18181b;color:#e4e4e7;padding:.6rem .75rem;border-radius:var(--radius-xs);font-family:var(--font-data);font-size:.75rem;white-space:pre-wrap;word-break:break-all;max-height:180px;overflow:auto}
+    .hex-wrap{border:1px solid var(--border);border-radius:var(--radius-sm);background:#18181b;color:#d4d4d8;padding:.65rem .8rem;font-family:var(--font-data);font-size:.74rem;line-height:1.58;overflow:auto;max-height:360px}
+    .hex-row{display:flex;gap:.85rem;white-space:pre}
+    .hex-off{color:#71717a;user-select:none;min-width:68px}
+    .hex-bytes{display:inline-flex;gap:4px;min-width:348px}
+    .hex-b{padding:0 1px;border-radius:2px}
+    .hex-b.sc{background:#f59e0b;color:#18181b;font-weight:700}
+    .hex-b.hdr{background:#3b82f6;color:#fff;font-weight:700}
+    .hex-b.hdr-key{background:#ef4444;color:#fff;font-weight:700}
+    .hex-b.hl{outline:1px solid #38bdf8;background:rgba(56,189,248,.25)}
+    .hex-ascii{color:#a1a1aa;border-left:1px solid #3f3f46;padding-left:.75rem}
+    .hex-legend{display:flex;gap:.65rem;flex-wrap:wrap;font-size:.73rem;color:var(--muted);margin-bottom:.35rem;align-items:center}
+    .hex-dot{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:middle}
     .actions{display:flex;gap:.45rem;flex-wrap:wrap;align-items:center}
     .actions a{color:var(--accent);text-decoration:none;font-size:.82rem;font-weight:550;display:inline-flex;align-items:center;gap:.25rem}
     .actions a:hover{text-decoration:underline}
@@ -129,11 +200,26 @@
     </div>
 
     <div class="card">
-      <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="选择或拖拽媒体文件">
-        <input id="file" type="file" style="display:none" />
-        <div class="dropzone-title">点击选择文件，或将媒体 / 抓包文件拖拽至此</div>
-        <div class="dropzone-sub">支持 .flv / .mp4 / .m4s / .ts / .m2ts / .h264 / .h265 / .pcap / .pcapng / .raw</div>
-        <div id="selectedFileLabel" class="dropzone-file" style="display:none"></div>
+      <div class="source-tabs" role="tablist" aria-label="输入方式">
+        <button type="button" id="tabUpload" class="active" role="tab" aria-selected="true" onclick="setInputTab('upload')">上传文件</button>
+        <button type="button" id="tabLocal" role="tab" aria-selected="false" onclick="setInputTab('local')">本机路径直读（零拷贝大文件）</button>
+      </div>
+
+      <div id="uploadInputPane">
+        <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="选择或拖拽媒体文件">
+          <input id="file" type="file" style="display:none" />
+          <div class="dropzone-title">点击选择文件，或将媒体 / 抓包文件拖拽至此</div>
+          <div class="dropzone-sub">支持 .flv / .mp4 / .m4s / .ts / .m2ts / .h264 / .h265 / .pcap / .pcapng / .raw</div>
+          <div id="selectedFileLabel" class="dropzone-file" style="display:none"></div>
+        </div>
+      </div>
+
+      <div id="localInputPane" class="local-input-box" style="display:none">
+        <div class="form-group">
+          <label for="localPath">本机文件绝对路径（仅限本机访问，不复制原文件）</label>
+          <input id="localPath" type="text" placeholder="/Users/yourname/videos/capture.mp4" autocomplete="off" />
+        </div>
+        <p class="hint">直读磁盘原文件，适合 GB 级大文件快速解析；删除任务仅清理分析产物，绝对不会删除原始本地文件。</p>
       </div>
 
       <div class="form-grid">
@@ -157,7 +243,7 @@
           <label for="skipBytes">握手跳过字节（skip_bytes）</label>
           <input id="skipBytes" type="number" min="0" value="3073" />
         </div>
-        <button id="btn" class="btn" onclick="upload()">
+        <button id="btn" class="btn" onclick="submitTask()">
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="16" height="16">
             <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
           </svg>
@@ -193,6 +279,15 @@
           <div class="actions" id="taskActions"></div>
         </div>
 
+        <div id="runningProgressBanner" class="progress-banner" style="display:none">
+          <div class="progress-banner-head">
+            <span id="runningProgressText">正在解析中…</span>
+            <button type="button" class="btn danger sm" id="btnCancelRunning" onclick="cancelCurrentTask()">取消解析</button>
+          </div>
+          <div class="progress-bar-track"><div class="progress-bar-fill" id="runningProgressFill" style="width:0%"></div></div>
+          <div class="hint" id="runningProgressSub" style="margin-top:0"></div>
+        </div>
+
         <div class="section" style="margin-top:.5rem">
           <div class="section-title" style="margin-bottom:.5rem">基本信息</div>
           <div class="kv" id="taskKV"></div>
@@ -211,6 +306,10 @@
           </div>
           <div class="stats-cards" id="mediaProfileCards"></div>
           <div class="nalu-chips" id="naluHistogramBox" style="display:none"></div>
+          <div id="healthChecksSection" style="display:none;margin-top:.95rem">
+            <div class="section-title" style="margin-bottom:.45rem">深度体检规则</div>
+            <div class="health-grid" id="healthChecksGrid"></div>
+          </div>
           <div id="mediaProfileWarningsWrap" class="warning-box" style="display:none">
             <ul id="mediaProfileWarnings"></ul>
           </div>
@@ -254,13 +353,32 @@
         </div>
 
         <div class="section" id="mp4ReportSection" style="display:none">
-          <details id="mp4ReportDetails" class="collapse">
-            <summary>MP4 结构与样例报告预览（mp4_report.txt）</summary>
-            <div style="padding:.25rem .75rem .75rem">
-              <div class="hint" id="mp4ReportHint" style="margin-bottom:.4rem">展开后自动加载前 500 行预览。</div>
-              <pre id="mp4ReportBox" class="meta-box" style="display:none"></pre>
+          <div class="section-head">
+            <div class="section-title">MP4 结构探查</div>
+            <div class="mp4-panel-tabs">
+              <button type="button" id="mp4TabBoxes" class="active" onclick="setMP4PanelTab('boxes')">交互式 MP4 Box 树</button>
+              <button type="button" id="mp4TabReport" onclick="setMP4PanelTab('report')">mp4_report.txt 预览</button>
             </div>
-          </details>
+          </div>
+
+          <div id="mp4BoxTreePane">
+            <div class="box-tree-toolbar">
+              <div class="actions">
+                <input id="mp4BoxSearch" type="text" placeholder="搜索 Box 类型或摘要（如 elst / stsd / trun）" oninput="renderMP4BoxTree()" />
+                <button type="button" class="btn secondary sm" onclick="expandAllMP4Boxes(true)">全部展开</button>
+                <button type="button" class="btn secondary sm" onclick="expandAllMP4Boxes(false)">全部折叠</button>
+              </div>
+              <div class="hint" id="mp4BoxTreeMeta" style="margin:0"></div>
+            </div>
+            <div id="mp4BoxTreeWrap" class="box-tree-wrap">
+              <div class="empty-state" style="padding:1.2rem">加载 MP4 Box 树中…</div>
+            </div>
+          </div>
+
+          <div id="mp4TextReportPane" style="display:none">
+            <div class="hint" id="mp4ReportHint" style="margin-bottom:.4rem">切换至此标签页后自动加载前 500 行预览。</div>
+            <pre id="mp4ReportBox" class="meta-box" style="display:none"></pre>
+          </div>
         </div>
 
         <div class="section" id="tsStatsSection" style="display:none">
@@ -358,7 +476,7 @@
                   <thead>
                     <tr>
                       <th>#</th><th>PID</th><th>prog</th><th>stream_type</th><th>cat</th><th>sid</th>
-                      <th>PTS(90k)</th><th>DTS(90k)</th><th>len</th><th>NALU#</th><th>NALU 摘要</th>
+                      <th>PTS(90k)</th><th>DTS(90k)</th><th>len</th><th>NALU#</th><th>NALU 摘要</th><th>操作</th>
                     </tr>
                   </thead>
                   <tbody id="tsPesBody"></tbody>
@@ -383,6 +501,22 @@
     </div>
   </div>
 
+  <!-- 逐帧深钻 Inspector 抽屉 -->
+  <div id="inspectorDrawer" class="drawer-backdrop" role="dialog" aria-modal="true" aria-labelledby="inspectorTitle" onclick="if(event.target===this) closeInspector()">
+    <div class="drawer-panel">
+      <div class="drawer-head">
+        <div>
+          <div class="drawer-title" id="inspectorTitle">逐帧深钻 Inspector</div>
+          <div class="drawer-sub" id="inspectorSub">-</div>
+        </div>
+        <button type="button" class="btn secondary sm" onclick="closeInspector()">关闭 (Esc)</button>
+      </div>
+      <div class="drawer-body" id="inspectorBody">
+        <div class="empty-state">加载中…</div>
+      </div>
+    </div>
+  </div>
+
   <script>
     let currentId = null;
     let currentData = null;
@@ -391,8 +525,27 @@
     let currentPage = 1;
     const PAGE_SIZE = 200;
     let selectedFile = null;
+    let currentInputTab = 'upload';
     let charts = {};
     let loadedMP4ReportKey = '';
+    let mp4BoxTreeData = null;
+    let mp4BoxTreeTaskId = '';
+    let mp4BoxExpanded = new Set();
+    let mp4PanelTab = 'boxes';
+    let mp4ReportMeta = { taskId: '', rel: '' };
+    let inspectorState = null;
+
+    function setInputTab(tab){
+      currentInputTab = (tab === 'local') ? 'local' : 'upload';
+      const uPane = document.getElementById('uploadInputPane');
+      const lPane = document.getElementById('localInputPane');
+      const tU = document.getElementById('tabUpload');
+      const tL = document.getElementById('tabLocal');
+      if(uPane) uPane.style.display = currentInputTab === 'upload' ? '' : 'none';
+      if(lPane) lPane.style.display = currentInputTab === 'local' ? '' : 'none';
+      if(tU){ tU.classList.toggle('active', currentInputTab === 'upload'); tU.setAttribute('aria-selected', String(currentInputTab === 'upload')); }
+      if(tL){ tL.classList.toggle('active', currentInputTab === 'local'); tL.setAttribute('aria-selected', String(currentInputTab === 'local')); }
+    }
 
     function esc(s){
       return String(s == null ? '' : s)
@@ -501,6 +654,61 @@
       hintEl.textContent = hints[mode] || hints.auto;
     }
 
+    async function submitTask(){
+      if(currentInputTab === 'local'){
+        await submitLocalPath();
+      }else{
+        await upload();
+      }
+    }
+
+    async function submitLocalPath(){
+      const pathInput = document.getElementById('localPath');
+      const localPath = pathInput ? pathInput.value.trim() : '';
+      if(!localPath){ alert('请填写本机媒体或抓包文件的绝对路径'); return; }
+      const btn = document.getElementById('btn');
+      btn.disabled = true;
+      setRunHint('校验本地路径并识别格式中…');
+      const modeVal = document.getElementById('mode').value;
+      const body = { path: localPath, mode: modeVal };
+      if(modeVal === 'pcap'){
+        body.server_port = Number(document.getElementById('serverPort').value || 1935);
+      }
+      if(modeVal === 'pcap' || modeVal === 'raw'){
+        body.skip_bytes = Number(document.getElementById('skipBytes').value || 3073);
+      }
+      let res;
+      try{
+        res = await fetch('/api/offline/tasks/local', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+      }catch(e){
+        btn.disabled = false;
+        setRunHint('');
+        alert('请求失败：' + (e && e.message ? e.message : e));
+        return;
+      }
+      if(!res.ok){
+        btn.disabled = false;
+        setRunHint('');
+        let errText = await res.text();
+        try{ const j = JSON.parse(errText); if(j.error) errText = j.error; }catch(_){}
+        alert('创建本机直读任务失败：' + errText);
+        return;
+      }
+      const task = await res.json();
+      btn.disabled = false;
+      const detectedNote = task.detected_by ? ('（自动识别为 ' + task.mode + '）') : '';
+      setRunHint('本机直读解析中' + detectedNote + '：' + (task.id || '-'));
+      await loadTasks();
+      if(task && task.id){
+        await show(task.id);
+        await waitUntilDone(task.id);
+      }
+    }
+
     async function upload(){
       const input = document.getElementById('file');
       const f = selectedFile || (input && input.files && input.files[0]);
@@ -547,22 +755,80 @@
       }
     }
 
+    function updateRunningBanner(task){
+      const banner = document.getElementById('runningProgressBanner');
+      if(!banner) return;
+      const status = String((task && task.status) || '').toLowerCase();
+      if(status !== 'running'){
+        banner.style.display = 'none';
+        return;
+      }
+      banner.style.display = '';
+      const pct = Math.max(0, Math.min(100, Number(task.progress_pct || 0)));
+      const stage = task.progress_stage || '正在解析…';
+      const proc = Number(task.bytes_processed || 0);
+      const total = Number(task.input_size || 0);
+      const textEl = document.getElementById('runningProgressText');
+      const fillEl = document.getElementById('runningProgressFill');
+      const subEl = document.getElementById('runningProgressSub');
+      if(textEl) textEl.textContent = stage + ' · ' + pct.toFixed(1) + '%';
+      if(fillEl) fillEl.style.width = pct.toFixed(1) + '%';
+      if(subEl){
+        subEl.textContent = total > 0
+          ? ('已处理 ' + fmtBytes(proc) + ' / ' + fmtBytes(total))
+          : (proc > 0 ? ('已处理 ' + fmtBytes(proc)) : '正在读取媒体数据…');
+      }
+    }
+
+    async function cancelTask(id){
+      const res = await fetch('/api/offline/tasks/' + encodeURIComponent(id) + '/cancel', { method: 'POST' });
+      if(!res.ok){
+        let errText = await res.text();
+        try{ const j = JSON.parse(errText); if(j.error) errText = j.error; }catch(_){}
+        alert('取消失败：' + errText);
+        return;
+      }
+      setRunHint('已发送取消指令：' + id);
+      await loadTasks();
+    }
+
+    async function cancelCurrentTask(){
+      if(!currentId) return;
+      await cancelTask(currentId);
+    }
+
     async function waitUntilDone(id){
-      const deadline = Date.now() + 10*60*1000;
+      const deadline = Date.now() + 30*60*1000;
       while(Date.now() < deadline){
-        await sleep(800);
+        await sleep(500);
         const res = await fetch('/api/offline/tasks/' + encodeURIComponent(id));
         if(!res.ok) continue;
         const data = await res.json();
-        const st = (data.task && data.task.status) ? String(data.task.status) : '';
+        const task = data.task || {};
+        const st = String(task.status || '').toLowerCase();
+        if(currentId === id){
+          updateRunningBanner(task);
+        }
+        if(st === 'running'){
+          const pct = Number(task.progress_pct || 0).toFixed(1);
+          setRunHint((task.progress_stage || '解析中') + ' · ' + pct + '%');
+          await loadTasks();
+          continue;
+        }
         if(st === 'done'){
-          setRunHint('解析完成：' + (data.task.input_name || id));
+          setRunHint('解析完成：' + (task.input_name || id));
+          await loadTasks();
+          if(currentId === id) await show(id);
+          return;
+        }
+        if(st === 'canceled'){
+          setRunHint('解析已取消：' + (task.input_name || id));
           await loadTasks();
           if(currentId === id) await show(id);
           return;
         }
         if(st === 'failed'){
-          const err = (data.task && data.task.error) ? String(data.task.error) : 'unknown';
+          const err = task.error ? String(task.error) : 'unknown';
           setRunHint('解析失败：' + err);
           await loadTasks();
           if(currentId === id) await show(id);
@@ -590,14 +856,25 @@
         if(currentId && t.id === currentId) tr.classList.add('selected-row');
 
         const sizeNote = t.input_size ? (' · ' + fmtBytes(t.input_size)) : '';
+        const srcBadge = t.source_type === 'local' ? ' <span class="pill info">本机直读</span>' : '';
         const modeBadge = t.detected_by
           ? (esc(t.mode) + '<span class="subtext">' + esc(t.detected_by) + '</span>')
           : esc(t.mode);
 
+        let statusHtml = '<span class="pill ' + esc(status) + '">' + esc(t.status) + '</span>';
+        if(status === 'running'){
+          const pct = Math.max(0, Math.min(100, Number(t.progress_pct || 0)));
+          const stage = t.progress_stage || '解析中';
+          statusHtml += '<div class="mini-progress">' +
+            '<div class="progress-bar-track"><div class="progress-bar-fill" style="width:' + pct.toFixed(1) + '%"></div></div>' +
+            '<span class="subtext">' + esc(stage) + ' (' + pct.toFixed(0) + '%)</span>' +
+            '</div>';
+        }
+
         tr.innerHTML =
-          '<td><strong>' + esc(t.input_name || t.id) + '</strong><span class="subtext"><code>' + esc(t.id) + '</code>' + esc(sizeNote) + '</span></td>' +
+          '<td><strong>' + esc(t.input_name || t.id) + '</strong>' + srcBadge + '<span class="subtext"><code>' + esc(t.id) + '</code>' + esc(sizeNote) + '</span></td>' +
           '<td>' + modeBadge + '</td>' +
-          '<td><span class="pill ' + esc(status) + '">' + esc(t.status) + '</span></td>' +
+          '<td>' + statusHtml + '</td>' +
           '<td>' + esc(fmtTime(t.created_at)) + '</td>' +
           '<td class="err-text">' + esc(t.error || '') + '</td>';
 
@@ -611,19 +888,25 @@
         btnView.onclick = () => show(t.id);
         wrap.appendChild(btnView);
 
-        const btnReparse = document.createElement('button');
-        btnReparse.className = 'btn secondary sm';
-        btnReparse.textContent = '重算';
-        btnReparse.disabled = status === 'running';
-        btnReparse.onclick = () => reparseTask(t.id);
-        wrap.appendChild(btnReparse);
+        if(status === 'running'){
+          const btnCancel = document.createElement('button');
+          btnCancel.className = 'btn danger sm';
+          btnCancel.textContent = '取消';
+          btnCancel.onclick = () => cancelTask(t.id);
+          wrap.appendChild(btnCancel);
+        }else{
+          const btnReparse = document.createElement('button');
+          btnReparse.className = 'btn secondary sm';
+          btnReparse.textContent = '重算';
+          btnReparse.onclick = () => reparseTask(t.id);
+          wrap.appendChild(btnReparse);
 
-        const btnDel = document.createElement('button');
-        btnDel.className = 'btn danger sm';
-        btnDel.textContent = '删除';
-        btnDel.disabled = status === 'running';
-        btnDel.onclick = () => deleteTask(t.id, t.input_name || t.id);
-        wrap.appendChild(btnDel);
+          const btnDel = document.createElement('button');
+          btnDel.className = 'btn danger sm';
+          btnDel.textContent = '删除';
+          btnDel.onclick = () => deleteTask(t.id, t.input_name || t.id, t.source_type === 'local');
+          wrap.appendChild(btnDel);
+        }
 
         tdAct.appendChild(wrap);
         tr.appendChild(tdAct);
@@ -631,8 +914,9 @@
       });
     }
 
-    async function deleteTask(id, name){
-      if(!confirm('确认永久删除任务「' + name + '」及其产物文件吗？')) return;
+    async function deleteTask(id, name, isLocal){
+      const extra = isLocal ? '\n（本机直读任务仅清理分析产物，不会删除原始本地文件）' : '';
+      if(!confirm('确认永久删除任务「' + name + '」及其产物文件吗？' + extra)) return;
       const res = await fetch('/api/offline/tasks/' + encodeURIComponent(id), { method: 'DELETE' });
       if(!res.ok){
         alert('删除失败：' + await res.text());
@@ -752,6 +1036,15 @@
         {k: '时间戳连续性', v: tsText, warn: tsBad}
       ];
 
+      if(profile.peak_200ms_kbps > 0){
+        const ratio = Number(profile.peak_to_avg_ratio || 0);
+        cards.push({
+          k: '200ms 瞬时峰值码率',
+          v: fmtMeasure(profile.peak_200ms_kbps, 1, 'kbps') + (ratio > 0 ? (' (' + ratio.toFixed(2) + 'x)') : ''),
+          warn: ratio >= 3.0 && (profile.video_bitrate_kbps || 0) > 100
+        });
+      }
+
       if(profile.has_av_offset){
         const avWarn = Math.abs(profile.av_start_offset_ms || 0) > 500 || Math.abs(profile.av_drift_max_ms || 0) > 500;
         cards.push({
@@ -838,6 +1131,89 @@
       });
       warnWrap.style.display = notes.length ? '' : 'none';
       section.style.display = '';
+      renderHealthChecks(flow);
+    }
+
+    function renderHealthChecks(flow){
+      const section = document.getElementById('healthChecksSection');
+      const grid = document.getElementById('healthChecksGrid');
+      const summary = document.getElementById('healthChecksSummary');
+      if(!section || !grid) return;
+      const checks = (flow && flow.profile && Array.isArray(flow.profile.health_checks)) ? flow.profile.health_checks : [];
+      if(!checks.length){
+        section.style.display = 'none';
+        return;
+      }
+      section.style.display = '';
+      let errN = 0, warnN = 0, okN = 0;
+      checks.forEach(c => {
+        const s = String(c.severity || 'ok').toLowerCase();
+        if(s === 'error') errN++;
+        else if(s === 'warn') warnN++;
+        else okN++;
+      });
+      if(summary){
+        summary.textContent = '共 ' + checks.length + ' 项：' +
+          (errN ? (errN + ' 项异常 · ') : '') +
+          (warnN ? (warnN + ' 项告警 · ') : '') +
+          okN + ' 项正常';
+      }
+
+      const mode = String((currentData && currentData.task && currentData.task.mode) || '').toLowerCase();
+      const sevLabel = { ok: '正常', warn: '告警', error: '异常' };
+      grid.innerHTML = '';
+      checks.forEach(c => {
+        const sev = String(c.severity || 'ok').toLowerCase();
+        const card = document.createElement('div');
+        card.className = 'health-card ' + (sev === 'error' ? 'error' : (sev === 'warn' ? 'warn' : 'ok'));
+
+        const head = document.createElement('div');
+        head.className = 'health-card-head';
+        const title = document.createElement('div');
+        title.className = 'health-card-title';
+        title.textContent = c.title || c.code || '-';
+        const badge = document.createElement('span');
+        badge.className = 'pill ' + (sev === 'error' ? 'failed' : (sev === 'warn' ? 'warn' : 'done'));
+        badge.textContent = sevLabel[sev] || sev;
+        head.appendChild(title);
+        head.appendChild(badge);
+        card.appendChild(head);
+
+        const detail = document.createElement('div');
+        detail.className = 'health-card-detail';
+        detail.textContent = c.detail || '';
+        card.appendChild(detail);
+
+        const meta = document.createElement('div');
+        meta.className = 'health-card-meta';
+        const infoParts = [];
+        if(c.category) infoParts.push(c.category);
+        if(c.count > 0) infoParts.push('命中 ' + c.count + ' 次');
+        if(c.first_frame_index !== undefined && c.first_frame_index !== null){
+          infoParts.push('首帧 #' + (Number(c.first_frame_index) + 1));
+          if(c.first_dts_ms !== undefined && c.first_dts_ms !== null){
+            infoParts.push('DTS ' + c.first_dts_ms + ' ms');
+          }
+        }
+        const infoSpan = document.createElement('span');
+        infoSpan.textContent = infoParts.join(' · ');
+        meta.appendChild(infoSpan);
+
+        if(c.first_frame_index !== undefined && c.first_frame_index !== null && mode !== 'ts'){
+          const idx0 = Number(c.first_frame_index);
+          const frames = (flow && Array.isArray(flow.frame_details)) ? flow.frame_details : [];
+          if(idx0 >= 0 && idx0 < frames.length){
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'btn secondary sm';
+            btn.textContent = '定位帧 #' + (idx0 + 1) + ' 深钻';
+            btn.onclick = () => openFrameInspector(idx0);
+            meta.appendChild(btn);
+          }
+        }
+        card.appendChild(meta);
+        grid.appendChild(card);
+      });
     }
 
     function renderCharts(flow){
@@ -1057,7 +1433,8 @@
 
       if(mode === 'ts'){
         const all = Array.isArray(flow.pes_details) ? flow.pes_details : [];
-        const rows = all.filter(it => {
+        const indexed = all.map((it, origIdx) => ({ it, origIdx }));
+        const rows = indexed.filter(({ it }) => {
           const cat = String(it.category || '').toLowerCase();
           if(filter === 'all') return true;
           if(filter === 'video') return cat === 'video';
@@ -1131,10 +1508,18 @@
         }
         body.innerHTML = '';
         if(!pageRows.length){
-          body.innerHTML = '<tr><td colspan="11" style="color:var(--muted)">当前筛选条件下无 PES 数据</td></tr>';
+          body.innerHTML = '<tr><td colspan="12" style="color:var(--muted)">当前筛选条件下无 PES 数据</td></tr>';
         }else{
-          pageRows.forEach((it, i) => {
+          pageRows.forEach((entry, i) => {
+            const it = entry.it;
+            const origIdx = entry.origIdx;
+            const canInspect = (it.stream_len || 0) > 0;
             const tr = document.createElement('tr');
+            if(canInspect){
+              tr.classList.add('clickable-row');
+              tr.title = '点击打开 PES 逐帧深钻 Inspector';
+              tr.onclick = () => openPESInspector(origIdx);
+            }
             tr.innerHTML =
               '<td>' + esc(it.seq ?? (start + i + 1)) + '</td>' +
               '<td><code>' + esc(it.pid ?? '-') + '</code></td>' +
@@ -1146,11 +1531,23 @@
               '<td>' + esc(fmt90kTick(it.dts_valid, it.dts_base)) + '</td>' +
               '<td>' + esc(fmtBytes(it.payload_len ?? 0)) + '</td>' +
               '<td>' + esc(it.nalu_count ?? 0) + '</td>' +
-              '<td style="max-width:280px;word-break:break-all;font-size:.75rem">' + esc(naluBriefLine(it.nalus)) + '</td>';
+              '<td style="max-width:260px;word-break:break-all;font-size:.75rem">' + esc(naluBriefLine(it.nalus)) + '</td>';
+            const tdOp = document.createElement('td');
+            if(canInspect){
+              const btn = document.createElement('button');
+              btn.type = 'button';
+              btn.className = 'btn secondary sm';
+              btn.textContent = '深钻';
+              btn.onclick = ev => { ev.stopPropagation(); openPESInspector(origIdx); };
+              tdOp.appendChild(btn);
+            }else{
+              tdOp.textContent = '-';
+            }
+            tr.appendChild(tdOp);
             body.appendChild(tr);
           });
         }
-        summary.textContent = 'TS PES 包列表（筛选命中 ' + res.rows.length + ' / 全量 ' + res.total + '）';
+        summary.textContent = 'TS PES 包列表（筛选命中 ' + res.rows.length + ' / 全量 ' + res.total + '，点击行深钻）';
         return;
       }
 
@@ -1160,16 +1557,23 @@
       const body = document.getElementById('rawFrameBody');
       const summary = document.getElementById('rawFrameSummary');
       const showCTS = (res.mode !== 'annexb');
-      head.innerHTML = '<tr><th>#</th><th>媒体</th><th>DTS (ms)</th><th>ΔDTS (ms)</th><th>PTS (ms)</th>' + (showCTS ? '<th>CTS (ms)</th>' : '') + '<th>长度</th><th>帧类型</th></tr>';
+      head.innerHTML = '<tr><th>#</th><th>媒体</th><th>DTS (ms)</th><th>ΔDTS (ms)</th><th>PTS (ms)</th>' + (showCTS ? '<th>CTS (ms)</th>' : '') + '<th>长度</th><th>帧类型</th><th>操作</th></tr>';
       body.innerHTML = '';
       if(!pageRows.length){
-        const cols = showCTS ? 8 : 7;
+        const cols = showCTS ? 9 : 8;
         body.innerHTML = '<tr><td colspan="' + cols + '" style="color:var(--muted)">当前筛选条件下无逐帧数据</td></tr>';
       }else{
         pageRows.forEach(item => {
           const it = item.raw;
+          const origIdx = item.seq - 1;
+          const canInspect = !!it.stream_source && (it.stream_len || 0) > 0;
           const tr = document.createElement('tr');
           if(item.isAnomaly) tr.classList.add('anomaly-row');
+          if(canInspect){
+            tr.classList.add('clickable-row');
+            tr.title = '点击打开逐帧深钻 Inspector';
+            tr.onclick = () => openFrameInspector(origIdx);
+          }
           const deltaStr = item.delta === null ? '-' : (item.delta < 0 ? (item.delta + ' (回退)') : (item.delta > 1000 ? (item.delta + ' (间隔大)') : String(item.delta)));
           let ftHtml = esc(it.frame_type || '-');
           if(item.isKey) ftHtml = '<span class="pill key">' + esc(it.frame_type) + '</span>';
@@ -1185,12 +1589,24 @@
             ctsCell +
             '<td>' + esc(fmtBytes(it.frame_len ?? 0)) + '</td>' +
             '<td>' + ftHtml + '</td>';
+          const tdOp = document.createElement('td');
+          if(canInspect){
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'btn secondary sm';
+            btn.textContent = '深钻';
+            btn.onclick = ev => { ev.stopPropagation(); openFrameInspector(origIdx); };
+            tdOp.appendChild(btn);
+          }else{
+            tdOp.textContent = '-';
+          }
+          tr.appendChild(tdOp);
           body.appendChild(tr);
         });
       }
       summary.textContent = res.truncated && currentOfflineFilter === 'all'
-        ? ('音视频帧明细（明细保留前 ' + res.rows.length + ' / 全量 ' + res.total + ' 帧，完整统计见媒体概况）')
-        : ('音视频帧明细（当前筛选 ' + res.rows.length + ' 帧）');
+        ? ('音视频帧明细（明细保留前 ' + res.rows.length + ' / 全量 ' + res.total + ' 帧，点击任意行深钻）')
+        : ('音视频帧明细（当前筛选 ' + res.rows.length + ' 帧，点击任意行深钻）');
     }
 
     function exportCurrentCSV(){
@@ -1200,7 +1616,8 @@
       const csvCell = v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
       if(res.kind === 'ts'){
         lines.push(['seq','pid','program','stream_type','category','stream_id','pts_90k','dts_90k','payload_len','nalu_count','nalus'].join(','));
-        res.rows.forEach(it => {
+        res.rows.forEach(entry => {
+          const it = entry.it;
           lines.push([
             it.seq, it.pid, it.program_number || '', it.stream_type || '', it.category || '',
             '0x' + Number(it.stream_id || 0).toString(16),
@@ -1313,42 +1730,560 @@
       section.style.display = '';
     }
 
+    function setMP4PanelTab(tab){
+      mp4PanelTab = (tab === 'report') ? 'report' : 'boxes';
+      const bPane = document.getElementById('mp4BoxesPane');
+      const rPane = document.getElementById('mp4ReportPane');
+      const tB = document.getElementById('mp4TabBoxes');
+      const tR = document.getElementById('mp4TabReport');
+      if(bPane) bPane.style.display = mp4PanelTab === 'boxes' ? '' : 'none';
+      if(rPane) rPane.style.display = mp4PanelTab === 'report' ? '' : 'none';
+      if(tB) tB.classList.toggle('active', mp4PanelTab === 'boxes');
+      if(tR) tR.classList.toggle('active', mp4PanelTab === 'report');
+      if(mp4PanelTab === 'report'){
+        loadMP4ReportText();
+      }
+    }
+
     function setupMP4ReportPreview(taskId, flow){
       const section = document.getElementById('mp4ReportSection');
-      const details = document.getElementById('mp4ReportDetails');
       const box = document.getElementById('mp4ReportBox');
       const hint = document.getElementById('mp4ReportHint');
-      if(!section || !details || !box) return;
+      const filterEl = document.getElementById('mp4BoxFilter');
+      if(!section) return;
       const extras = (flow && Array.isArray(flow.artifact_paths)) ? flow.artifact_paths : [];
       const reportAbs = extras.find(p => String(p).endsWith('mp4_report.txt'));
       const rel = reportAbs ? toRel(taskId, reportAbs) : '';
-      if(!rel){
-        section.style.display = 'none';
+      mp4ReportMeta = { taskId, rel };
+      section.style.display = '';
+      if(box){ box.style.display = 'none'; box.textContent = ''; }
+      if(hint){ hint.textContent = rel ? '切换到文本报告标签后自动加载前 500 行预览。' : '当前任务无 mp4_report.txt 产物。'; }
+      if(filterEl) filterEl.value = '';
+      setMP4PanelTab('boxes');
+      loadMP4BoxTree(taskId);
+    }
+
+    async function loadMP4ReportText(){
+      const box = document.getElementById('mp4ReportBox');
+      const hint = document.getElementById('mp4ReportHint');
+      if(!box || !hint) return;
+      const { taskId, rel } = mp4ReportMeta || {};
+      if(!taskId || !rel){
+        hint.textContent = '当前任务无 mp4_report.txt 产物。';
+        box.style.display = 'none';
         return;
       }
-      section.style.display = '';
-      details.open = false;
-      box.style.display = 'none';
-      box.textContent = '';
-      hint.textContent = '展开后自动加载前 500 行预览。';
       const reportKey = taskId + '/' + rel;
-      details.ontoggle = async () => {
-        if(!details.open || loadedMP4ReportKey === reportKey) return;
-        hint.textContent = '加载中…';
-        try{
-          const resp = await fetch('/api/offline/tasks/' + encodeURIComponent(taskId) + '/files/' + rel);
-          if(!resp.ok){ hint.textContent = '加载失败 (HTTP ' + resp.status + ')'; return; }
-          const text = await resp.text();
-          const lines = text.split('\n');
-          const preview = lines.slice(0, 500).join('\n');
-          box.textContent = lines.length > 500 ? (preview + '\n\n... 共 ' + lines.length + ' 行，完整内容请下载 mp4_report.txt 查看') : preview;
-          box.style.display = '';
-          hint.textContent = '共 ' + lines.length + ' 行' + (lines.length > 500 ? '（仅预览前 500 行）' : '');
-          loadedMP4ReportKey = reportKey;
-        }catch(e){
-          hint.textContent = '加载失败：' + (e && e.message ? e.message : e);
+      if(loadedMP4ReportKey === reportKey && box.textContent){
+        box.style.display = '';
+        return;
+      }
+      hint.textContent = '加载中…';
+      try{
+        const resp = await fetch('/api/offline/tasks/' + encodeURIComponent(taskId) + '/files/' + rel);
+        if(!resp.ok){ hint.textContent = '加载失败 (HTTP ' + resp.status + ')'; return; }
+        const text = await resp.text();
+        const lines = text.split('\n');
+        const preview = lines.slice(0, 500).join('\n');
+        box.textContent = lines.length > 500 ? (preview + '\n\n... 共 ' + lines.length + ' 行，完整内容请下载 mp4_report.txt 查看') : preview;
+        box.style.display = '';
+        hint.textContent = '共 ' + lines.length + ' 行' + (lines.length > 500 ? '（仅预览前 500 行）' : '');
+        loadedMP4ReportKey = reportKey;
+      }catch(e){
+        hint.textContent = '加载失败：' + (e && e.message ? e.message : e);
+      }
+    }
+
+    async function loadMP4BoxTree(taskId){
+      const wrap = document.getElementById('mp4BoxTreeWrap');
+      const meta = document.getElementById('mp4BoxMeta');
+      if(!wrap) return;
+      if(mp4BoxTreeTaskId === taskId && mp4BoxTreeData){
+        renderMP4BoxTree();
+        return;
+      }
+      wrap.innerHTML = '<div class="empty-state">加载 Box 树中…</div>';
+      if(meta) meta.textContent = '';
+      try{
+        const resp = await fetch('/api/offline/tasks/' + encodeURIComponent(taskId) + '/mp4/boxes');
+        if(!resp.ok){
+          let msg = await resp.text();
+          try{ const j = JSON.parse(msg); if(j.error) msg = j.error; }catch(_){}
+          wrap.innerHTML = '<div class="empty-state">无法解析 MP4 Box 树：' + esc(msg) + '</div>';
+          return;
         }
+        const tree = await resp.json();
+        mp4BoxTreeData = tree;
+        mp4BoxTreeTaskId = taskId;
+        mp4BoxExpanded = new Set();
+        // Default expand top-level container boxes
+        (tree.boxes || []).forEach((b, i) => {
+          if(b.children && b.children.length) mp4BoxExpanded.add('0.' + i);
+        });
+        renderMP4BoxTree();
+      }catch(e){
+        wrap.innerHTML = '<div class="empty-state">加载失败：' + esc(e && e.message ? e.message : e) + '</div>';
+      }
+    }
+
+    function collectAllMP4Paths(nodes, prefix, out){
+      (nodes || []).forEach((n, i) => {
+        const key = prefix + '.' + i;
+        if(n.children && n.children.length){
+          out.add(key);
+          collectAllMP4Paths(n.children, key, out);
+        }
+      });
+    }
+
+    function expandAllMP4Boxes(){
+      if(!mp4BoxTreeData) return;
+      const next = new Set();
+      collectAllMP4Paths(mp4BoxTreeData.boxes || [], '0', next);
+      mp4BoxExpanded = next;
+      renderMP4BoxTree();
+    }
+
+    function collapseAllMP4Boxes(){
+      mp4BoxExpanded = new Set();
+      renderMP4BoxTree();
+    }
+
+    function filterMP4Boxes(nodes, query, prefix){
+      if(!query) return (nodes || []).map((n, i) => ({ node: n, key: prefix + '.' + i, children: filterMP4Boxes(n.children || [], '', prefix + '.' + i), matched: false }));
+      const q = query.toLowerCase();
+      const out = [];
+      (nodes || []).forEach((n, i) => {
+        const key = prefix + '.' + i;
+        const selfMatch = String(n.type || '').toLowerCase().includes(q) ||
+          String(n.summary || '').toLowerCase().includes(q) ||
+          String(n.highlight_reason || '').toLowerCase().includes(q);
+        const kids = filterMP4Boxes(n.children || [], query, key);
+        if(selfMatch || kids.length){
+          out.push({ node: n, key, children: kids, matched: selfMatch });
+        }
+      });
+      return out;
+    }
+
+    function renderMP4BoxTree(){
+      const wrap = document.getElementById('mp4BoxTreeWrap');
+      const meta = document.getElementById('mp4BoxMeta');
+      const filterEl = document.getElementById('mp4BoxFilter');
+      if(!wrap || !mp4BoxTreeData) return;
+      const tree = mp4BoxTreeData;
+      const query = filterEl ? filterEl.value.trim() : '';
+
+      if(meta){
+        const parts = ['文件大小 ' + fmtBytes(tree.file_size || 0), '节点数 ' + (tree.total_nodes || 0)];
+        if(tree.fragmented) parts.push('fMP4 分片');
+        else if(tree.fast_start) parts.push('FastStart (moov 在前)');
+        else parts.push('非 FastStart (moov 在 mdat 后)');
+        if(tree.truncated) parts.push('已达节点上限截断');
+        meta.textContent = parts.join(' · ');
+      }
+
+      const items = filterMP4Boxes(tree.boxes || [], query, '0');
+      if(!items.length){
+        wrap.innerHTML = '<div class="empty-state">' + (query ? '没有匹配该关键字的 Box' : '未解析到 Box') + '</div>';
+        return;
+      }
+
+      const frag = document.createDocumentFragment();
+      function buildNode(item, depth){
+        const n = item.node;
+        const hasKids = item.children && item.children.length > 0;
+        const isOpen = query ? true : mp4BoxExpanded.has(item.key);
+
+        const row = document.createElement('div');
+        row.className = 'box-row' + (n.highlight ? (' hl-' + n.highlight) : '');
+        row.style.paddingLeft = (8 + depth * 18) + 'px';
+
+        const tog = document.createElement('button');
+        tog.type = 'button';
+        tog.className = 'box-toggle';
+        tog.textContent = hasKids ? (isOpen ? '▾' : '▸') : '·';
+        tog.disabled = !hasKids;
+        if(hasKids){
+          tog.onclick = () => {
+            if(mp4BoxExpanded.has(item.key)) mp4BoxExpanded.delete(item.key);
+            else mp4BoxExpanded.add(item.key);
+            renderMP4BoxTree();
+          };
+        }
+        row.appendChild(tog);
+
+        const typeSpan = document.createElement('span');
+        typeSpan.className = 'box-type';
+        typeSpan.textContent = n.type || '????';
+        row.appendChild(typeSpan);
+
+        const pct = Math.max(0, Math.min(100, Number(n.percent || 0)));
+        const bar = document.createElement('span');
+        bar.className = 'box-bar';
+        bar.title = pct.toFixed(2) + '%';
+        bar.innerHTML = '<span class="box-bar-fill" style="width:' + Math.max(pct > 0 ? 2 : 0, pct).toFixed(1) + '%"></span>';
+        row.appendChild(bar);
+
+        const sizeSpan = document.createElement('span');
+        sizeSpan.className = 'box-size';
+        sizeSpan.textContent = fmtBytes(n.size || 0) + ' (' + pct.toFixed(1) + '%)';
+        row.appendChild(sizeSpan);
+
+        const offSpan = document.createElement('span');
+        offSpan.className = 'box-off';
+        offSpan.textContent = '@0x' + Number(n.offset || 0).toString(16);
+        row.appendChild(offSpan);
+
+        const sumSpan = document.createElement('span');
+        sumSpan.className = 'box-summary';
+        sumSpan.textContent = n.summary || '';
+        row.appendChild(sumSpan);
+
+        if(n.highlight_reason){
+          const hl = document.createElement('span');
+          hl.className = 'pill warn';
+          hl.textContent = n.highlight_reason;
+          row.appendChild(hl);
+        }
+
+        frag.appendChild(row);
+        if(hasKids && isOpen){
+          item.children.forEach(c => buildNode(c, depth + 1));
+        }
+      }
+      items.forEach(it => buildNode(it, 0));
+      wrap.innerHTML = '';
+      wrap.appendChild(frag);
+    }
+
+    // ==================== 逐帧深钻 Inspector 抽屉 ====================
+    function closeInspector(){
+      const d = document.getElementById('inspectorDrawer');
+      if(d) d.classList.remove('open');
+      inspectorState = null;
+    }
+
+    async function openFrameInspector(frameIdx){
+      if(!currentId) return;
+      inspectorState = {
+        taskId: currentId,
+        flowIdx: currentFlowIndex,
+        frameIdx: frameIdx,
+        pesIdx: null,
+        hexLimit: 2048,
+        activeNaluIdx: -1,
+        data: null
       };
+      const drawer = document.getElementById('inspectorDrawer');
+      const title = document.getElementById('inspectorTitle');
+      const sub = document.getElementById('inspectorSub');
+      const body = document.getElementById('inspectorBody');
+      if(title) title.textContent = '逐帧深钻 · 帧 #' + (frameIdx + 1);
+      if(sub) sub.textContent = '读取原始帧字节并解析 NALU / SPS / PPS / SEI / Hex 中…';
+      if(body) body.innerHTML = '<div class="empty-state">解析中…</div>';
+      if(drawer) drawer.classList.add('open');
+      await fetchAndRenderInspector();
+    }
+
+    async function openPESInspector(pesIdx){
+      if(!currentId) return;
+      inspectorState = {
+        taskId: currentId,
+        flowIdx: currentFlowIndex,
+        frameIdx: null,
+        pesIdx: pesIdx,
+        hexLimit: 2048,
+        activeNaluIdx: -1,
+        data: null
+      };
+      const drawer = document.getElementById('inspectorDrawer');
+      const title = document.getElementById('inspectorTitle');
+      const sub = document.getElementById('inspectorSub');
+      const body = document.getElementById('inspectorBody');
+      if(title) title.textContent = 'TS PES 深钻 · PES #' + (pesIdx + 1);
+      if(sub) sub.textContent = '读取 PID 裸流字节并解析中…';
+      if(body) body.innerHTML = '<div class="empty-state">解析中…</div>';
+      if(drawer) drawer.classList.add('open');
+      await fetchAndRenderInspector();
+    }
+
+    async function fetchAndRenderInspector(){
+      const st = inspectorState;
+      if(!st) return;
+      const body = document.getElementById('inspectorBody');
+      const sub = document.getElementById('inspectorSub');
+      const qs = new URLSearchParams();
+      qs.set('flow_idx', String(st.flowIdx));
+      if(st.pesIdx !== null && st.pesIdx !== undefined){
+        qs.set('pes_idx', String(st.pesIdx));
+      }else{
+        qs.set('frame_idx', String(st.frameIdx));
+      }
+      qs.set('hex_offset', '0');
+      qs.set('hex_limit', String(st.hexLimit));
+      try{
+        const resp = await fetch('/api/offline/tasks/' + encodeURIComponent(st.taskId) + '/inspect/frame?' + qs.toString());
+        if(!inspectorState || inspectorState !== st) return;
+        if(!resp.ok){
+          let msg = await resp.text();
+          try{ const j = JSON.parse(msg); if(j.error) msg = j.error; }catch(_){}
+          if(sub) sub.textContent = '读取失败';
+          if(body) body.innerHTML = '<div class="empty-state" style="color:var(--danger)">无法深钻该帧：' + esc(msg) + '</div>';
+          return;
+        }
+        st.data = await resp.json();
+        renderInspector();
+      }catch(e){
+        if(!inspectorState || inspectorState !== st) return;
+        if(sub) sub.textContent = '网络错误';
+        if(body) body.innerHTML = '<div class="empty-state" style="color:var(--danger)">请求失败：' + esc(e && e.message ? e.message : e) + '</div>';
+      }
+    }
+
+    function loadMoreHex(){
+      if(!inspectorState) return;
+      inspectorState.hexLimit = Math.min(8192, (inspectorState.hexLimit || 2048) + 2048);
+      fetchAndRenderInspector();
+    }
+
+    function selectInspectorNALU(idx){
+      if(!inspectorState) return;
+      inspectorState.activeNaluIdx = (inspectorState.activeNaluIdx === idx) ? -1 : idx;
+      renderInspector();
+    }
+
+    function renderKVTable(rows){
+      const valid = rows.filter(r => r[1] !== undefined && r[1] !== null && r[1] !== '');
+      if(!valid.length) return '';
+      return '<table class="small"><tbody>' + valid.map(r =>
+        '<tr><th style="width:190px;font-weight:600;color:var(--muted)">' + esc(r[0]) + '</th><td><code>' + esc(r[1]) + '</code></td></tr>'
+      ).join('') + '</tbody></table>';
+    }
+
+    function renderHexViewHTML(hex, activeRange){
+      if(!hex || !Array.isArray(hex.lines) || !hex.lines.length){
+        return '<div class="empty-state">无字节数据</div>';
+      }
+      const ranges = Array.isArray(hex.nalu_ranges) ? hex.nalu_ranges : [];
+      function classifyByte(absOff){
+        if(activeRange && absOff >= activeRange.offset && absOff < activeRange.offset + (activeRange.prefix_len || 0) + (activeRange.length || 0)){
+          return 'hex-byte-active';
+        }
+        for(let i = 0; i < ranges.length; i++){
+          const r = ranges[i];
+          if(absOff >= r.start && absOff < r.payload_start) return 'hex-byte-start';
+          if(absOff >= r.payload_start && absOff < r.payload_start + 2 && r.payload_start > r.start) return 'hex-byte-hdr';
+        }
+        return '';
+      }
+
+      const htmlLines = hex.lines.map(line => {
+        const baseOff = Number(line.offset || 0);
+        const bytes = Array.isArray(line.hex_bytes) ? line.hex_bytes : [];
+        let hexCols = '';
+        for(let i = 0; i < 16; i++){
+          if(i === 8) hexCols += ' ';
+          if(i < bytes.length){
+            const cls = classifyByte(baseOff + i);
+            hexCols += cls ? ('<span class="' + cls + '">' + esc(bytes[i]) + '</span> ') : (esc(bytes[i]) + ' ');
+          }else{
+            hexCols += '   ';
+          }
+        }
+        const offLabel = line.offset_hex || baseOff.toString(16).padStart(8, '0');
+        return '<div class="hex-line">' +
+          '<span class="hex-off">' + esc(offLabel) + '</span>' +
+          '<span class="hex-bytes">' + hexCols + '</span>' +
+          '<span class="hex-ascii">' + esc(line.ascii || '') + '</span>' +
+          '</div>';
+      }).join('');
+      return '<div class="hex-view">' + htmlLines + '</div>';
+    }
+
+    function renderInspector(){
+      const st = inspectorState;
+      if(!st || !st.data) return;
+      const d = st.data;
+      const frame = d.frame || {};
+      const ins = d.inspection || {};
+      const title = document.getElementById('inspectorTitle');
+      const sub = document.getElementById('inspectorSub');
+      const body = document.getElementById('inspectorBody');
+
+      const totalBytes = ins.total_bytes || frame.stream_len || frame.frame_len || 0;
+      const streamSource = frame.stream_source || '-';
+      const streamOffset = Number(frame.stream_offset || 0);
+
+      if(d.pes_index !== undefined && d.pes_index !== null){
+        if(title) title.textContent = 'TS PES 深钻 · PES #' + (Number(d.pes_index) + 1) + ' (' + (frame.frame_type || frame.media_type || '-') + ')';
+        if(sub) sub.textContent = (frame.media_type || '-') + ' · ' + (ins.codec || '-') + ' · ' + (ins.format || '-') +
+          ' · ' + fmtBytes(totalBytes) + ' (' + streamSource + ' @ 0x' + streamOffset.toString(16) + ')';
+      }else{
+        if(title) title.textContent = '逐帧深钻 · 帧 #' + (Number(d.frame_index || 0) + 1) + ' (' + (frame.frame_type || frame.media_type || '-') + ')';
+        if(sub) sub.textContent = (frame.media_type || '-') + ' · ' + (ins.codec || '-') + ' · ' + (ins.format || '-') +
+          ' · DTS ' + (frame.dts ?? '-') + ' ms / PTS ' + (frame.pts ?? '-') + ' ms · ' + fmtBytes(totalBytes) +
+          ' (' + streamSource + ' @ 0x' + streamOffset.toString(16) + ')';
+      }
+
+      const parts = [];
+
+      // 1. Frame basic cards
+      const basicCards = [
+        { k: '媒体类型', v: frame.media_type || ins.media_type || '-' },
+        { k: '编码 / 封装', v: [ins.codec, ins.format].filter(Boolean).join(' / ') || '-' },
+        { k: '帧类型', v: frame.frame_type || '-' },
+        { k: 'DTS / PTS / CTS', v: (frame.dts ?? '-') + ' / ' + (frame.pts ?? '-') + ' / ' + (frame.cts ?? 0) + ' ms' },
+        { k: '帧长度', v: fmtBytes(totalBytes) },
+        { k: '数据定位', v: streamSource + ' @ 0x' + streamOffset.toString(16) }
+      ];
+      const inspWarns = Array.isArray(ins.warnings) ? ins.warnings : [];
+      parts.push(
+        '<div class="insp-section"><h4>基础信息</h4><div class="stat-grid">' +
+        basicCards.map(c => '<div class="stat-card"><div class="k">' + esc(c.k) + '</div><div class="v" style="font-size:.9rem">' + esc(c.v) + '</div></div>').join('') +
+        '</div>' +
+        (inspWarns.length ? ('<ul class="warn-list">' + inspWarns.map(w => '<li>' + esc(w) + '</li>').join('') + '</ul>') : '') +
+        '</div>'
+      );
+
+      // 2. NALU list
+      const nalus = Array.isArray(ins.nalus) ? ins.nalus : [];
+      if(nalus.length){
+        const rowsHtml = nalus.map((n, idx) => {
+          const active = st.activeNaluIdx === idx;
+          return '<tr class="clickable-row" style="' + (active ? 'background:#dbeafe' : '') + '" onclick="selectInspectorNALU(' + idx + ')">' +
+            '<td>' + n.index + '</td>' +
+            '<td><code>0x' + Number(n.offset || 0).toString(16) + '</code></td>' +
+            '<td>' + fmtBytes(n.length || 0) + ' (前导 ' + (n.prefix_len || 0) + 'B)</td>' +
+            '<td><code>' + n.type + '</code> · ' + esc(n.type_name || '-') + '</td>' +
+            '<td>' + (n.slice_type ? ('<span class="pill ' + (n.slice_type === 'I' ? 'key' : (n.slice_type === 'B' ? 'bframe' : 'info')) + '">' + esc(n.slice_type) + '</span>') : '-') + '</td>' +
+            '<td>' + (n.is_key ? '<span class="pill key">关键帧</span>' : '-') + '</td>' +
+            '</tr>';
+        }).join('');
+        parts.push(
+          '<div class="insp-section"><h4>NALU 列表（共 ' + nalus.length + ' 个，点击行在 Hex 视图高亮）</h4>' +
+          '<div class="table-wrap" style="margin-top:0"><table>' +
+          '<thead><tr><th>#</th><th>偏移</th><th>长度</th><th>类型</th><th>Slice</th><th>关键帧</th></tr></thead>' +
+          '<tbody>' + rowsHtml + '</tbody></table></div></div>'
+        );
+      }
+
+      // 3. VPS / SPS / PPS decoded tables
+      if(Array.isArray(ins.vps) && ins.vps.length){
+        ins.vps.forEach((v, i) => {
+          const rows = [
+            ['VPS ID', v.vps_id],
+            ['Profile / Tier / Level', [v.profile_name, v.tier_name, v.level_name].filter(Boolean).join(' · ')],
+            ['max_layers / max_sub_layers', v.max_layers + ' / ' + v.max_sub_layers],
+            ['temporal_id_nesting', v.temporal_id_nesting ? 'true' : 'false']
+          ];
+          parts.push('<div class="insp-section"><h4>H.265 VPS #' + (i + 1) + ' 字段解码</h4><div class="table-wrap" style="margin-top:0">' + renderKVTable(rows) + '</div></div>');
+        });
+      }
+
+      if(Array.isArray(ins.sps) && ins.sps.length){
+        ins.sps.forEach((s, i) => {
+          const is265 = String(s.codec || '').toLowerCase() === 'h265';
+          const rows = [
+            ['SPS ID' + (is265 ? ' / VPS ID' : ''), is265 ? (s.sps_id + ' / ' + (s.vps_id ?? 0)) : s.sps_id],
+            ['Profile', (s.profile_name || '-') + ' (idc=' + s.profile_idc + (s.constraint_flags ? (', constraint=' + s.constraint_flags) : '') + (s.tier_name ? (', ' + s.tier_name) : '') + ')'],
+            ['Level', (s.level_name || '-') + ' (level_idc=' + s.level_idc + ')'],
+            ['Chroma Format', s.chroma_format || '-'],
+            ['Bit Depth (Luma / Chroma)', (s.bit_depth_luma || 8) + ' / ' + (s.bit_depth_chroma || 8) + ' bit'],
+            ['编码尺寸 → 裁剪尺寸', s.coded_width + '×' + s.coded_height + ' → ' + s.width + '×' + s.height]
+          ];
+          if(s.scan_type) rows.push(['扫描方式', s.scan_type]);
+          if(!is265){
+            rows.push(['max_num_ref_frames', s.max_num_ref_frames ?? 0]);
+            rows.push(['POC Type / Log2MaxFrameNum', 'type=' + (s.pic_order_cnt_type ?? 0) + ' / log2_max_frame_num=' + (s.log2_max_frame_num ?? 0)]);
+          }else if(s.max_sub_layers){
+            rows.push(['max_sub_layers', s.max_sub_layers]);
+          }
+          if(s.vui){
+            const v = s.vui;
+            if(v.sar) rows.push(['VUI · SAR', v.sar]);
+            if(v.color_range) rows.push(['VUI · 色彩范围', v.color_range]);
+            if(v.colour_primaries_name) rows.push(['VUI · Colour Primaries', v.colour_primaries_name + ' (' + v.colour_primaries + ')']);
+            if(v.transfer_name) rows.push(['VUI · Transfer', v.transfer_name + ' (' + v.transfer_characteristics + ')']);
+            if(v.matrix_name) rows.push(['VUI · Matrix Coeffs', v.matrix_name + ' (' + v.matrix_coefficients + ')']);
+            if(v.fps > 0) rows.push(['VUI · Timing FPS', v.fps.toFixed(3) + ' fps' + (v.fixed_frame_rate ? ' (CFR)' : ' (VFR)')]);
+          }
+          parts.push('<div class="insp-section"><h4>' + (is265 ? 'H.265' : 'H.264') + ' SPS #' + (i + 1) + ' 字段解码</h4><div class="table-wrap" style="margin-top:0">' + renderKVTable(rows) + '</div></div>');
+        });
+      }
+
+      if(Array.isArray(ins.pps) && ins.pps.length){
+        ins.pps.forEach((p, i) => {
+          const is265 = String(p.codec || '').toLowerCase() === 'h265';
+          const rows = [
+            ['PPS ID / 关联 SPS ID', p.pps_id + ' / ' + p.sps_id],
+            ['熵编码模式', p.entropy_coding_mode || '-'],
+            ['num_ref_idx (L0 / L1)', (p.num_ref_idx_l0_default_active ?? '-') + ' / ' + (p.num_ref_idx_l1_default_active ?? '-')],
+            ['weighted_pred / bipred', (p.weighted_pred ? '是' : '否') + ' / ' + (p.weighted_bipred_idc ?? 0)],
+            ['init_qp / chroma_qp_offset', (p.pic_init_qp ?? '-') + ' / ' + (p.chroma_qp_index_offset ?? 0)],
+            ['去块滤波控制', p.deblocking_filter_control_present ? '存在' : '默认']
+          ];
+          parts.push('<div class="insp-section"><h4>' + (is265 ? 'H.265' : 'H.264') + ' PPS #' + (i + 1) + ' 字段解码</h4><div class="table-wrap" style="margin-top:0">' + renderKVTable(rows) + '</div></div>');
+        });
+      }
+
+      // 4. SEI messages
+      const seis = Array.isArray(ins.seis) ? ins.seis : [];
+      if(seis.length){
+        const seiHtml = seis.map((m, idx) => {
+          let extra = '';
+          if(m.uuid){
+            extra += '<div style="margin-top:4px;font-size:.78rem"><strong>UUID：</strong><code>' + esc(m.uuid) + '</code></div>';
+          }
+          if(m.text){
+            extra += '<pre class="sei-text">' + esc(m.text) + '</pre>';
+          }else if(m.hex_preview){
+            extra += '<div style="margin-top:4px;font-size:.75rem;color:var(--muted)"><code>' + esc(m.hex_preview) + '</code></div>';
+          }
+          return '<div class="sei-card">' +
+            '<div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap">' +
+            '<strong>SEI #' + (idx + 1) + ' · ' + esc(m.payload_type_name || ('type=' + m.payload_type)) + '</strong>' +
+            '<span class="pill info">type=' + m.payload_type + ' · ' + fmtBytes(m.payload_size || 0) + '</span>' +
+            '</div>' + extra + '</div>';
+        }).join('');
+        parts.push('<div class="insp-section"><h4>SEI 载荷解码（共 ' + seis.length + ' 条）</h4>' + seiHtml + '</div>');
+      }
+
+      // 5. Audio header
+      if(ins.audio_header){
+        const a = ins.audio_header;
+        const rows = [
+          ['格式', a.format],
+          ['MPEG 版本', a.mpeg_version],
+          ['Profile / Layer', a.profile || a.layer || '-'],
+          ['采样率', a.sample_rate ? (a.sample_rate + ' Hz') : '-'],
+          ['声道', a.channels ? (a.channels + ' ch' + (a.channel_mode ? ' (' + a.channel_mode + ')' : '')) : (a.channel_mode || '-')],
+          ['码率', a.bitrate_kbps ? (a.bitrate_kbps + ' kbps') : '-'],
+          ['帧长 / 帧头字节', (a.frame_length ? (a.frame_length + ' B') : '-') + (a.header_bytes ? (' / ' + a.header_bytes + ' B') : '')],
+          ['CRC 保护', a.crc_protected ? '有 CRC' : '无 CRC']
+        ];
+        parts.push('<div class="insp-section"><h4>音频帧头解码</h4><div class="table-wrap" style="margin-top:0">' + renderKVTable(rows) + '</div></div>');
+      }
+
+      // 6. Hex + ASCII view
+      const hex = ins.hex;
+      if(hex){
+        const activeRange = (st.activeNaluIdx >= 0 && nalus[st.activeNaluIdx]) ? nalus[st.activeNaluIdx] : null;
+        const moreBtn = (hex.has_more && st.hexLimit < 8192)
+          ? '<button type="button" class="btn secondary sm" onclick="loadMoreHex()">加载更多字节 (当前 ' + hex.limit + 'B / 上限 8192B)</button>'
+          : '';
+        parts.push(
+          '<div class="insp-section">' +
+          '<div class="section-head"><h4>Hex + ASCII 视图（显示 ' + (hex.returned || 0) + ' / ' + (hex.total_bytes || 0) + ' B）</h4>' + moreBtn + '</div>' +
+          '<div class="hint" style="margin-bottom:6px"><span class="hex-byte-start" style="padding:1px 4px;border-radius:3px">起始码/长度前缀</span> · <span class="hex-byte-hdr" style="padding:1px 4px;border-radius:3px">NALU 头</span>' +
+          (activeRange ? (' · <span class="hex-byte-active" style="padding:1px 4px;border-radius:3px">已选中 NALU #' + activeRange.index + '</span>') : '') +
+          '</div>' +
+          renderHexViewHTML(hex, activeRange) +
+          '</div>'
+        );
+      }
+
+      if(body) body.innerHTML = parts.join('');
     }
 
     function renderFocusedFlow(){
@@ -1369,6 +2304,10 @@
       currentId = id;
       currentPage = 1;
       loadedMP4ReportKey = '';
+      if(mp4BoxTreeTaskId !== id){
+        mp4BoxTreeData = null;
+        mp4BoxTreeTaskId = '';
+      }
       const res = await fetch('/api/offline/tasks/' + encodeURIComponent(id));
       if(currentId !== id) return;
       if(!res.ok){
@@ -1384,21 +2323,47 @@
       const summary = data.summary || {};
       const flows = Array.isArray(summary.flows) ? summary.flows : [];
       const mode = String(task.mode || '').toLowerCase();
+      const status = String(task.status || '').toLowerCase();
+
+      updateRunningBanner(task);
 
       const headerTitle = document.getElementById('detailHeaderTitle');
       if(headerTitle){
         headerTitle.innerHTML = '<span>任务详情 · ' + esc(task.input_name || task.id) + '</span>' +
-          '<span class="pill ' + esc(String(task.status || '').toLowerCase()) + '">' + esc(task.status || '-') + '</span>';
+          '<span class="pill ' + esc(status) + '">' + esc(task.status || '-') + '</span>' +
+          (task.source_type === 'local' ? '<span class="pill info">本机直读</span>' : '');
       }
 
       const act = document.getElementById('taskActions');
       act.innerHTML = '';
+
+      if(status === 'running'){
+        const cancelBtn = document.createElement('button');
+        cancelBtn.className = 'btn danger sm';
+        cancelBtn.textContent = '取消解析';
+        cancelBtn.onclick = () => cancelTask(task.id);
+        act.appendChild(cancelBtn);
+      }
+
       const reparseBtn = document.createElement('button');
       reparseBtn.className = 'btn secondary sm';
       reparseBtn.textContent = '重新解析';
-      reparseBtn.disabled = String(task.status || '').toLowerCase() === 'running';
+      reparseBtn.disabled = status === 'running';
       reparseBtn.onclick = () => reparseTask(task.id);
       act.appendChild(reparseBtn);
+
+      if(['flv', 'mp4', 'ts', 'annexb'].includes(mode) && task.input_path){
+        const pushBtn = document.createElement('a');
+        pushBtn.className = 'btn sm';
+        pushBtn.style.textDecoration = 'none';
+        const q = new URLSearchParams();
+        q.set('source_kind', 'file');
+        q.set('file_path', task.input_path);
+        q.set('name', task.input_name || task.id);
+        pushBtn.href = '/simulators/pusher?' + q.toString();
+        pushBtn.textContent = '送推流器循环推流';
+        act.appendChild(pushBtn);
+      }
 
       const base = '/api/offline/tasks/' + encodeURIComponent(id) + '/files/';
       const inputRel = toRel(id, task.input_path);
@@ -1414,6 +2379,7 @@
       const lines = [
         kvLine('task_id', task.id),
         kvLine('文件名 / 大小', (task.input_name || '-') + (task.input_size ? (' (' + fmtBytes(task.input_size) + ')') : '')),
+        kvLine('来源', task.source_type === 'local' ? ('本机直读：' + (task.input_path || '-')) : '上传文件'),
         kvLine('模式', (task.mode || '-') + (task.detected_by ? (' · ' + task.detected_by) : '')),
         kvLine('状态', task.status),
         kvLine('创建时间', fmtTime(task.created_at)),
@@ -1493,6 +2459,9 @@
 
     window.addEventListener('resize', () => {
       Object.keys(charts).forEach(k => { if(charts[k]) try{ charts[k].resize(); }catch(_){} });
+    });
+    window.addEventListener('keydown', e => {
+      if(e.key === 'Escape') closeInspector();
     });
 
     initDropzone();
