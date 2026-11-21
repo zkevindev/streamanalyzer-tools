@@ -52,6 +52,23 @@ func RegisterDiagnosticRoutes(r *gin.Engine, service *diagnostic.Service) {
 		}
 		c.JSON(http.StatusOK, config)
 	})
+	api.GET("/media-tools", func(c *gin.Context) {
+		c.JSON(http.StatusOK, service.MediaTools())
+	})
+	api.POST("/media-tools", func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 16<<10)
+		var req diagnostic.MediaToolSettings
+		if err := c.ShouldBindJSON(&req); err != nil {
+			diagnosticError(c, diagnostic.ErrInvalid)
+			return
+		}
+		status, err := service.SaveMediaTools(req)
+		if err != nil {
+			diagnosticError(c, err)
+			return
+		}
+		c.JSON(http.StatusOK, status)
+	})
 	api.GET("/storage", func(c *gin.Context) {
 		storage, err := service.Storage()
 		if err != nil {

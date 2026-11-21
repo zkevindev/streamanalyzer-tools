@@ -27,6 +27,7 @@
     <div class="page-heading">
         <h1 id="diagnostics-title">流媒体排障</h1>
         <p id="capture-duration-hint" class="muted">采样 1–300 秒 · 单次原始流上限 128 MiB</p>
+        <button id="media-tools-settings" type="button" class="secondary">FFmpeg 工具设置</button>
     </div>
     <!-- review-modes -->
     <div class="actions">
@@ -190,6 +191,19 @@
         </section>
     </div>
     <p id="notice" role="status" hidden></p>
+
+    <section id="media-tools-panel" class="panel" aria-labelledby="media-tools-title" hidden>
+        <div class="panel-heading"><h2 id="media-tools-title">FFmpeg 工具设置</h2></div>
+        <form id="media-tools-form" class="panel-body">
+            <p class="field-hint muted">留空表示按程序目录、PATH 和 macOS 常见目录自动检测。路径仅保存到本机数据目录，保存前自动测试版本与能力。</p>
+            <label for="media-ffmpeg-path">FFmpeg 可执行文件路径</label>
+            <input id="media-ffmpeg-path" type="text" autocomplete="off" spellcheck="false" placeholder="/opt/homebrew/bin/ffmpeg">
+            <label for="media-ffprobe-path">FFprobe 可执行文件路径</label>
+            <input id="media-ffprobe-path" type="text" autocomplete="off" spellcheck="false" placeholder="/opt/homebrew/bin/ffprobe">
+            <button type="submit">测试并保存</button>
+        </form>
+        <div id="media-tools-capabilities" class="panel-body"></div>
+    </section>
 
     <div class="workspace">
         <section class="panel history" aria-labelledby="history-heading">

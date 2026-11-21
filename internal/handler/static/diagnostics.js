@@ -1863,6 +1863,46 @@ function renderThroughput(report) {
     node('throughput-boundary').textContent = throughput.boundary;
 }
 
+function renderMediaToolCapability(name, capability) {
+    const entries = [[name + ' 路径', capability.path || '未找到'], [name + ' 版本', capability.version || capability.error || '不可用']];
+    if (name === 'FFmpeg') entries.push(['编码器', `AAC ${capability.aac ? '支持' : '无'} · H.264 ${capability.h264 ? '支持' : '无'} · HEVC ${capability.hevc ? '支持' : '无'} · Opus ${capability.opus ? '支持' : '无'}`],
+        ['内容检测过滤器', `黑帧 ${capability.blackdetect ? '支持' : '无'} · 冻结 ${capability.freezedetect ? '支持' : '无'} · 静音 ${capability.silencedetect ? '支持' : '无'}`]);
+    return renderMetricsFragment(entries);
+}
+
+function renderMediaTools(status) {
+    node('media-ffmpeg-path').value = status.settings.ffmpeg_path || '';
+    node('media-ffprobe-path').value = status.settings.ffprobe_path || '';
+    const content = node('media-tools-capabilities');
+    content.replaceChildren(renderMediaToolCapability('FFmpeg', status.ffmpeg), renderMediaToolCapability('FFprobe', status.ffprobe));
+}
+
+async function refreshMediaTools() {
+    const status = await api('/media-tools', { cache: 'no-store' });
+    renderMediaTools(status);
+}
+node('media-tools-settings').addEventListener('click', async () => {
+    const panel = node('media-tools-panel');
+    panel.hidden = !panel.hidden;
+    if (!panel.hidden) {
+        try { await refreshMediaTools(); } catch (err) { message(err.message, true); }
+    }
+});
+node('media-tools-form').addEventListener('submit', async event => {
+    event.preventDefault();
+    const button = event.currentTarget.querySelector('button[type="submit"]');
+    button.disabled = true;
+    try {
+        const status = await api('/media-tools', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ffmpeg_path: node('media-ffmpeg-path').value.trim(), ffprobe_path: node('media-ffprobe-path').value.trim() }),
+        });
+        renderMediaTools(status);
+        message('FFmpeg 工具路径已验证并保存。');
+    } catch (err) { message(err.message, true); await refreshMediaTools().catch(() => {}); }
+    finally { button.disabled = false; }
+});
+
 function renderReport(report) {
     currentReport = report;
     const observed = report.manifest.observation;

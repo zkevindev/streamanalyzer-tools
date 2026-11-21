@@ -14,6 +14,8 @@
 | `GET /api/diagnostics/batches/:id` | 查询批次状态；全部结束后以第一路可用报告为基线，自动返回其余同协议线路的对比结果 |
 | `POST /api/diagnostics/batches/:id/stop` | 停止批次内所有运行中采样并保留已采集证据 |
 | `GET /api/diagnostics/runs` | 列出最近的采样与复盘记录，包含 `protected` 保护状态 |
+| `GET /api/diagnostics/media-tools` | 返回当前 FFmpeg/FFprobe 路径、版本、可用状态及 AAC/H.264/HEVC/Opus 编码器和内容检测过滤器能力 |
+| `POST /api/diagnostics/media-tools` | 用 `{"ffmpeg_path":"/path/ffmpeg","ffprobe_path":"/path/ffprobe"}` 测试并持久化工具路径；留空恢复自动检测，失败时保留原配置 |
 | `GET /api/diagnostics/storage` | 返回排障记录数、产物字节数及受保护证据占用 |
 | `POST /api/diagnostics/storage/prune` | 按 `{"retention_days":30,"max_total_bytes":1073741824}` 从最早记录开始清理；0 表示对应策略不启用，受保护和运行中记录始终跳过 |
 | `POST /api/diagnostics/runs/delete` | 批量删除已结束且未保护记录，请求体 `{"ids":["<run-id>"]}`，每次 1–100 条 |

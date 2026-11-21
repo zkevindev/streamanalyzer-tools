@@ -107,6 +107,10 @@ func OpenWithCaptureLimit(baseDir string, model Explainer, streamLimitBytes int6
 		db.Close()
 		return nil, err
 	}
+	if err := s.loadMediaTools(); err != nil {
+		db.Close()
+		return nil, err
+	}
 	s.flvReplayContext, s.cancelFLVReplays = context.WithCancel(context.Background())
 	return s, nil
 }
