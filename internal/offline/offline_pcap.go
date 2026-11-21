@@ -81,20 +81,32 @@ func (m *Manager) runPCAP(task *models.OfflineTask, taskDir string, summary *mod
 			_ = vf.Close()
 			return err
 		}
+		frameDetails := make([]models.OfflineFrameDetail, 0, 2048)
 		res, parseErr := rtmpraw.ParseRTMPRaw(bytes.NewReader(raw), rtmpraw.Options{SkipBytes: task.SkipBytes}, rtmpraw.Output{
 			VideoWriter: vf,
 			AudioWriter: af,
+			OnFrame: func(fi rtmpraw.FrameInfo) {
+				frameDetails = append(frameDetails, models.OfflineFrameDetail{
+					MediaType: fi.MediaType,
+					DTS:       fi.DTS,
+					PTS:       fi.PTS,
+					CTS:       fi.CTS,
+					FrameLen:  fi.FrameLen,
+					FrameType: fi.FrameType,
+				})
+			},
 		})
 		_ = vf.Close()
 		_ = af.Close()
+		fr.VideoCodec = res.VideoCodec
+		fr.AudioCodec = res.AudioCodec
 		if parseErr != nil {
 			fr.Error = parseErr.Error()
-		} else {
-			fr.VideoCodec = res.VideoCodec
 		}
 
-		// Cleanup: if audio file is empty, delete and hide it.
 		cleanupEmptyFile(&fr.AudioPath)
+		retargetAudioFile(&fr.AudioPath, res.AudioCodec)
+		attachMediaProfile(&fr, frameDetails, profileFromRTMP(res))
 		summary.Flows = append(summary.Flows, fr)
 	}
 	return nil

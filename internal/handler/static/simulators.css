@@ -94,6 +94,110 @@ details[open] > summary .event-summary::before { content: "▾ "; }
 
 .whep-preview { width: 100%; max-height: 18rem; background: #09090b; border-radius: var(--radius-sm); border: 1px solid var(--border); }
 
+.pusher-dropzone {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.35rem;
+    padding: 1rem 0.85rem;
+    border: 1.5px dashed var(--border-strong, var(--border));
+    border-radius: var(--radius-sm);
+    background: var(--bg);
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.15s ease, background 0.15s ease;
+}
+.pusher-dropzone:hover, .pusher-dropzone.is-dragover {
+    border-color: var(--accent);
+    background: var(--accent-light);
+}
+.pusher-dropzone input[type="file"] { display: none; }
+.pusher-dropzone strong { font-size: 0.86rem; }
+.pusher-dropzone span { font-size: 0.78rem; color: var(--muted); overflow-wrap: anywhere; }
+
+.pusher-preview-box { margin-top: 0.7rem; display: grid; gap: 0.5rem; }
+.pusher-preview { width: 100%; max-height: 14rem; background: #09090b; border-radius: var(--radius-sm); border: 1px solid var(--border); object-fit: contain; }
+
+.pusher-task-list { display: grid; gap: 0.75rem; }
+.pusher-empty { color: var(--muted); font-size: 0.86rem; padding: 1.4rem 0.5rem; text-align: center; }
+.pusher-task {
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    padding: 0.8rem 0.9rem;
+    background: var(--surface, #fff);
+    display: grid;
+    gap: 0.55rem;
+}
+.pusher-task-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+}
+.pusher-task-title { display: flex; align-items: center; gap: 0.45rem; flex-wrap: wrap; min-width: 0; }
+.pusher-task-title strong { font-size: 0.9rem; overflow-wrap: anywhere; }
+.pusher-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.12rem 0.45rem;
+    border-radius: 999px;
+    font: 600 0.72rem/1.4 var(--font-data);
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text);
+}
+.pusher-badge[data-proto="rtmp"] { color: #0369a1; background: #e0f2fe; border-color: #bae6fd; }
+.pusher-badge[data-proto="rtsp"] { color: #6d28d9; background: #ede9fe; border-color: #ddd6fe; }
+.pusher-badge[data-proto="whip"] { color: #047857; background: #d1fae5; border-color: #a7f3d0; }
+.pusher-status {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.14rem 0.5rem;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 600;
+}
+.pusher-status[data-status="pushing"] { color: #047857; background: #d1fae5; }
+.pusher-status[data-status="starting"] { color: #b45309; background: #fef3c7; }
+.pusher-status[data-status="stopped"] { color: var(--muted); background: var(--bg); }
+.pusher-status[data-status="failed"] { color: #b91c1c; background: #fee2e2; }
+
+.pusher-task-meta { font-size: 0.8rem; color: var(--muted); display: grid; gap: 0.22rem; overflow-wrap: anywhere; }
+.pusher-task-meta code { font-family: var(--font-data); color: var(--text); user-select: all; }
+.pusher-task-stats {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 0.45rem;
+    padding: 0.5rem 0.65rem;
+    border-radius: var(--radius-xs, 4px);
+    background: var(--bg);
+}
+.pusher-task-stats div { display: grid; gap: 0.12rem; }
+.pusher-task-stats dt { font-size: 0.72rem; color: var(--muted); }
+.pusher-task-stats dd { margin: 0; font: 600 0.82rem/1.3 var(--font-data); }
+.pusher-task-logs { font-size: 0.78rem; }
+.pusher-task-logs summary { cursor: pointer; color: var(--muted); font-weight: 500; }
+.pusher-task-logs pre {
+    margin: 0.4rem 0 0;
+    padding: 0.55rem 0.65rem;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-xs, 4px);
+    font: 0.74rem/1.5 var(--font-data);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    max-height: 11rem;
+    overflow: auto;
+}
+.pusher-task-actions { display: flex; gap: 0.45rem; flex-wrap: wrap; justify-content: flex-end; }
+.pusher-task-actions button { padding: 0.35rem 0.75rem; font-size: 0.8rem; min-height: 2rem; }
+
+@media (max-width: 560px) {
+    .pusher-task-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
 #run-history li:target { background: var(--accent-light); outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-xs); }
 
 @media (max-width: 880px) {

@@ -7,14 +7,12 @@
     <link rel="stylesheet" href="/static/workbench-theme.css">
     <link rel="stylesheet" href="/static/diagnostics.css">
     <link rel="stylesheet" href="/static/onvif-discovery.css">
-    <link rel="stylesheet" href="/static/hls-stats.css">
     <script src="/static/opus-webm.js" defer></script>
     <script src="/static/mpegts.js" defer></script>
     <script src="/static/hls.min.js" defer></script>
     <script src="/static/player-diagnostics.js" defer></script>
     <script src="/static/diagnostics.js" defer></script>
     <script src="/static/diagnostics-navigation.js" defer></script>
-    <script src="/static/hls-stats.js" defer></script>
     <script src="/static/onvif-discovery.js" defer></script>
     <script src="/static/workbench-navigation.js" defer></script>
 </head>
@@ -34,10 +32,6 @@
         <section id="capture-panel" class="panel" aria-labelledby="capture-heading">
             <div class="panel-heading">
                 <h2 id="capture-heading">流媒体采样</h2>
-                <div id="hls-mode-switch" class="hls-mode-switch" role="tablist" aria-label="HLS 排障模式" hidden>
-                    <button type="button" role="tab" data-hls-mode="capture" aria-selected="true">流采样与证据包</button>
-                    <button type="button" role="tab" data-hls-mode="delivery" aria-selected="false">交付分析与 A/B 对比</button>
-                </div>
             </div>
             <form class="panel-body" id="sample">
                 <div class="sample-source">
@@ -135,51 +129,6 @@
                     <button type="submit">开始批量采样</button>
                 </form>
             </details>
-            <div id="hls-delivery-panel" class="panel-body hls-tool hls-embedded" hidden>
-                <form id="hls-form" aria-label="HLS 交付分析配置">
-                    <fieldset id="hls-fields">
-                        <div class="hls-setup">
-                            <div>
-                                <label for="hls-command">分析方式</label>
-                                <select id="hls-command" aria-describedby="hls-mode-hint">
-                                    <option value="analyze">抽样分片</option>
-                                    <option value="manifest">检查播放列表</option>
-                                    <option value="monitor">监控直播窗口</option>
-                                    <option value="compare">A/B 对比</option>
-                                </select>
-                            </div>
-                            <div>
-                                <label for="hls-url" id="hls-url-label">播放列表地址</label>
-                                <input type="url" id="hls-url" placeholder="输入 .m3u8 播放列表地址" required>
-                            </div>
-                            <div class="hls-full" id="hls-second" hidden>
-                                <label for="hls-url-b">B 路播放列表</label>
-                                <input type="url" id="hls-url-b" placeholder="输入 B 路 .m3u8 播放列表地址">
-                            </div>
-                        </div>
-                        <p id="hls-mode-hint" class="hls-muted"></p>
-                        <details class="hls-options">
-                            <summary>采样参数</summary>
-                            <div class="hls-params">
-                                <div data-segment-option><label for="hls-segments">分片数</label><input id="hls-segments" type="number" min="1" value="10" required></div>
-                                <div data-segment-option><label for="hls-variant">档位（-1 为自动）</label><input id="hls-variant" type="number" min="-1" value="-1" required></div>
-                                <div data-segment-option><label for="hls-duration">任务时限（例如 30s）</label><input id="hls-duration" value="30s" required></div>
-                                <div><label for="hls-timeout">请求超时（例如 10s）</label><input id="hls-timeout" value="10s" required></div>
-                                <div data-segment-option><label for="hls-error-threshold">错误率阈值（%）</label><input id="hls-error-threshold" type="number" min="0" max="100" step="0.1" value="0" required></div>
-                            </div>
-                            <div class="hls-checks" data-segment-option>
-                                <label><input type="checkbox" id="hls-parse">解析分片 PTS 和关键帧</label>
-                                <label><input type="checkbox" id="hls-all">采样所有档位</label>
-                            </div>
-                        </details>
-                    </fieldset>
-                    <div class="hls-actions">
-                        <button type="submit" id="hls-start">开始分析</button>
-                        <button type="button" id="hls-stop" class="hls-secondary" hidden>停止分析</button>
-                        <p id="hls-status" role="status"></p>
-                    </div>
-                </form>
-            </div>
         </section>
         <section id="evidence-import-panel" class="panel" aria-labelledby="import-heading" hidden>
             <div class="panel-heading"><h2 id="import-heading">导入证据包</h2></div>
@@ -423,13 +372,6 @@
     <section id="batch-results" class="panel" aria-labelledby="batch-results-title" hidden>
         <div class="panel-heading"><h2 id="batch-results-title">批量诊断结果</h2><button id="stop-batch" type="button" class="secondary" hidden>停止本批次</button></div>
         <div class="panel-body"><p id="batch-status" class="muted" role="status"></p><div id="batch-runs"></div><div id="batch-comparisons"></div></div>
-    </section>
-    <section id="hls-results" class="hls-tool hls-embedded-results" aria-labelledby="hls-results-title" hidden>
-        <header class="hls-results-heading">
-            <h2 id="hls-results-title">HLS 交付分析结果</h2>
-            <button type="button" id="hls-export" class="hls-secondary">保存报告 JSON</button>
-        </header>
-        <div id="hls-report"></div>
     </section>
     </div>
     <section id="onvif-discovery" aria-labelledby="onvif-title" hidden>

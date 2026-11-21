@@ -16,6 +16,7 @@ import (
 	"streamanalyzer/internal/simulator/hlsorigin"
 	"streamanalyzer/internal/simulator/mediasource"
 	"streamanalyzer/internal/simulator/onvif"
+	"streamanalyzer/internal/simulator/pusher"
 	"streamanalyzer/internal/simulator/sipphone"
 	"streamanalyzer/internal/simulator/whep"
 
@@ -23,6 +24,7 @@ import (
 )
 
 type simulators struct {
+	pusher     pusher.Manager
 	whep       whep.Manager
 	rtmp       mediasource.RTMPManager
 	media      mediasource.Manager
@@ -35,6 +37,7 @@ type simulators struct {
 }
 
 func (s *simulators) Close() {
+	s.pusher.Close()
 	s.whep.Close()
 	s.rtmp.Close()
 	s.media.Close()
@@ -75,7 +78,7 @@ func newEngine(cfg *Config, model diagnostic.Explainer, sim *simulators) (*gin.E
 	handler.RegisterDiagnosticRoutes(r, diagnostics)
 	handler.RegisterONVIFDiscoveryRoutes(r, &sim.discovery)
 	handler.RegisterSimulatorHistoryRoutes(r, cfg.Server.DataDir)
-	handler.RegisterSimulatorRoutes(r, &sim.gb28181, &sim.onvif, &sim.sip, &sim.hls, &sim.gbPlatform, &sim.media, &sim.rtmp, &sim.whep)
+	handler.RegisterSimulatorRoutes(r, &sim.gb28181, &sim.onvif, &sim.sip, &sim.hls, &sim.gbPlatform, &sim.media, &sim.rtmp, &sim.whep, &sim.pusher)
 	return r, diagnostics, nil
 }
 

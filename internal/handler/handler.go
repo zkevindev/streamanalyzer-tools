@@ -16,8 +16,7 @@ import (
 )
 
 type Handler struct {
-	offline  *offline.Manager
-	hlsStats hlsStatsStore
+	offline *offline.Manager
 }
 
 func NewHandler(offlineMgr *offline.Manager) *Handler {
@@ -34,15 +33,9 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 			offlineAPI.POST("/tasks", h.CreateOfflineTask)
 			offlineAPI.GET("/tasks", h.ListOfflineTasks)
 			offlineAPI.GET("/tasks/:id", h.GetOfflineTask)
+			offlineAPI.DELETE("/tasks/:id", h.DeleteOfflineTask)
+			offlineAPI.POST("/tasks/:id/reparse", h.ReparseOfflineTask)
 			offlineAPI.GET("/tasks/:id/files/*name", h.DownloadOfflineFile)
-		}
-
-		hlsStats := api.Group("/hls-stats")
-		{
-			hlsStats.POST("/tasks", h.CreateHLSStatsTask)
-			hlsStats.GET("/tasks", localDiagnostics, h.ListHLSStatsTasks)
-			hlsStats.GET("/tasks/:id", h.GetHLSStatsTask)
-			hlsStats.DELETE("/tasks/:id", h.StopHLSStatsTask)
 		}
 	}
 
@@ -51,13 +44,6 @@ func (h *Handler) RegisterRoutes(r *gin.Engine) {
 	r.GET("/realtime", func(c *gin.Context) { c.Redirect(http.StatusFound, "/diagnostics") })
 	r.GET("/history", func(c *gin.Context) { serveEmbeddedStaticFile(c, "history.html") })
 	r.GET("/offline", func(c *gin.Context) { serveEmbeddedStaticFile(c, "offline.html") })
-	r.GET("/hls-stats", func(c *gin.Context) {
-		target := "/diagnostics?protocol=hls&hls_mode=delivery"
-		if task := c.Query("task"); task != "" {
-			target += "&task=" + task
-		}
-		c.Redirect(http.StatusFound, target)
-	})
 }
 
 func (h *Handler) CreateOfflineTask(c *gin.Context) {
@@ -66,24 +52,45 @@ func (h *Handler) CreateOfflineTask(c *gin.Context) {
 		return
 	}
 
-	mode := c.PostForm("mode")
+	mode := strings.ToLower(strings.TrimSpace(c.PostForm("mode")))
+	if mode == "" {
+		mode = string(models.OfflineModeAuto)
+	}
 	var req models.OfflineTaskRequest
 	req.Mode = models.OfflineMode(mode)
-	if req.Mode != models.OfflineModeRaw && req.Mode != models.OfflineModePCAP && req.Mode != models.OfflineModeTS && req.Mode != models.OfflineModeFLV && req.Mode != models.OfflineModeMP4 {
+	switch req.Mode {
+	case models.OfflineModeAuto,
+		models.OfflineModeRaw,
+		models.OfflineModePCAP,
+		models.OfflineModeTS,
+		models.OfflineModeFLV,
+		models.OfflineModeMP4,
+		models.OfflineModeAnnexB:
+	default:
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid mode"})
 		return
 	}
-	if req.Mode == models.OfflineModePCAP {
-		if sp := c.PostForm("server_port"); sp != "" {
-			if v, err := strconv.Atoi(sp); err == nil && v > 0 && v <= 65535 {
-				req.ServerPort = uint16(v)
-			}
+
+	if sp := strings.TrimSpace(c.PostForm("server_port")); sp != "" {
+		if v, err := strconv.Atoi(sp); err == nil && v > 0 && v <= 65535 {
+			req.ServerPort = uint16(v)
 		}
 	}
-	// raw/pcap parsing assumes the input raw contains full RTMP handshake.
-	// The required length depends on capture direction:
-	// - C0+C1+C2 or S0+S1+S2 (both are 3073 bytes).
-	if req.Mode == models.OfflineModeRaw || req.Mode == models.OfflineModePCAP {
+	if req.Mode == models.OfflineModePCAP && req.ServerPort == 0 {
+		req.ServerPort = 1935
+	}
+
+	skipExplicit := false
+	if sb := strings.TrimSpace(c.PostForm("skip_bytes")); sb != "" {
+		v, err := strconv.Atoi(sb)
+		if err != nil || v < 0 {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid skip_bytes"})
+			return
+		}
+		req.SkipBytes = v
+		skipExplicit = true
+	} else if req.Mode == models.OfflineModeRaw || req.Mode == models.OfflineModePCAP {
+		// Default assumes full RTMP handshake (C0+C1+C2 or S0+S1+S2 = 3073 bytes).
 		req.SkipBytes = rtmpraw.DefaultHandshakeSkipBytes
 	}
 
@@ -99,14 +106,22 @@ func (h *Handler) CreateOfflineTask(c *gin.Context) {
 		return
 	}
 	if err := c.SaveUploadedFile(file, inputPath); err != nil {
+		_ = h.offline.DeleteTask(task.ID)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	if err := h.offline.StartTask(task.ID); err != nil {
+	prepared, err := h.offline.PrepareTask(task.ID, skipExplicit)
+	if err != nil {
+		_ = h.offline.DeleteTask(task.ID)
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if err := h.offline.StartTask(prepared.ID); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, task)
+	prepared.Status = models.OfflineStatusRunning
+	c.JSON(http.StatusOK, prepared)
 }
 
 func (h *Handler) ListOfflineTasks(c *gin.Context) {
@@ -140,12 +155,51 @@ func (h *Handler) GetOfflineTask(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"task": task, "summary": summary})
 }
 
+func (h *Handler) DeleteOfflineTask(c *gin.Context) {
+	if h.offline == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "offline manager not configured"})
+		return
+	}
+	taskID := c.Param("id")
+	if err := h.offline.DeleteTask(taskID); err != nil {
+		code := http.StatusBadRequest
+		if strings.Contains(err.Error(), "not found") {
+			code = http.StatusNotFound
+		}
+		c.JSON(code, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"deleted": taskID})
+}
+
+func (h *Handler) ReparseOfflineTask(c *gin.Context) {
+	if h.offline == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "offline manager not configured"})
+		return
+	}
+	taskID := c.Param("id")
+	task, err := h.offline.ReparseTask(taskID)
+	if err != nil {
+		code := http.StatusBadRequest
+		if strings.Contains(err.Error(), "not found") {
+			code = http.StatusNotFound
+		}
+		c.JSON(code, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, task)
+}
+
 func (h *Handler) DownloadOfflineFile(c *gin.Context) {
 	if h.offline == nil {
 		c.JSON(http.StatusNotFound, gin.H{"error": "offline manager not configured"})
 		return
 	}
 	taskID := c.Param("id")
+	if taskID == "" || strings.Contains(taskID, "..") || strings.ContainsAny(taskID, `/\`) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid task id"})
+		return
+	}
 	name := c.Param("name")
 	name = filepath.Clean(name)
 	name = filepath.ToSlash(name)

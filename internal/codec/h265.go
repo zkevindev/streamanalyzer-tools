@@ -18,7 +18,7 @@ type HEVCDecoderConfigurationRecord struct {
 	// LengthSizeMinusOne is the NALU length field size (in bytes) minus one,
 	// used for length-prefixed NALU payloads in the stream.
 	LengthSizeMinusOne uint8
-	Arrays               []HEVCNALArray
+	Arrays             []HEVCNALArray
 }
 
 func ParseHEVCDecoderConfigurationRecord(payload []byte) (*HEVCDecoderConfigurationRecord, error) {
@@ -150,6 +150,14 @@ func parseH265SPS(nal []byte) (*VideoMeta, error) {
 		Level:       levelIDC,
 		ProfileName: h265ProfileName(profileIDC),
 	}, nil
+}
+
+// H265LevelName formats general_level_idc (for example 93) as "3.1".
+func H265LevelName(levelIDC int) string {
+	if levelIDC <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d.%d", levelIDC/30, (levelIDC%30)/3)
 }
 
 func h265ProfileName(profileIDC int) string {

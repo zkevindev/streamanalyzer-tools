@@ -52,6 +52,11 @@ func SplitAVCC(payload []byte, lengthSize int, isHEVC bool) []NALU {
 	return out
 }
 
+// NALUTypeName returns a short name for an H.264 or H.265 NAL unit type.
+func NALUTypeName(t int, isHEVC bool) string {
+	return naluTypeName(t, isHEVC)
+}
+
 func naluTypeName(t int, isHEVC bool) string {
 	if isHEVC {
 		switch {
@@ -192,4 +197,72 @@ func LengthPrefixedNALToAnnexB(payload []byte, naluLenSize int) ([]byte, error) 
 		return nil, fmt.Errorf("trailing bytes in length-prefixed payload")
 	}
 	return out.Bytes(), nil
+}
+
+// VideoMetaFromNAL parses an Annex B NAL unit when it is an H.264 or H.265 SPS.
+func VideoMetaFromNAL(nal []byte) *VideoMeta {
+	if len(nal) < 2 {
+		return nil
+	}
+	if int((nal[0]>>1)&0x3f) == 33 {
+		if meta, err := parseH265SPS(nal); err == nil {
+			return meta
+		}
+	}
+	if int(nal[0]&0x1f) == 7 {
+		if meta, err := parseH264SPS(nal); err == nil {
+			return meta
+		}
+	}
+	return nil
+}
+
+// VideoMetaFromAnnexB returns the first SPS found in an Annex B byte stream.
+func VideoMetaFromAnnexB(b []byte) *VideoMeta {
+	starts := annexBStarts(b)
+	for i, start := range starts {
+		sc := 3
+		if start+3 < len(b) && b[start] == 0 && b[start+1] == 0 && b[start+2] == 0 && b[start+3] == 1 {
+			sc = 4
+		}
+		nalStart := start + sc
+		next := len(b)
+		if i+1 < len(starts) {
+			next = starts[i+1]
+		}
+		if nalStart >= next {
+			continue
+		}
+		if meta := VideoMetaFromNAL(b[nalStart:next]); meta != nil {
+			return meta
+		}
+	}
+	return nil
+}
+
+func annexBStarts(b []byte) []int {
+	var idx []int
+	for i := 0; i+3 < len(b); i++ {
+		if b[i] != 0 || b[i+1] != 0 {
+			continue
+		}
+		if b[i+2] == 1 {
+			idx = append(idx, i)
+			continue
+		}
+		if i+3 < len(b) && b[i+2] == 0 && b[i+3] == 1 {
+			idx = append(idx, i)
+		}
+	}
+	if len(idx) <= 1 {
+		return idx
+	}
+	out := []int{idx[0]}
+	for i := 1; i < len(idx); i++ {
+		if idx[i]-idx[i-1] <= 1 {
+			continue
+		}
+		out = append(out, idx[i])
+	}
+	return out
 }
