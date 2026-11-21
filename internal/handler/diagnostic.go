@@ -89,6 +89,14 @@ func RegisterDiagnosticRoutes(r *gin.Engine, service *diagnostic.Service) {
 		}
 		c.JSON(http.StatusOK, group)
 	})
+	api.POST("/sessions/:id/stop", func(c *gin.Context) {
+		group, err := service.StopSessionGroup(c.Param("id"))
+		if err != nil {
+			diagnosticError(c, err)
+			return
+		}
+		c.JSON(http.StatusAccepted, group)
+	})
 	api.POST("/batches", func(c *gin.Context) {
 		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 128<<10)
 		var req diagnostic.BatchRequest

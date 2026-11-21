@@ -6,11 +6,14 @@ import (
 )
 
 type SessionGroup struct {
-	ID        string    `json:"id"`
-	CreatedAt time.Time `json:"created_at"`
-	Status    string    `json:"status"`
-	Runs      []Run     `json:"runs"`
-	Reason    string    `json:"reason,omitempty"`
+	ID             string    `json:"id"`
+	CreatedAt      time.Time `json:"created_at"`
+	Status         string    `json:"status"`
+	Rolling        bool      `json:"rolling"`
+	SegmentSeconds int       `json:"segment_seconds,omitempty"`
+	RetainSegments int       `json:"retain_segments,omitempty"`
+	Runs           []Run     `json:"runs"`
+	Reason         string    `json:"reason,omitempty"`
 }
 
 type diagnosticSessionGroup struct {
@@ -19,6 +22,10 @@ type diagnosticSessionGroup struct {
 	runIDs    []string
 	status    string
 	reason    string
+	rolling   bool
+	stopped   bool
+	retain    int
+	seconds   int
 }
 
 func (s *Service) SessionGroup(id string) (SessionGroup, error) {
@@ -31,7 +38,7 @@ func (s *Service) SessionGroup(id string) (SessionGroup, error) {
 	copy := *group
 	copy.runIDs = append([]string(nil), group.runIDs...)
 	s.mu.Unlock()
-	result := SessionGroup{ID: copy.id, CreatedAt: copy.createdAt, Status: copy.status, Reason: copy.reason, Runs: []Run{}}
+	result := SessionGroup{ID: copy.id, CreatedAt: copy.createdAt, Status: copy.status, Rolling: copy.rolling, SegmentSeconds: copy.seconds, RetainSegments: copy.retain, Reason: copy.reason, Runs: []Run{}}
 	for _, runID := range copy.runIDs {
 		run, err := s.getRun(runID)
 		if err != nil {
@@ -55,7 +62,11 @@ func (s *Service) finishSession(req SampleRequest, runID string) {
 	if detail.Report != nil {
 		reason = detail.Report.Manifest.Observation.EndReason
 	}
-	retry := req.SessionAttempt < req.ReconnectAttempts && detail.Status != "canceled" &&
+	s.mu.Lock()
+	group := s.sessionGroups[req.SessionGroupID]
+	rolling := group != nil && group.rolling && !group.stopped && detail.Status != "canceled"
+	s.mu.Unlock()
+	retry := rolling || req.SessionAttempt < req.ReconnectAttempts && detail.Status != "canceled" &&
 		(reason == "request_error" || reason == "body_error" || reason == "rtmp_error" || reason == "eof")
 	if !retry {
 		s.mu.Lock()
@@ -93,11 +104,65 @@ func (s *Service) finishSession(req SampleRequest, runID string) {
 			return
 		}
 		s.mu.Lock()
+		var deleteID string
 		if group := s.sessionGroups[req.SessionGroupID]; group != nil {
 			group.runIDs = append(group.runIDs, nextRun.ID)
+			if group.rolling && len(group.runIDs) > group.retain {
+				deleteID = group.runIDs[0]
+				group.runIDs = append([]string(nil), group.runIDs[1:]...)
+			}
 		}
 		s.mu.Unlock()
+		if deleteID != "" {
+			_ = s.Delete(deleteID)
+		}
 	}()
+}
+
+func (s *Service) StopSessionGroup(id string) (SessionGroup, error) {
+	s.mu.Lock()
+	group := s.sessionGroups[id]
+	if group == nil {
+		s.mu.Unlock()
+		return SessionGroup{}, ErrNotFound
+	}
+	group.stopped = true
+	group.status = "done"
+	group.reason = "canceled"
+	var current string
+	if len(group.runIDs) > 0 {
+		current = group.runIDs[len(group.runIDs)-1]
+	}
+	s.mu.Unlock()
+	if current != "" {
+		if _, err := s.Stop(current); err != nil {
+			return SessionGroup{}, err
+		}
+	}
+	return s.SessionGroup(id)
+}
+
+func validateRolling(req *SampleRequest) error {
+	if req.SegmentSeconds == 0 {
+		if req.RollingSegments != 0 {
+			return fmt.Errorf("%w: 设置保留段数时必须同时设置分段时长", ErrInvalid)
+		}
+		return nil
+	}
+	if req.SegmentSeconds < 1 || req.SegmentSeconds > maxSeconds || req.RollingSegments < 0 || req.RollingSegments > 12 {
+		return fmt.Errorf("%w: 分段时长须为 1–300 秒，保留段数须为 1–12", ErrInvalid)
+	}
+	if req.Protocol != ProtocolHTTPFLV && req.Protocol != ProtocolRTMP && req.Protocol != ProtocolHLS {
+		return fmt.Errorf("%w: 滚动分段目前适用于 HTTP-FLV、RTMP/RTMPS 与 HLS", ErrInvalid)
+	}
+	if req.ReconnectAttempts != 0 || req.Playback || req.AutoInvestigate {
+		return fmt.Errorf("%w: 滚动分段不叠加自动重连或播放器观测", ErrInvalid)
+	}
+	if req.RollingSegments == 0 {
+		req.RollingSegments = 3
+	}
+	req.Seconds = req.SegmentSeconds
+	return nil
 }
 
 func validateReconnect(req SampleRequest) error {

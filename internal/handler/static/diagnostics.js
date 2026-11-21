@@ -222,6 +222,7 @@ let currentAutomaticRunning = false;
 let activePoll;
 let activeBatchPoll;
 let activeBatchID = '';
+let activeSessionGroupID = '';
 let runs = [];
 const selectedRunIDs = new Set();
 let currentModel = null;
@@ -2203,6 +2204,7 @@ node('protocol').addEventListener('change', () => {
     node('http-access-options').hidden = !httpAccess && !['rtmp', 'rtsps'].includes(protocol);
     node('reconnect-options').hidden = !['http-flv', 'rtmp'].includes(protocol);
     node('hls-variant-option').hidden = protocol !== 'hls';
+    node('rolling-options').hidden = !['http-flv', 'rtmp', 'hls'].includes(protocol);
     for (const id of ['http-headers', 'http-proxy-url']) {
         node(id).hidden = !httpAccess;
         document.querySelector(`label[for="${id}"]`).hidden = !httpAccess;
@@ -2314,6 +2316,7 @@ function captureAccessOptions(protocol) {
 function renderBatchResult(batch) {
     node('batch-results').hidden = false;
     node('batch-results-title').textContent = '批量诊断结果';
+    activeSessionGroupID = '';
     node('batch-status').textContent = `批次 ${batch.id} · ${statusLabels[batch.status] || batch.status} · ${batch.runs.length} 路`;
     node('stop-batch').hidden = batch.status !== 'running';
     const runsContent = node('batch-runs');
@@ -2374,8 +2377,13 @@ node('batch-sample').addEventListener('submit', async event => {
     finally { button.disabled = false; }
 });
 node('stop-batch').addEventListener('click', async () => {
-    if (!activeBatchID) return;
     try {
+        if (activeSessionGroupID && !node('stop-batch').hidden) {
+            await api('/sessions/' + encodeURIComponent(activeSessionGroupID) + '/stop', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+            await refreshSessionGroup(activeSessionGroupID);
+            return;
+        }
+        if (!activeBatchID) return;
         await api('/batches/' + encodeURIComponent(activeBatchID) + '/stop', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
         await refreshBatch(activeBatchID);
     } catch (err) { message(err.message, true); }
@@ -2385,9 +2393,10 @@ async function refreshSessionGroup(id) {
     try {
         const group = await api('/sessions/' + encodeURIComponent(id), { cache: 'no-store' });
         node('batch-results').hidden = false;
-        node('batch-results-title').textContent = '重连会话组';
-        node('stop-batch').hidden = true;
-        node('batch-status').textContent = `会话 ${group.id} · ${group.status === 'running' ? '采样中' : '已结束'} · ${group.runs.length} 段`;
+        node('batch-results-title').textContent = group.rolling ? '滚动分段会话' : '重连会话组';
+        activeSessionGroupID = group.id;
+        node('stop-batch').hidden = !group.rolling || group.status !== 'running';
+        node('batch-status').textContent = `会话 ${group.id} · ${group.status === 'running' ? '采样中' : '已结束'} · ${group.runs.length} 段${group.rolling ? ` · 每段 ${group.segment_seconds} 秒 / 保留最近 ${group.retain_segments} 段` : ''}`;
         const content = node('batch-runs');
         content.replaceChildren();
         node('batch-comparisons').replaceChildren();
@@ -2421,7 +2430,7 @@ bindForm('sample', async () => {
     const protocol = node('protocol').value;
     const run = await api('/runs', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ protocol, transport: protocols[protocol]?.nativeRTSP ? node('rtsp-transport').value : undefined, url, seconds, playback, auto_investigate: autoInvestigate, reconnect_attempts: ['http-flv', 'rtmp'].includes(protocol) ? node('reconnect-attempts').valueAsNumber : 0, reconnect_delay_ms: ['http-flv', 'rtmp'].includes(protocol) ? node('reconnect-delay').valueAsNumber : 0, hls_variant: protocol === 'hls' ? node('hls-variant').valueAsNumber : undefined, profile: node('analysis-profile').value, custom_thresholds: node('analysis-profile').value === 'custom' ? { first_frame_warn_ms: node('threshold-first-frame').valueAsNumber, video_gap_warn_ms: node('threshold-video-gap').valueAsNumber, dts_gap_warn_ms: node('threshold-dts-gap').valueAsNumber, gop_warn_ms: node('threshold-gop').valueAsNumber } : undefined, ...captureAccessOptions(protocol) }),
+        body: JSON.stringify({ protocol, transport: protocols[protocol]?.nativeRTSP ? node('rtsp-transport').value : undefined, url, seconds, playback, auto_investigate: autoInvestigate, reconnect_attempts: ['http-flv', 'rtmp'].includes(protocol) ? node('reconnect-attempts').valueAsNumber : 0, reconnect_delay_ms: ['http-flv', 'rtmp'].includes(protocol) ? node('reconnect-delay').valueAsNumber : 0, hls_variant: protocol === 'hls' ? node('hls-variant').valueAsNumber : undefined, segment_seconds: ['http-flv', 'rtmp', 'hls'].includes(protocol) ? node('segment-seconds').valueAsNumber : 0, rolling_segments: ['http-flv', 'rtmp', 'hls'].includes(protocol) ? node('rolling-segments').valueAsNumber : 0, profile: node('analysis-profile').value, custom_thresholds: node('analysis-profile').value === 'custom' ? { first_frame_warn_ms: node('threshold-first-frame').valueAsNumber, video_gap_warn_ms: node('threshold-video-gap').valueAsNumber, dts_gap_warn_ms: node('threshold-dts-gap').valueAsNumber, gop_warn_ms: node('threshold-gop').valueAsNumber } : undefined, ...captureAccessOptions(protocol) }),
     });
     stopPlayback(activePlayer);
     startPlayback(run, startedAt, startedAtPerformanceMS, seconds, hlsRecovery, hlsABR, hlsLowLatency);
