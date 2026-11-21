@@ -9,7 +9,7 @@
   <style>
     *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
     body{background:var(--bg);color:var(--text);min-height:100dvh;font-size:14.5px;line-height:1.55}
-    .container{max-width:80rem;margin:0 auto}
+    .container{max-width:84rem;margin:0 auto}
     .page-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:1.25rem;gap:1rem;flex-wrap:wrap}
     .page-title{display:flex;align-items:center;gap:.8rem}
     .page-icon{width:38px;height:38px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);display:flex;align-items:center;justify-content:center;color:var(--text);box-shadow:var(--shadow);flex:none}
@@ -17,70 +17,97 @@
     h1{font-size:clamp(1.35rem,2.2vw,1.65rem);font-weight:720;letter-spacing:-.025em}
     .page-desc{color:var(--muted);font-size:.85rem;margin-top:.2rem}
     .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.25rem;box-shadow:var(--shadow);margin-bottom:1.15rem}
-    .form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:.85rem;align-items:flex-end}
+    .dropzone{border:1.5px dashed var(--border-strong);border-radius:var(--radius-sm);background:var(--surface-inset);padding:1.1rem 1.25rem;text-align:center;cursor:pointer;transition:border-color .15s ease,background-color .15s ease;margin-bottom:.95rem}
+    .dropzone:hover,.dropzone.dragover{border-color:var(--accent);background:var(--accent-light)}
+    .dropzone-title{font-size:.9rem;font-weight:600;color:var(--text)}
+    .dropzone-sub{font-size:.78rem;color:var(--muted);margin-top:.25rem}
+    .dropzone-file{margin-top:.45rem;font-size:.82rem;color:var(--accent-hover);font-weight:600;font-family:var(--font-data)}
+    .form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:.85rem;align-items:flex-end}
     .form-group{display:flex;flex-direction:column;gap:.35rem}
     label{font-size:.82rem;font-weight:560;color:var(--text)}
     input[type="text"],input[type="number"],select{min-height:2.45rem;padding:.45rem .72rem;border:1px solid var(--border-strong);border-radius:var(--radius-sm);font-size:.875rem;color:var(--text);background:var(--surface);transition:border-color .15s ease,box-shadow .15s ease;width:100%}
     input:focus,select:focus{outline:none;border-color:var(--accent);box-shadow:var(--ring)}
-    input[type="file"]{padding:.38rem .5rem;border:1px dashed var(--border-strong);border-radius:var(--radius-sm);background:var(--surface-inset);font-size:.84rem}
-    .btn{display:inline-flex;align-items:center;justify-content:center;gap:.45rem;min-height:2.45rem;background:var(--primary);color:#fff;text-decoration:none;padding:.45rem .95rem;border-radius:var(--radius-sm);font-size:.85rem;font-weight:580;border:1px solid var(--primary);cursor:pointer;box-shadow:var(--shadow);transition:background-color .15s ease,border-color .15s ease;white-space:nowrap}
+    .btn{display:inline-flex;align-items:center;justify-content:center;gap:.4rem;min-height:2.3rem;background:var(--primary);color:#fff;text-decoration:none;padding:.4rem .9rem;border-radius:var(--radius-sm);font-size:.83rem;font-weight:580;border:1px solid var(--primary);cursor:pointer;box-shadow:var(--shadow);transition:background-color .15s ease,border-color .15s ease;white-space:nowrap}
     .btn:hover{background:var(--primary-hover);border-color:var(--primary-hover)}
     .btn:active{transform:scale(.99)}
     .btn:disabled{opacity:.5;cursor:not-allowed;transform:none}
     .btn.secondary{background:var(--surface);color:var(--text);border-color:var(--border-strong)}
     .btn.secondary:hover{background:var(--surface-inset);border-color:#a1a1aa}
+    .btn.danger{background:var(--surface);color:var(--danger);border-color:var(--danger-border)}
+    .btn.danger:hover{background:var(--danger-bg)}
+    .btn.sm{min-height:1.85rem;padding:.24rem .62rem;font-size:.76rem}
     .hint{font-size:.78rem;color:var(--muted);margin-top:.25rem}
     .hint.tip{background:var(--bg);padding:.62rem .85rem;border-radius:var(--radius-sm);border:1px solid var(--border);border-left:3px solid var(--accent);margin-top:.85rem}
-    #runHint{min-height:1.5rem;font-size:.82rem;color:var(--muted)}
-    .table-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:var(--radius-sm);margin-top:1rem}
+    #runHint{min-height:1.5rem;font-size:.82rem;color:var(--muted);display:flex;align-items:center}
+    .table-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:var(--radius-sm);margin-top:.75rem}
     table{width:100%;border-collapse:collapse;font-size:.82rem;font-variant-numeric:tabular-nums}
-    th,td{padding:.6rem .85rem;text-align:left;border-bottom:1px solid var(--border);vertical-align:top}
-    th{background:var(--surface-inset);font-weight:600;font-size:.75rem;color:var(--muted)}
+    th,td{padding:.55rem .78rem;text-align:left;border-bottom:1px solid var(--border);vertical-align:top}
+    th{background:var(--surface-inset);font-weight:600;font-size:.75rem;color:var(--muted);position:sticky;top:0;z-index:1}
     tr:last-child td{border-bottom:none}
     tbody tr:hover td{background:var(--bg)}
     tr.running td{background:var(--accent-light)}
+    tr.selected-row td{background:var(--accent-light)}
+    tr.anomaly-row td{background:var(--danger-bg)}
     .pill{display:inline-flex;align-items:center;padding:.14rem .52rem;border-radius:999px;font-size:.72rem;font-weight:600;border:1px solid var(--border);background:var(--surface-inset);color:var(--muted)}
     .pill.running{border-color:var(--accent-border);background:var(--accent-light);color:var(--accent-hover)}
     .pill.done{border-color:var(--success-border);background:var(--success-bg);color:var(--success)}
     .pill.failed{border-color:var(--danger-border);background:var(--danger-bg);color:var(--danger)}
-    .actions{display:flex;gap:.5rem;flex-wrap:wrap}
+    .pill.key{border-color:var(--danger-border);background:var(--danger-bg);color:var(--danger)}
+    .pill.bframe{border-color:var(--accent-border);background:var(--accent-light);color:var(--accent-hover)}
+    .pill.info{border-color:var(--border-strong);background:var(--bg);color:var(--text)}
+    .actions{display:flex;gap:.45rem;flex-wrap:wrap;align-items:center}
     .actions a{color:var(--accent);text-decoration:none;font-size:.82rem;font-weight:550;display:inline-flex;align-items:center;gap:.25rem}
     .actions a:hover{text-decoration:underline}
     .detail{margin-top:1.25rem;display:none}
-    .detail-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:1.1rem;flex-wrap:wrap;gap:.75rem}
-    .detail-title{font-size:1rem;font-weight:660}
+    .detail-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;flex-wrap:wrap;gap:.75rem}
+    .detail-title{font-size:1.02rem;font-weight:680;display:flex;align-items:center;gap:.6rem;flex-wrap:wrap}
     .section{margin-top:1.35rem}
-    .section-title{font-size:.88rem;font-weight:640;margin-bottom:.7rem;color:var(--text)}
-    .stats-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:.65rem}
-    .stat-card{border:1px solid var(--border);border-radius:var(--radius-sm);padding:.7rem .85rem;background:var(--bg)}
-    .stat-card .k{font-size:.74rem;color:var(--muted)}
-    .stat-card .v{font-family:var(--font-data);font-size:1.05rem;font-weight:660;margin-top:.2rem}
+    .section-head{display:flex;justify-content:space-between;align-items:center;gap:.75rem;flex-wrap:wrap;margin-bottom:.65rem}
+    .section-title{font-size:.89rem;font-weight:650;color:var(--text)}
+    .stats-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:.6rem}
+    .stat-card{border:1px solid var(--border);border-radius:var(--radius-sm);padding:.65rem .8rem;background:var(--bg)}
+    .stat-card.warn{border-color:var(--danger-border);background:var(--danger-bg)}
+    .stat-card.ok{border-color:var(--success-border)}
+    .stat-card .k{font-size:.73rem;color:var(--muted)}
+    .stat-card .v{font-family:var(--font-data);font-size:.98rem;font-weight:660;margin-top:.18rem;word-break:break-word}
+    .stat-card.warn .v{color:var(--danger)}
+    .nalu-chips{display:flex;flex-wrap:wrap;gap:.4rem;margin-top:.75rem}
+    .warning-box{margin-top:.8rem;padding:.72rem .9rem;border-radius:var(--radius-sm);border:1px solid var(--danger-border);background:var(--danger-bg);color:var(--danger);font-size:.82rem}
+    .warning-box ul{margin:0;padding-left:1.15rem}
+    .warning-box li+li{margin-top:.22rem}
+    .flow-switcher{display:flex;align-items:center;gap:.5rem;flex-wrap:wrap;margin-bottom:.75rem;padding:.55rem .75rem;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg)}
+    .flow-switcher label{font-size:.78rem;color:var(--muted)}
+    .flow-switcher select{width:auto;min-width:240px;min-height:2rem;padding:.25rem .6rem;font-size:.8rem}
     .collapse{border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface)}
-    .collapse summary{cursor:pointer;list-style:none;padding:.7rem .9rem;font-size:.82rem;color:var(--text);font-weight:600}
+    .collapse summary{cursor:pointer;list-style:none;padding:.65rem .9rem;font-size:.82rem;color:var(--text);font-weight:600}
     .collapse summary::-webkit-details-marker{display:none}
     .collapse summary::after{content:'▾';float:right;font-size:.78rem;color:var(--muted)}
     .collapse[open] summary::after{content:'▴'}
-    .chart-grid{display:grid;grid-template-columns:1fr;gap:1rem}
+    .chart-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.85rem}
     .chart-box{border:1px solid var(--border);border-radius:var(--radius-sm);padding:.6rem;background:var(--surface)}
-    .chart-title{font-size:.82rem;color:var(--muted);margin:.2rem .5rem .5rem}
-    .chart{height:260px}
-    .meta-box{margin-top:.5rem;border:1px solid var(--border);border-radius:var(--radius-sm);background:#18181b;color:#e4e4e7;padding:.85rem;font-family:var(--font-data);max-height:260px;overflow:auto;font-size:.76rem;white-space:pre-wrap;word-break:break-all}
-    .kv{display:grid;grid-template-columns:160px 1fr;gap:.45rem;font-size:.82rem}
-    .kv>div{padding:.5rem .75rem;border:1px solid var(--border);border-radius:var(--radius-xs)}
+    .chart-title{font-size:.8rem;font-weight:600;color:var(--muted);margin:.15rem .45rem .4rem}
+    .chart{height:245px}
+    .meta-box{margin-top:.5rem;border:1px solid var(--border);border-radius:var(--radius-sm);background:#18181b;color:#e4e4e7;padding:.85rem;font-family:var(--font-data);max-height:320px;overflow:auto;font-size:.76rem;white-space:pre-wrap;word-break:break-all}
+    .kv{display:grid;grid-template-columns:150px 1fr;gap:.4rem;font-size:.82rem}
+    .kv>div{padding:.45rem .72rem;border:1px solid var(--border);border-radius:var(--radius-xs)}
     .kv .k{background:var(--bg);color:var(--muted);font-weight:550}
-    code{font-family:var(--font-data);font-size:.78rem;background:var(--surface-inset);border:1px solid var(--border);padding:.1rem .38rem;border-radius:var(--radius-xs)}
-    .empty-state{text-align:center;padding:2.75rem;color:var(--muted);font-size:.875rem}
-    .media-filter{display:inline-flex;background:var(--surface-inset);border:1px solid var(--border);border-radius:.6rem;padding:3px;gap:3px;margin-bottom:1rem}
-    .media-filter button{display:inline-flex;align-items:center;gap:.45rem;padding:.38rem .85rem;font-size:.8rem;font-weight:560;border:none;border-radius:.42rem;background:transparent;color:var(--muted);cursor:pointer;transition:all .15s ease}
-    .media-filter button svg{width:15px;height:15px;opacity:.65}
+    code{font-family:var(--font-data);font-size:.77rem;background:var(--surface-inset);border:1px solid var(--border);padding:.08rem .35rem;border-radius:var(--radius-xs)}
+    .empty-state{text-align:center;padding:2.5rem;color:var(--muted);font-size:.875rem}
+    .toolbar{display:flex;justify-content:space-between;align-items:center;gap:.65rem;flex-wrap:wrap;margin-bottom:.6rem}
+    .media-filter{display:inline-flex;background:var(--surface-inset);border:1px solid var(--border);border-radius:.55rem;padding:3px;gap:3px;flex-wrap:wrap}
+    .media-filter button{display:inline-flex;align-items:center;gap:.35rem;padding:.34rem .75rem;font-size:.79rem;font-weight:560;border:none;border-radius:.4rem;background:transparent;color:var(--muted);cursor:pointer;transition:all .15s ease}
     .media-filter button:hover{color:var(--text)}
     .media-filter button.active{background:var(--surface);color:var(--text);box-shadow:0 1px 2px rgb(9 9 11 / .08)}
-    .media-filter button.active svg{opacity:1}
     .media-filter button[data-filter="video"].active{color:var(--accent)}
     .media-filter button[data-filter="audio"].active{color:var(--success)}
-    @media(max-width:640px){.form-grid{grid-template-columns:1fr}.page-header{flex-direction:column}.chart-grid{grid-template-columns:1fr}}
+    .media-filter button[data-filter="key"].active,.media-filter button[data-filter="anomaly"].active{color:var(--danger)}
+    .pager{display:inline-flex;align-items:center;gap:.45rem;font-size:.79rem;color:var(--muted)}
+    .subtext{font-size:.74rem;color:var(--muted);display:block;margin-top:.12rem}
+    .err-text{color:var(--danger);font-size:.79rem;word-break:break-word}
+    @media(max-width:860px){.chart-grid{grid-template-columns:1fr}}
+    @media(max-width:640px){.form-grid{grid-template-columns:1fr}.page-header{flex-direction:column}.kv{grid-template-columns:115px 1fr}}
   </style>
-    <script src="/static/workbench-navigation.js" defer></script>
+  <script src="/static/workbench-navigation.js" defer></script>
 </head>
 <body class="workbench-tool-page">
   <!-- workbench-header -->
@@ -96,30 +123,39 @@
         </div>
         <div>
           <h1>离线文件解析</h1>
-          <p class="page-desc">上传 raw / pcap / flv / ts / mp4 等文件，解析并生成分析产物；任务详情中仅 pcap 模式显示 RTMP 端口，codec 列为视频/音频编码（如 h264 / aac）。</p>
+          <p class="page-desc">拖入或选择 FLV / MP4(含 fMP4) / MPEG-TS / H.264·H.265 裸流 / PCAP / RTMP 裸流，自动识别格式、提取 ES 裸流并生成深度媒体体检与时序图表。</p>
         </div>
       </div>
     </div>
 
     <div class="card">
+      <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="选择或拖拽媒体文件">
+        <input id="file" type="file" style="display:none" />
+        <div class="dropzone-title">点击选择文件，或将媒体 / 抓包文件拖拽至此</div>
+        <div class="dropzone-sub">支持 .flv / .mp4 / .m4s / .ts / .m2ts / .h264 / .h265 / .pcap / .pcapng / .raw</div>
+        <div id="selectedFileLabel" class="dropzone-file" style="display:none"></div>
+      </div>
+
       <div class="form-grid">
         <div class="form-group">
-          <label>模式</label>
+          <label for="mode">解析模式</label>
           <select id="mode">
-            <option value="pcap">pcap/pcapng</option>
-            <option value="raw">raw（单方向，含握手）</option>
-            <option value="ts">ts（MPEG-TS）</option>
-            <option value="flv">flv（文件）</option>
-            <option value="mp4">mp4（文件）</option>
+            <option value="auto" selected>自动识别（推荐）</option>
+            <option value="flv">flv（FLV / Enhanced FLV）</option>
+            <option value="mp4">mp4（MP4 / fMP4）</option>
+            <option value="ts">ts（MPEG-TS / M2TS）</option>
+            <option value="annexb">annexb（H.264 / H.265 裸码流）</option>
+            <option value="pcap">pcap / pcapng（RTMP 抓包）</option>
+            <option value="raw">raw（RTMP 单方向裸流）</option>
           </select>
         </div>
-        <div class="form-group">
-          <label>serverPort（pcap）</label>
-          <input id="serverPort" type="number" value="1935" />
+        <div class="form-group" id="serverPortWrap" style="display:none">
+          <label for="serverPort">RTMP 端口（pcap）</label>
+          <input id="serverPort" type="number" min="1" max="65535" value="1935" />
         </div>
-        <div class="form-group">
-          <label>文件</label>
-          <input id="file" type="file" />
+        <div class="form-group" id="skipBytesWrap" style="display:none">
+          <label for="skipBytes">握手跳过字节（skip_bytes）</label>
+          <input id="skipBytes" type="number" min="0" value="3073" />
         </div>
         <button id="btn" class="btn" onclick="upload()">
           <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="16" height="16">
@@ -129,62 +165,116 @@
         </button>
         <div id="runHint"></div>
       </div>
-      <p class="hint tip" id="modeHint">提示：支持 raw / pcap / flv / ts / mp4 等离线模式，请按文件类型选择对应模式。</p>
+      <p class="hint tip" id="modeHint"></p>
     </div>
 
     <div class="card">
+      <div class="section-head" style="margin-bottom:.25rem">
+        <div class="section-title">解析任务列表</div>
+        <button class="btn secondary sm" onclick="loadTasks()">刷新</button>
+      </div>
       <div class="table-wrap">
         <table>
           <thead>
             <tr>
-              <th>ID</th><th>mode</th><th>status</th><th>created</th><th>error</th><th>操作</th>
+              <th>文件 / 任务</th><th>模式</th><th>状态</th><th>创建时间</th><th>错误</th><th>操作</th>
             </tr>
           </thead>
           <tbody id="tbody"></tbody>
         </table>
       </div>
-      <div id="emptyState" class="empty-state" style="display:none">暂无解析任务</div>
+      <div id="emptyState" class="empty-state" style="display:none">暂无解析任务，上传任意媒体或抓包文件开始分析</div>
     </div>
 
     <div id="detail" class="detail">
       <div class="card">
         <div class="detail-header">
-          <div class="detail-title">任务详情</div>
+          <div class="detail-title" id="detailHeaderTitle">任务详情</div>
           <div class="actions" id="taskActions"></div>
         </div>
 
-        <div class="section">
-          <div class="section-title">解析信息</div>
+        <div class="section" style="margin-top:.5rem">
+          <div class="section-title" style="margin-bottom:.5rem">基本信息</div>
           <div class="kv" id="taskKV"></div>
         </div>
 
+        <div class="section" id="flowSwitcherWrap" style="display:none">
+          <div class="flow-switcher">
+            <label for="flowSelect">当前聚焦流（PCAP 多流）：</label>
+            <select id="flowSelect" onchange="onSelectFlow()"></select>
+          </div>
+        </div>
+
+        <div class="section" id="mediaProfileSection" style="display:none">
+          <div class="section-head">
+            <div class="section-title" id="mediaProfileTitle">媒体概况</div>
+          </div>
+          <div class="stats-cards" id="mediaProfileCards"></div>
+          <div class="nalu-chips" id="naluHistogramBox" style="display:none"></div>
+          <div id="mediaProfileWarningsWrap" class="warning-box" style="display:none">
+            <ul id="mediaProfileWarnings"></ul>
+          </div>
+        </div>
+
         <div class="section" id="offlineChartSection" style="display:none">
-          <div class="section-title">时序分析</div>
-          <div class="chart-grid">
-            <div class="chart-box">
-              <div class="chart-title">I帧间隔</div>
+          <div class="section-head">
+            <div class="section-title">时序与码率分析</div>
+          </div>
+          <div class="chart-grid" id="offlineChartGrid">
+            <div class="chart-box" id="boxBitrate" style="display:none">
+              <div class="chart-title">瞬时码率趋势（kbps）</div>
+              <div id="chartBitrate" class="chart"></div>
+            </div>
+            <div class="chart-box" id="boxFrameSize" style="display:none">
+              <div class="chart-title">视频帧大小分布（Bytes，红色为关键帧）</div>
+              <div id="chartFrameSize" class="chart"></div>
+            </div>
+            <div class="chart-box" id="boxVideoDelta" style="display:none">
+              <div class="chart-title">视频帧间隔 ΔDTS（ms）</div>
+              <div id="chartVideoDelta" class="chart"></div>
+            </div>
+            <div class="chart-box" id="boxIInterval" style="display:none">
+              <div class="chart-title">GOP / I 帧间隔（ms）</div>
               <div id="chartIInterval" class="chart"></div>
+            </div>
+            <div class="chart-box" id="boxAVSync" style="display:none">
+              <div class="chart-title">音视频时间戳偏移（音频 − 视频，ms）</div>
+              <div id="chartAVSync" class="chart"></div>
             </div>
           </div>
         </div>
+
         <div class="section" id="flvMetadataSection" style="display:none">
-          <div class="section-title">FLV Metadata（onMetaData）</div>
-          <pre id="flvMetadataBox" class="meta-box">metadata: -</pre>
+          <details class="collapse" open>
+            <summary>FLV Metadata（onMetaData）</summary>
+            <div style="padding:.25rem .75rem .75rem">
+              <pre id="flvMetadataBox" class="meta-box">metadata: -</pre>
+            </div>
+          </details>
+        </div>
+
+        <div class="section" id="mp4ReportSection" style="display:none">
+          <details id="mp4ReportDetails" class="collapse">
+            <summary>MP4 结构与样例报告预览（mp4_report.txt）</summary>
+            <div style="padding:.25rem .75rem .75rem">
+              <div class="hint" id="mp4ReportHint" style="margin-bottom:.4rem">展开后自动加载前 500 行预览。</div>
+              <pre id="mp4ReportBox" class="meta-box" style="display:none"></pre>
+            </div>
+          </details>
         </div>
 
         <div class="section" id="tsStatsSection" style="display:none">
-          <div class="section-title">TS 解析统计</div>
+          <div class="section-title" style="margin-bottom:.55rem">TS 结构统计</div>
           <div class="stats-cards" id="tsStatsCards"></div>
         </div>
         <div class="section" id="tsPidSection" style="display:none">
-          <div class="section-title">TS PID 明细</div>
           <details class="collapse" open>
-            <summary id="tsPidSummary">PID 明细</summary>
+            <summary id="tsPidSummary">TS PID 明细</summary>
             <div class="table-wrap" style="margin-top:0">
               <table class="small">
                 <thead>
                   <tr>
-                    <th>PID</th><th>stream_type</th><th>category</th><th>PES</th><th>NALU</th><th>bytes</th><th>输出文件</th>
+                    <th>PID</th><th>stream_type</th><th>codec</th><th>category</th><th>TS包</th><th>PES</th><th>NALU</th><th>CC错</th><th>PCR</th><th>bytes</th><th>输出文件</th>
                   </tr>
                 </thead>
                 <tbody id="tsPidBody"></tbody>
@@ -194,13 +284,13 @@
         </div>
 
         <div class="section" id="rawSection">
-          <div class="section-title" id="offlineRawSectionTitle">单文件 / Raw 解析结果</div>
-          <div class="hint" style="margin:.5rem 0" id="rawHint">仅 raw 模式展示</div>
+          <div class="section-title" id="offlineRawSectionTitle" style="margin-bottom:.35rem">单文件解析结果</div>
+          <div class="hint" id="rawHint"></div>
           <div class="table-wrap">
             <table class="small">
               <thead>
                 <tr>
-                  <th>flow</th><th>client → server</th><th>SYN</th><th>pkts</th><th>payload</th><th>dump</th><th>codec</th><th>产物</th><th>err</th>
+                  <th>flow</th><th>方向 / 通道</th><th>payload</th><th>codec</th><th>产物下载</th><th>错误</th>
                 </tr>
               </thead>
               <tbody id="flowRaw"></tbody>
@@ -208,30 +298,62 @@
           </div>
         </div>
 
+        <div class="section" id="pushSection" style="display:none">
+          <div class="section-title" style="margin-bottom:.35rem">推流列表（push）</div>
+          <div class="table-wrap">
+            <table class="small">
+              <thead>
+                <tr>
+                  <th>flow</th><th>client → server</th><th>SYN</th><th>pkts</th><th>payload</th><th>dump</th><th>codec</th><th>产物</th><th>err</th>
+                </tr>
+              </thead>
+              <tbody id="flowPush"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="section" id="pullSection" style="display:none">
+          <div class="section-title" style="margin-bottom:.35rem">拉流列表（pull）</div>
+          <div class="table-wrap">
+            <table class="small">
+              <thead>
+                <tr>
+                  <th>flow</th><th>client → server</th><th>SYN</th><th>pkts</th><th>payload</th><th>dump</th><th>codec</th><th>产物</th><th>err</th>
+                </tr>
+              </thead>
+              <tbody id="flowPull"></tbody>
+            </table>
+          </div>
+        </div>
+
         <div class="section" id="rawFrameSection" style="display:none">
-          <div class="section-title" id="mediaDetailMainTitle">媒体包明细</div>
-          <p id="rawFrameModeHint" class="hint tip" style="display:none"></p>
-          <div id="offlineMediaFilterTabs" class="media-filter" style="margin-bottom:.5rem;display:none">
-            <button type="button" class="active" data-filter="all" onclick="setOfflineFilter('all')">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
-              全部
-            </button>
-            <button type="button" data-filter="video" onclick="setOfflineFilter('video')">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="15" height="10" rx="2"/><path d="M17 2l5 5-5 5"/></svg>
-              视频
-            </button>
-            <button type="button" data-filter="audio" onclick="setOfflineFilter('audio')">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg>
-              音频
-            </button>
+          <div class="section-head">
+            <div class="section-title" id="mediaDetailMainTitle">媒体包明细</div>
+            <div class="actions">
+              <button type="button" class="btn secondary sm" onclick="exportCurrentCSV()">导出 CSV</button>
+            </div>
+          </div>
+
+          <div class="toolbar">
+            <div id="offlineMediaFilterTabs" class="media-filter">
+              <button type="button" class="active" data-filter="all" onclick="setOfflineFilter('all')">全部</button>
+              <button type="button" data-filter="video" onclick="setOfflineFilter('video')">视频</button>
+              <button type="button" data-filter="audio" onclick="setOfflineFilter('audio')">音频</button>
+              <button type="button" data-filter="key" onclick="setOfflineFilter('key')">仅关键帧</button>
+              <button type="button" data-filter="anomaly" onclick="setOfflineFilter('anomaly')">异常帧</button>
+            </div>
+            <div class="pager" id="detailPager" style="display:none">
+              <button type="button" class="btn secondary sm" id="pagerPrev" onclick="stepPage(-1)">上一页</button>
+              <span id="pagerInfo">1 / 1</span>
+              <button type="button" class="btn secondary sm" id="pagerNext" onclick="stepPage(1)">下一页</button>
+            </div>
           </div>
 
           <div id="tsPesWrap" style="display:none">
-            <div class="section-title" style="font-size:.875rem;margin-top:.5rem">TS PES 明细</div>
-            <p id="tsPesTruncHint" class="hint tip" style="display:none"></p>
+            <p id="tsPesTruncHint" class="hint tip" style="display:none;margin-bottom:.5rem"></p>
             <details class="collapse" open>
               <summary id="tsPesSummary">PES 包列表</summary>
-              <div class="table-wrap" style="margin-top:0;max-height:420px;overflow:auto">
+              <div class="table-wrap" style="margin-top:0;max-height:460px;overflow:auto">
                 <table class="small">
                   <thead>
                     <tr>
@@ -246,199 +368,45 @@
           </div>
 
           <div id="rawFrameWrap" style="display:none">
-            <div class="section-title" style="font-size:.875rem;margin-top:.5rem" id="offlineRawFrameSubtitle">音视频逐帧明细</div>
             <details id="rawFrameDetails" class="collapse" open>
               <summary id="rawFrameSummary">音视频帧明细</summary>
-              <div class="table-wrap" style="margin-top:0;max-height:420px;overflow:auto">
+              <div class="table-wrap" style="margin-top:0;max-height:460px;overflow:auto">
                 <table class="small">
-                  <thead id="rawFrameHead">
-                    <tr>
-                      <th>#</th><th>媒体</th><th>DTS</th><th>PTS</th><th>CTS</th><th>长度</th><th>帧类型</th>
-                    </tr>
-                  </thead>
+                  <thead id="rawFrameHead"></thead>
                   <tbody id="rawFrameBody"></tbody>
                 </table>
               </div>
             </details>
           </div>
         </div>
-
-        <div class="section" id="pushSection">
-          <div class="section-title">推流列表（push）</div>
-          <div class="table-wrap">
-            <table class="small">
-              <thead>
-                <tr>
-                  <th>flow</th><th>client → server</th><th>SYN</th><th>pkts</th><th>payload</th><th>dump</th><th>codec</th><th>产物</th><th>err</th>
-                </tr>
-              </thead>
-              <tbody id="flowPush"></tbody>
-            </table>
-          </div>
-        </div>
-
-        <div class="section" id="pullSection">
-          <div class="section-title">拉流列表（pull）</div>
-          <div class="table-wrap">
-            <table class="small">
-              <thead>
-                <tr>
-                  <th>flow</th><th>client → server</th><th>SYN</th><th>pkts</th><th>payload</th><th>dump</th><th>codec</th><th>产物</th><th>err</th>
-                </tr>
-              </thead>
-              <tbody id="flowPull"></tbody>
-            </table>
-          </div>
-        </div>
       </div>
     </div>
   </div>
 
-  <script src="/static/echarts_helpers.js"></script>
   <script>
     let currentId = null;
+    let currentData = null;
+    let currentFlowIndex = 0;
     let currentOfflineFilter = 'all';
-    function setOfflineFilter(filter){
-      currentOfflineFilter = filter;
-      document.querySelectorAll('#offlineMediaFilterTabs button[data-filter]').forEach(function(b){
-        b.classList.toggle('active', b.getAttribute('data-filter') === filter);
-      });
-      const mode = String(document.getElementById('mode').value || '').toLowerCase();
-      // Re-render whichever view is currently shown
-      const tsWrap = document.getElementById('tsPesWrap');
-      const rawWrap = document.getElementById('rawFrameWrap');
-      if(tsWrap && tsWrap.style.display !== 'none'){
-        // For TS, re-render would require keeping flows in memory; we'll handle in show()
-      }
-      if(rawWrap && rawWrap.style.display !== 'none'){
-        // Need to re-render raw frames; show() stores in rawFlows but we don't have global access.
-        // Instead, we'll trigger show(currentId) to re-render.
-        if(currentId) show(currentId);
-      }
+    let currentPage = 1;
+    const PAGE_SIZE = 200;
+    let selectedFile = null;
+    let charts = {};
+    let loadedMP4ReportKey = '';
+
+    function esc(s){
+      return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
     }
     function setRunHint(msg){
       const el = document.getElementById('runHint');
-      if(!el) return;
-      el.textContent = msg || '';
+      if(el) el.textContent = msg || '';
     }
-    function sleep(ms){ return new Promise(r=>setTimeout(r, ms)); }
-    function updateModeHint(){
-      const modeEl = document.getElementById('mode');
-      const hintEl = document.getElementById('modeHint');
-      const serverPortWrap = document.getElementById('serverPort').closest('.form-group');
-      if(!modeEl || !hintEl) return;
-      const mode = modeEl.value;
-      if(serverPortWrap){
-        serverPortWrap.style.display = (mode === 'pcap') ? '' : 'none';
-      }
-      if(mode === 'ts'){
-        hintEl.textContent = '提示：TS 模式会解析 PAT/PMT/PES，导出各 PID 对应的 ES 文件，并统计 NALU。';
-      }else if(mode === 'mp4'){
-        hintEl.textContent = '提示：MP4 模式会解析 stsd/meta/样例时间线，写出 mp4_report.txt、video.annexb、audio.adts.aac。';
-      }else if(mode === 'flv'){
-        hintEl.textContent = '提示：FLV 模式会解析音视频 Tag、metadata，并提取 video.annexb / audio.adts.aac。';
-      }else if(mode === 'pcap'){
-        hintEl.textContent = '提示：PCAP 模式会按 serverPort 识别 RTMP 会话并自动区分 push/pull。';
-      }else if(mode === 'raw'){
-        hintEl.textContent = '提示：RAW 模式要求输入包含完整 RTMP 握手（C0+C1+C2 或 S0+S1+S2，合计 3073 字节）。';
-      }else{
-        hintEl.textContent = '提示：支持 raw / pcap / flv / ts / mp4 等离线模式，请按文件类型选择对应模式。';
-      }
-    }
-    async function upload(){
-      const f = document.getElementById('file').files[0];
-      if(!f){ alert('请选择文件'); return; }
-      const btn = document.getElementById('btn'); btn.disabled = true;
-      setRunHint('上传中…（文件较大时可能需要几十秒）');
-      const fd = new FormData();
-      const uploadMode = document.getElementById('mode').value;
-      fd.append('mode', uploadMode);
-      fd.append('server_port', uploadMode === 'pcap' ? document.getElementById('serverPort').value : '');
-      fd.append('file', f);
-      let res;
-      try{
-        res = await fetch('/api/offline/tasks', { method:'POST', body: fd });
-      }catch(e){
-        btn.disabled = false;
-        setRunHint('');
-        alert('请求失败：' + (e && e.message ? e.message : e));
-        return;
-      }
-      if(!res.ok){
-        btn.disabled = false;
-        setRunHint('');
-        alert(await res.text());
-        return;
-      }
-      const task = await res.json();
-      btn.disabled = false;
-      setRunHint('后端解析中…任务ID：' + (task.id||'-'));
-      await loadTasks();
-      if(task && task.id){
-        await show(task.id);
-        await waitUntilDone(task.id);
-      }
-    }
-    async function waitUntilDone(id){
-      const deadline = Date.now() + 10*60*1000;
-      while(Date.now() < deadline){
-        await sleep(1000);
-        const res = await fetch('/api/offline/tasks/'+id);
-        if(!res.ok) continue;
-        const data = await res.json();
-        const st = (data.task && data.task.status) ? String(data.task.status) : '';
-        if(st === 'done'){
-          setRunHint('解析完成：' + id);
-          await loadTasks();
-          await show(id);
-          return;
-        }
-        if(st === 'failed'){
-          const err = (data.task && data.task.error) ? String(data.task.error) : 'unknown';
-          setRunHint('解析失败：' + id);
-          await loadTasks();
-          await show(id);
-          alert('解析失败：' + err);
-          return;
-        }
-      }
-      setRunHint('仍在解析中（超时停止自动提示）：' + id);
-    }
-    async function loadTasks(){
-      const res = await fetch('/api/offline/tasks');
-      const data = await res.json();
-      const tb = document.getElementById('tbody');
-      const empty = document.getElementById('emptyState');
-      tb.innerHTML = '';
-      const tasks = (data.tasks||[]).sort((a,b)=>String(b.created_at).localeCompare(String(a.created_at)));
-      if(!tasks.length){ empty.style.display='block'; return; }
-      empty.style.display='none';
-      tasks.forEach(t=>{
-        const tr = document.createElement('tr');
-        if(String(t.status).toLowerCase() === 'running') tr.classList.add('running');
-        tr.innerHTML =
-          '<td><code>'+t.id+'</code></td>'+
-          '<td>'+t.mode+'</td>'+
-          '<td><span class="pill '+String(t.status||'')+'">'+t.status+'</span></td>'+
-          '<td>'+t.created_at+'</td>'+
-          '<td class="muted">'+(t.error||'')+'</td>';
-        const tdBtn = document.createElement('td');
-        const btn = document.createElement('button');
-        btn.className = 'btn secondary';
-        btn.textContent = '查看';
-        btn.onclick = ()=>show(t.id);
-        tdBtn.appendChild(btn);
-        tr.appendChild(tdBtn);
-        tb.appendChild(tr);
-      });
-    }
-    function toRel(id, p){
-      if(!p) return '';
-      const key = '/offline/'+id+'/';
-      const idx = p.indexOf(key);
-      if(idx < 0) return '';
-      return p.slice(idx + key.length).replace(/^\/+/, '');
-    }
+    function sleep(ms){ return new Promise(r => setTimeout(r, ms)); }
     function fmtBytes(n){
       if(n === undefined || n === null) return '-';
       const v = Number(n);
@@ -448,233 +416,255 @@
       if(v < 1024*1024*1024) return (v/1024/1024).toFixed(2) + ' MB';
       return (v/1024/1024/1024).toFixed(2) + ' GB';
     }
+    function fmtTime(iso){
+      if(!iso) return '-';
+      const d = new Date(iso);
+      if(isNaN(d.getTime())) return String(iso);
+      const p = n => String(n).padStart(2, '0');
+      return d.getFullYear() + '-' + p(d.getMonth()+1) + '-' + p(d.getDate()) + ' ' +
+        p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
+    }
+    function fmtDuration(ms){
+      const n = Number(ms);
+      if(!isFinite(n) || n <= 0) return '-';
+      const total = n / 1000;
+      const m = Math.floor(total / 60);
+      const s = total - m * 60;
+      if(m > 0) return m + ':' + s.toFixed(1).padStart(4, '0');
+      return s.toFixed(2) + ' s';
+    }
+    function fmtMeasure(v, digits, unit){
+      const n = Number(v);
+      if(!isFinite(n) || n <= 0) return '-';
+      return n.toFixed(digits) + ' ' + unit;
+    }
+    function toRel(id, p){
+      if(!p) return '';
+      const key = '/offline/' + id + '/';
+      const idx = p.indexOf(key);
+      if(idx < 0) return '';
+      return p.slice(idx + key.length).replace(/^\/+/, '');
+    }
+
+    function updateSelectedFile(file){
+      selectedFile = file || null;
+      const lbl = document.getElementById('selectedFileLabel');
+      if(!lbl) return;
+      if(selectedFile){
+        lbl.textContent = '已选择：' + selectedFile.name + ' (' + fmtBytes(selectedFile.size) + ')';
+        lbl.style.display = '';
+      }else{
+        lbl.textContent = '';
+        lbl.style.display = 'none';
+      }
+    }
+
+    function initDropzone(){
+      const dz = document.getElementById('dropzone');
+      const input = document.getElementById('file');
+      if(!dz || !input) return;
+      dz.addEventListener('click', () => input.click());
+      dz.addEventListener('keydown', e => {
+        if(e.key === 'Enter' || e.key === ' ') { e.preventDefault(); input.click(); }
+      });
+      input.addEventListener('change', () => updateSelectedFile(input.files[0]));
+      ['dragenter','dragover'].forEach(ev => dz.addEventListener(ev, e => {
+        e.preventDefault(); e.stopPropagation(); dz.classList.add('dragover');
+      }));
+      ['dragleave','drop'].forEach(ev => dz.addEventListener(ev, e => {
+        e.preventDefault(); e.stopPropagation(); dz.classList.remove('dragover');
+      }));
+      dz.addEventListener('drop', e => {
+        const f = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+        if(f) updateSelectedFile(f);
+      });
+    }
+
+    function updateModeHint(){
+      const modeEl = document.getElementById('mode');
+      const hintEl = document.getElementById('modeHint');
+      const serverPortWrap = document.getElementById('serverPortWrap');
+      const skipBytesWrap = document.getElementById('skipBytesWrap');
+      if(!modeEl || !hintEl) return;
+      const mode = modeEl.value;
+      if(serverPortWrap) serverPortWrap.style.display = (mode === 'pcap') ? '' : 'none';
+      if(skipBytesWrap) skipBytesWrap.style.display = (mode === 'pcap' || mode === 'raw') ? '' : 'none';
+      const hints = {
+        auto: '提示：默认通过文件头魔数与扩展名自动识别 FLV / MP4(含 fMP4) / TS / H.264·H.265 Annex B / PCAP / RTMP 裸流。',
+        flv: '提示：FLV 会解析传统与 Enhanced Tag（含 avc1 / hvc1 / mp4a），导出裸流并分析码率、GOP 与音画同步。',
+        mp4: '提示：MP4 支持标准 MP4 与 fMP4(moof/trun)，检测 FastStart(moov 位置)、提取编码参数与样例时间线。',
+        ts: '提示：TS 支持 188B 与 192B M2TS，解析 PAT/PMT/PES，并扫描全文件 CC 连续性错误、TEI、同步丢失与 PCR 间隔。',
+        annexb: '提示：Annex B 模式直接解析 .h264 / .h265 裸码流，提取 SPS 参数、统计 NALU 分布并按帧聚合。',
+        pcap: '提示：PCAP 按指定 RTMP 端口重组双向 TCP 流并自动区分 push/pull；无握手抓包可将 skip_bytes 设为 0。',
+        raw: '提示：RAW 模式解析单方向 RTMP chunk 裸流；完整握手跳过 3073 字节，无握手可设为 0。'
+      };
+      hintEl.textContent = hints[mode] || hints.auto;
+    }
+
+    async function upload(){
+      const input = document.getElementById('file');
+      const f = selectedFile || (input && input.files && input.files[0]);
+      if(!f){ alert('请先选择或拖入要解析的文件'); return; }
+      const btn = document.getElementById('btn');
+      btn.disabled = true;
+      setRunHint('上传并识别格式中…');
+      const fd = new FormData();
+      const uploadMode = document.getElementById('mode').value;
+      fd.append('mode', uploadMode);
+      if(uploadMode === 'pcap'){
+        fd.append('server_port', document.getElementById('serverPort').value || '1935');
+      }
+      if(uploadMode === 'pcap' || uploadMode === 'raw'){
+        fd.append('skip_bytes', document.getElementById('skipBytes').value || '3073');
+      }
+      fd.append('file', f);
+
+      let res;
+      try{
+        res = await fetch('/api/offline/tasks', { method: 'POST', body: fd });
+      }catch(e){
+        btn.disabled = false;
+        setRunHint('');
+        alert('请求失败：' + (e && e.message ? e.message : e));
+        return;
+      }
+      if(!res.ok){
+        btn.disabled = false;
+        setRunHint('');
+        let errText = await res.text();
+        try{ const j = JSON.parse(errText); if(j.error) errText = j.error; }catch(_){}
+        alert('创建任务失败：' + errText);
+        return;
+      }
+      const task = await res.json();
+      btn.disabled = false;
+      const detectedNote = task.detected_by ? ('（自动识别为 ' + task.mode + '）') : '';
+      setRunHint('后台解析中' + detectedNote + '：' + (task.id || '-'));
+      await loadTasks();
+      if(task && task.id){
+        await show(task.id);
+        await waitUntilDone(task.id);
+      }
+    }
+
+    async function waitUntilDone(id){
+      const deadline = Date.now() + 10*60*1000;
+      while(Date.now() < deadline){
+        await sleep(800);
+        const res = await fetch('/api/offline/tasks/' + encodeURIComponent(id));
+        if(!res.ok) continue;
+        const data = await res.json();
+        const st = (data.task && data.task.status) ? String(data.task.status) : '';
+        if(st === 'done'){
+          setRunHint('解析完成：' + (data.task.input_name || id));
+          await loadTasks();
+          if(currentId === id) await show(id);
+          return;
+        }
+        if(st === 'failed'){
+          const err = (data.task && data.task.error) ? String(data.task.error) : 'unknown';
+          setRunHint('解析失败：' + err);
+          await loadTasks();
+          if(currentId === id) await show(id);
+          return;
+        }
+      }
+      setRunHint('仍在解析中（超时停止自动轮询）：' + id);
+    }
+
+    async function loadTasks(){
+      let res;
+      try { res = await fetch('/api/offline/tasks'); } catch(_) { return; }
+      if(!res.ok) return;
+      const data = await res.json();
+      const tb = document.getElementById('tbody');
+      const empty = document.getElementById('emptyState');
+      tb.innerHTML = '';
+      const tasks = (data.tasks || []).sort((a,b) => String(b.created_at).localeCompare(String(a.created_at)));
+      if(!tasks.length){ empty.style.display = 'block'; return; }
+      empty.style.display = 'none';
+      tasks.forEach(t => {
+        const tr = document.createElement('tr');
+        const status = String(t.status || '').toLowerCase();
+        if(status === 'running') tr.classList.add('running');
+        if(currentId && t.id === currentId) tr.classList.add('selected-row');
+
+        const sizeNote = t.input_size ? (' · ' + fmtBytes(t.input_size)) : '';
+        const modeBadge = t.detected_by
+          ? (esc(t.mode) + '<span class="subtext">' + esc(t.detected_by) + '</span>')
+          : esc(t.mode);
+
+        tr.innerHTML =
+          '<td><strong>' + esc(t.input_name || t.id) + '</strong><span class="subtext"><code>' + esc(t.id) + '</code>' + esc(sizeNote) + '</span></td>' +
+          '<td>' + modeBadge + '</td>' +
+          '<td><span class="pill ' + esc(status) + '">' + esc(t.status) + '</span></td>' +
+          '<td>' + esc(fmtTime(t.created_at)) + '</td>' +
+          '<td class="err-text">' + esc(t.error || '') + '</td>';
+
+        const tdAct = document.createElement('td');
+        const wrap = document.createElement('div');
+        wrap.className = 'actions';
+
+        const btnView = document.createElement('button');
+        btnView.className = 'btn secondary sm';
+        btnView.textContent = '查看';
+        btnView.onclick = () => show(t.id);
+        wrap.appendChild(btnView);
+
+        const btnReparse = document.createElement('button');
+        btnReparse.className = 'btn secondary sm';
+        btnReparse.textContent = '重算';
+        btnReparse.disabled = status === 'running';
+        btnReparse.onclick = () => reparseTask(t.id);
+        wrap.appendChild(btnReparse);
+
+        const btnDel = document.createElement('button');
+        btnDel.className = 'btn danger sm';
+        btnDel.textContent = '删除';
+        btnDel.disabled = status === 'running';
+        btnDel.onclick = () => deleteTask(t.id, t.input_name || t.id);
+        wrap.appendChild(btnDel);
+
+        tdAct.appendChild(wrap);
+        tr.appendChild(tdAct);
+        tb.appendChild(tr);
+      });
+    }
+
+    async function deleteTask(id, name){
+      if(!confirm('确认永久删除任务「' + name + '」及其产物文件吗？')) return;
+      const res = await fetch('/api/offline/tasks/' + encodeURIComponent(id), { method: 'DELETE' });
+      if(!res.ok){
+        alert('删除失败：' + await res.text());
+        return;
+      }
+      if(currentId === id){
+        currentId = null;
+        currentData = null;
+        document.getElementById('detail').style.display = 'none';
+        destroyOfflineCharts();
+      }
+      await loadTasks();
+    }
+
+    async function reparseTask(id){
+      const res = await fetch('/api/offline/tasks/' + encodeURIComponent(id) + '/reparse', { method: 'POST' });
+      if(!res.ok){
+        alert('重新解析失败：' + await res.text());
+        return;
+      }
+      setRunHint('已触发重新解析：' + id);
+      await loadTasks();
+      await show(id);
+      await waitUntilDone(id);
+    }
+
     function kvLine(k, v){
-      const kk = document.createElement('div'); kk.className='k'; kk.textContent = k;
-      const vv = document.createElement('div'); vv.textContent = (v===undefined || v===null || v==='') ? '-' : String(v);
+      const kk = document.createElement('div'); kk.className = 'k'; kk.textContent = k;
+      const vv = document.createElement('div'); vv.textContent = (v === undefined || v === null || v === '') ? '-' : String(v);
       return [kk, vv];
     }
-    function renderTSStats(flows){
-      const section = document.getElementById('tsStatsSection');
-      const box = document.getElementById('tsStatsCards');
-      if(!section || !box) return;
-      const sum = (key) => (flows||[]).reduce((acc, f)=>acc + Number(f && f[key] ? f[key] : 0), 0);
-      const stats = [
-        {k:'PAT', v:sum('pat_count')},
-        {k:'PMT', v:sum('pmt_count')},
-        {k:'Program', v:sum('program_count')},
-        {k:'PES', v:sum('pes_count')},
-        {k:'NALU', v:sum('nalu_count')},
-        {k:'视频PID', v:sum('video_pid_count')},
-        {k:'音频PID', v:sum('audio_pid_count')}
-      ];
-      box.innerHTML = '';
-      stats.forEach(s=>{
-        const card = document.createElement('div');
-        card.className = 'stat-card';
-        const k = document.createElement('div');
-        k.className = 'k';
-        k.textContent = s.k;
-        const v = document.createElement('div');
-        v.className = 'v';
-        v.textContent = String(s.v);
-        card.appendChild(k);
-        card.appendChild(v);
-        box.appendChild(card);
-      });
-      section.style.display = '';
-    }
-    function renderTSPIDs(taskId, flows){
-      const section = document.getElementById('tsPidSection');
-      const body = document.getElementById('tsPidBody');
-      const summary = document.getElementById('tsPidSummary');
-      if(!section || !body || !summary) return;
-      const all = [];
-      (flows||[]).forEach(f=>{
-        const items = Array.isArray(f.pid_details) ? f.pid_details : [];
-        items.forEach(it=>all.push(it));
-      });
-      all.sort((a,b)=>Number(a.pid||0)-Number(b.pid||0));
-      body.innerHTML = '';
-      const base = '/api/offline/tasks/'+taskId+'/files/';
-      all.forEach(it=>{
-        const tr = document.createElement('tr');
-        const rel = toRel(taskId, it.output_path || '');
-        const linkCell = document.createElement('td');
-        if(rel){
-          const a = document.createElement('a');
-          a.href = base + rel;
-          a.target = '_blank';
-          a.textContent = rel;
-          linkCell.appendChild(a);
-        }else{
-          linkCell.textContent = '-';
-        }
-        tr.innerHTML =
-          '<td>'+String(it.pid ?? '-')+'</td>'+
-          '<td>'+String(it.stream_type || '-')+'</td>'+
-          '<td>'+String(it.category || '-')+'</td>'+
-          '<td>'+String(it.pes_count ?? 0)+'</td>'+
-          '<td>'+String(it.nalu_count ?? 0)+'</td>'+
-          '<td>'+fmtBytes(it.bytes ?? 0)+'</td>';
-        tr.appendChild(linkCell);
-        body.appendChild(tr);
-      });
-      summary.textContent = 'PID 明细（共 ' + all.length + ' 项）';
-      section.style.display = '';
-    }
-    function fmt90kTick(valid, base){
-      if(!valid) return 'N/A';
-      const v = Number(base);
-      if(!isFinite(v)) return 'N/A';
-      return v + ' (' + (v/90000).toFixed(3) + 's)';
-    }
-    function naluBriefLine(nalus){
-      if(!nalus || !nalus.length) return '-';
-      return nalus.slice(0, 10).map(function(n){
-        const name = n.type_name ? '(' + n.type_name + ')' : '';
-        return (n.codec || '') + ' t=' + String(n.type) + name + (n.key ? '*' : '');
-      }).join(', ');
-    }
-    function renderTSPESDetails(flows){
-      const section = document.getElementById('rawFrameSection');
-      const tsWrap = document.getElementById('tsPesWrap');
-      const rawWrap = document.getElementById('rawFrameWrap');
-      const body = document.getElementById('tsPesBody');
-      const summary = document.getElementById('tsPesSummary');
-      const trunc = document.getElementById('tsPesTruncHint');
-      const hint = document.getElementById('rawFrameModeHint');
-      const title = document.getElementById('mediaDetailMainTitle');
-      const filterTabs = document.getElementById('offlineMediaFilterTabs');
-      if(!section || !tsWrap || !rawWrap || !body || !summary) return;
-      if(hint){ hint.style.display = 'none'; hint.textContent = ''; }
-      if(title){ title.textContent = '媒体包明细'; }
-      rawWrap.style.display = 'none';
-      tsWrap.style.display = '';
-      if(filterTabs){ filterTabs.style.display = ''; }
-      const all = [];
-      (flows||[]).forEach(function(f){
-        const items = Array.isArray(f.pes_details) ? f.pes_details : [];
-        items.forEach(function(it){ all.push(it); });
-      });
-      const filter = currentOfflineFilter || 'all';
-      const filtered = all.filter(function(it){
-        if(filter === 'all') return true;
-        const cat = String(it.category || '').toLowerCase();
-        return (filter === 'video' && cat === 'video') || (filter === 'audio' && cat === 'audio');
-      });
-      const total = (flows && flows[0] && flows[0].pes_detail_total != null) ? Number(flows[0].pes_detail_total) : all.length;
-      let truncFlag = false;
-      (flows||[]).forEach(function(f){
-        if(f && f.pes_details_truncated) truncFlag = true;
-      });
-      if(trunc){
-        if(truncFlag){
-          trunc.style.display = '';
-          trunc.textContent = 'PES 明细已截断：共 ' + (isFinite(total)?total:all.length) + ' 个 PES，页面最多展示前 ' + all.length + ' 条（可在 summary.json 中调高后端上限）。';
-        }else{
-          trunc.style.display = 'none';
-          trunc.textContent = '';
-        }
-      }
-      body.innerHTML = '';
-      for(let i=0;i<filtered.length;i++){
-        const it = filtered[i] || {};
-        const tr = document.createElement('tr');
-        tr.innerHTML =
-          '<td>' + String(it.seq ?? (i+1)) + '</td>' +
-          '<td>' + String(it.pid ?? '-') + '</td>' +
-          '<td>' + String(it.program_number ?? '-') + '</td>' +
-          '<td>' + String(it.stream_type || '-') + '</td>' +
-          '<td>' + String(it.category || '-') + '</td>' +
-          '<td>0x' + Number(it.stream_id ?? 0).toString(16) + '</td>' +
-          '<td>' + fmt90kTick(it.pts_valid, it.pts_base) + '</td>' +
-          '<td>' + fmt90kTick(it.dts_valid, it.dts_base) + '</td>' +
-          '<td>' + fmtBytes(it.payload_len ?? 0) + '</td>' +
-          '<td>' + String(it.nalu_count ?? 0) + '</td>' +
-          '<td style="max-width:280px;word-break:break-all;font-size:.75rem">' + naluBriefLine(it.nalus) + '</td>';
-        body.appendChild(tr);
-      }
-      if(filtered.length === 0){
-        const tr = document.createElement('tr');
-        const emptyMsg = filter !== 'all' ? '当前过滤条件下无 PES 数据' : '暂无 PES 明细（请重新解析 TS 任务以生成 pes_details）。';
-        tr.innerHTML = '<td colspan="11" style="color:var(--text-muted)">' + emptyMsg + '</td>';
-        body.appendChild(tr);
-      }
-      summary.textContent = 'PES 包列表（展示 ' + filtered.length + ' / ' + (isFinite(total)?total:all.length) + '）';
-      section.style.display = '';
-    }
-    function renderRawFrames(mode, flows){
-      const section = document.getElementById('rawFrameSection');
-      const body = document.getElementById('rawFrameBody');
-      const head = document.getElementById('rawFrameHead');
-      const summary = document.getElementById('rawFrameSummary');
-      const hint = document.getElementById('rawFrameModeHint');
-      const details = document.getElementById('rawFrameDetails');
-      const tsWrap = document.getElementById('tsPesWrap');
-      const rawWrap = document.getElementById('rawFrameWrap');
-      const title = document.getElementById('mediaDetailMainTitle');
-      const filterTabs = document.getElementById('offlineMediaFilterTabs');
-      if(!section || !body || !summary) return;
-      if(hint){ hint.style.display = 'none'; hint.textContent = ''; }
-      if(title){ title.textContent = '媒体包明细'; }
-      if(tsWrap){ tsWrap.style.display = 'none'; }
-      if(rawWrap){ rawWrap.style.display = ''; }
-      if(details){ details.style.display = ''; }
-      if(filterTabs){ filterTabs.style.display = ''; }
-      const m = String(mode||'').toLowerCase();
-      const showCTS = (m === 'flv' || m === 'raw');
-      if(head){
-        head.innerHTML = '<tr><th>#</th><th>媒体</th><th>DTS</th><th>PTS</th>' + (showCTS ? '<th>CTS</th>' : '') + '<th>长度</th><th>帧类型</th></tr>';
-      }
-      const all = [];
-      (flows||[]).forEach(f=>{
-        const items = Array.isArray(f.frame_details) ? f.frame_details : [];
-        items.forEach(it=>all.push(it));
-      });
-      const filter = currentOfflineFilter || 'all';
-      const filtered = all.filter(function(it){
-        if(filter === 'all') return true;
-        const mt = String(it.media_type || '').toLowerCase();
-        return mt === filter;
-      });
-      body.innerHTML = '';
-      if(filtered.length === 0){
-        const tr = document.createElement('tr');
-        let emptyMsg = '暂无逐帧数据。';
-        if(m === 'mp4'){
-          emptyMsg = filter !== 'all' ? '当前过滤条件下无逐帧数据' : '暂无逐帧数据（请确认 MP4 含可解析的音视频轨）。';
-        }else if(m === 'flv'){
-          emptyMsg = filter !== 'all' ? '当前过滤条件下无逐帧数据' : '暂无逐帧数据（请确认 FLV 含音视频 Tag）。';
-        }else{
-          emptyMsg = filter !== 'all' ? '当前过滤条件下无逐帧数据' : '暂无逐帧数据（旧任务或未解析出音视频的 raw 文件会为空）。请用「模式：raw」重新上传 RTMP 单方向裸流。';
-        }
-        const cols = showCTS ? 7 : 6;
-        tr.innerHTML = '<td colspan="' + cols + '" style="color:var(--text-muted)">' + emptyMsg + '</td>';
-        body.appendChild(tr);
-      }else{
-        for(let i=0;i<filtered.length;i++){
-          const it = filtered[i] || {};
-          const tr = document.createElement('tr');
-          const ctsCell = showCTS ? ('<td>' + String(it.cts ?? '-') + '</td>') : '';
-          tr.innerHTML =
-            '<td>' + (i+1) + '</td>' +
-            '<td>' + String(it.media_type || '-') + '</td>' +
-            '<td>' + String(it.dts ?? '-') + '</td>' +
-            '<td>' + String(it.pts ?? '-') + '</td>' +
-            ctsCell +
-            '<td>' + fmtBytes(it.frame_len ?? 0) + '</td>' +
-            '<td>' + String(it.frame_type || '-') + '</td>';
-          body.appendChild(tr);
-        }
-      }
-      summary.textContent = '音视频帧明细（共 ' + filtered.length + ' 帧）';
-      section.style.display = '';
-    }
-    function clearTbody(id){
-      const tb = document.getElementById(id);
-      tb.innerHTML = '';
-      return tb;
-    }
+
     function addLink(container, href, label){
       const a = document.createElement('a');
       a.href = href;
@@ -686,296 +676,836 @@
     function addSep(container){
       const span = document.createElement('span');
       span.textContent = ' | ';
-      span.className = 'muted';
+      span.style.color = 'var(--muted)';
       container.appendChild(span);
     }
-    function renderFlows(taskId, flows, tbodyId, withDir){
-      const tb = clearTbody(tbodyId);
-      const base = '/api/offline/tasks/'+taskId+'/files/';
-      (flows||[]).forEach(f=>{
+
+    function destroyOfflineCharts(){
+      Object.keys(charts).forEach(k => {
+        if(charts[k]){
+          try{ charts[k].dispose(); }catch(_){}
+          charts[k] = null;
+        }
+      });
+      charts = {};
+    }
+
+    function activeFlow(){
+      if(!currentData || !currentData.summary || !Array.isArray(currentData.summary.flows)) return null;
+      const flows = currentData.summary.flows;
+      if(!flows.length) return null;
+      const idx = Math.max(0, Math.min(currentFlowIndex, flows.length - 1));
+      return flows[idx];
+    }
+
+    function onSelectFlow(){
+      const sel = document.getElementById('flowSelect');
+      currentFlowIndex = sel ? Number(sel.value || 0) : 0;
+      currentPage = 1;
+      renderFocusedFlow();
+    }
+
+    function setOfflineFilter(filter){
+      currentOfflineFilter = filter;
+      currentPage = 1;
+      document.querySelectorAll('#offlineMediaFilterTabs button[data-filter]').forEach(b => {
+        b.classList.toggle('active', b.getAttribute('data-filter') === filter);
+      });
+      renderDetailTable();
+    }
+
+    function stepPage(delta){
+      currentPage = Math.max(1, currentPage + delta);
+      renderDetailTable();
+    }
+
+    function profileCards(mode, profile){
+      if(!profile) return [];
+      const codec = [profile.video_codec, profile.audio_codec].filter(Boolean).join(' / ') || '-';
+      const size = (profile.width && profile.height) ? (profile.width + '×' + profile.height) : '-';
+      let level = profile.profile || '';
+      if(profile.level_name) level = level ? (level + ' @ ' + profile.level_name) : profile.level_name;
+      const audio = profile.audio_sample_rate
+        ? (profile.audio_sample_rate + ' Hz' + (profile.audio_channels ? ' / ' + profile.audio_channels + ' ch' : ''))
+        : (profile.audio_channels ? (profile.audio_channels + ' ch') : '-');
+      const gop = profile.gop_avg_ms ? (profile.gop_min_ms + ' / ' + profile.gop_avg_ms + ' / ' + profile.gop_max_ms + ' ms') : '-';
+      const delta = profile.video_delta_avg_ms ? (profile.video_delta_min_ms + ' / ' + profile.video_delta_avg_ms + ' / ' + profile.video_delta_max_ms + ' ms') : '-';
+      const keyText = String(profile.keyframes || 0) + (profile.has_b_frames ? (' (含 B 帧' + (profile.b_frames ? ':' + profile.b_frames : '') + ')') : ' (无 B 帧)');
+      const tsBad = (profile.dts_regressions || 0) > 0 || (profile.large_gaps || 0) > 0 || (profile.audio_large_gaps || 0) > 0;
+      const tsText = tsBad
+        ? ('回退 ' + (profile.dts_regressions || 0) + ' / 长间隔 ' + ((profile.large_gaps || 0) + (profile.audio_large_gaps || 0)))
+        : '连续正常';
+
+      const cards = [
+        {k: '编码', v: codec},
+        {k: '分辨率', v: size},
+        {k: 'Profile / Level', v: level || '-'},
+        {k: '时长', v: fmtDuration(profile.duration_ms)},
+        {k: '帧率', v: fmtMeasure(profile.frame_rate, 2, 'fps')},
+        {k: '视频码率', v: fmtMeasure(profile.video_bitrate_kbps, 1, 'kbps')},
+        {k: '音频码率', v: fmtMeasure(profile.audio_bitrate_kbps, 1, 'kbps')},
+        {k: '视频 / 音频帧', v: String(profile.video_frames || 0) + ' / ' + String(profile.audio_frames || 0)},
+        {k: '关键帧 / B 帧', v: keyText},
+        {k: 'GOP 最小/平均/最大', v: gop},
+        {k: '帧间隔 最小/平均/最大', v: delta},
+        {k: '音频参数', v: audio},
+        {k: '时间戳连续性', v: tsText, warn: tsBad}
+      ];
+
+      if(profile.has_av_offset){
+        const avWarn = Math.abs(profile.av_start_offset_ms || 0) > 500 || Math.abs(profile.av_drift_max_ms || 0) > 500;
+        cards.push({
+          k: '音画偏移（首帧 / 最大）',
+          v: (profile.av_start_offset_ms || 0) + ' / ' + (profile.av_drift_max_ms || 0) + ' ms',
+          warn: avWarn
+        });
+      }
+      if(mode === 'mp4'){
+        if(profile.mp4_fast_start !== undefined && profile.mp4_fast_start !== null){
+          cards.push({
+            k: 'MP4 结构',
+            v: (profile.mp4_fragmented ? 'fMP4 分片' : (profile.mp4_fast_start ? 'FastStart (moov 在前)' : 'moov 在后')),
+            warn: !profile.mp4_fast_start && !profile.mp4_fragmented
+          });
+        }
+      }
+      if(mode === 'ts' && profile.ts_packet_count){
+        cards.push({k: 'TS 总包数', v: String(profile.ts_packet_count)});
+        cards.push({
+          k: 'TS 传输错误（CC / TEI / Sync）',
+          v: (profile.ts_cc_errors || 0) + ' / ' + (profile.ts_tei_errors || 0) + ' / ' + (profile.ts_sync_errors || 0),
+          warn: (profile.ts_cc_errors || 0) > 0 || (profile.ts_tei_errors || 0) > 0 || (profile.ts_sync_errors || 0) > 0
+        });
+        if(profile.pcr_count){
+          cards.push({
+            k: 'PCR 数量 / 最大间隔',
+            v: profile.pcr_count + ' / ' + (profile.pcr_max_gap_ms || 0) + ' ms',
+            warn: (profile.pcr_max_gap_ms || 0) > 100
+          });
+        }
+      }
+      return cards;
+    }
+
+    function renderMediaProfile(mode, flow){
+      const section = document.getElementById('mediaProfileSection');
+      const box = document.getElementById('mediaProfileCards');
+      const title = document.getElementById('mediaProfileTitle');
+      const histBox = document.getElementById('naluHistogramBox');
+      const warnWrap = document.getElementById('mediaProfileWarningsWrap');
+      const warnList = document.getElementById('mediaProfileWarnings');
+      if(!section || !box) return;
+      if(!flow || !flow.profile){
+        section.style.display = 'none';
+        return;
+      }
+      const p = flow.profile;
+      const totalFlows = (currentData && currentData.summary && currentData.summary.flows) ? currentData.summary.flows.length : 1;
+      if(title){
+        title.textContent = totalFlows > 1 ? ('媒体概况 · flow' + String(flow.flow_id).padStart(3, '0') + ' (' + (flow.direction || '-') + ')') : '媒体概况';
+      }
+      box.innerHTML = '';
+      profileCards(mode, p).forEach(s => {
+        const card = document.createElement('div');
+        card.className = 'stat-card' + (s.warn ? ' warn' : '');
+        const k = document.createElement('div'); k.className = 'k'; k.textContent = s.k;
+        const v = document.createElement('div'); v.className = 'v'; v.textContent = s.v;
+        card.appendChild(k); card.appendChild(v);
+        box.appendChild(card);
+      });
+
+      const hist = p.nalu_histogram || {};
+      const histKeys = Object.keys(hist).sort((a,b) => hist[b] - hist[a]);
+      histBox.innerHTML = '';
+      if(histKeys.length){
+        histKeys.forEach(k => {
+          const span = document.createElement('span');
+          span.className = 'pill info';
+          span.textContent = k + ': ' + hist[k];
+          histBox.appendChild(span);
+        });
+        histBox.style.display = '';
+      }else{
+        histBox.style.display = 'none';
+      }
+
+      const notes = Array.isArray(p.warnings) ? p.warnings : [];
+      warnList.innerHTML = '';
+      notes.forEach(note => {
+        const li = document.createElement('li');
+        li.textContent = note;
+        warnList.appendChild(li);
+      });
+      warnWrap.style.display = notes.length ? '' : 'none';
+      section.style.display = '';
+    }
+
+    function renderCharts(flow){
+      const section = document.getElementById('offlineChartSection');
+      destroyOfflineCharts();
+      if(!section || typeof echarts === 'undefined' || !flow || !flow.profile){
+        if(section) section.style.display = 'none';
+        return;
+      }
+      const p = flow.profile;
+      let visibleCount = 0;
+
+      const showBox = (boxId, show) => {
+        const el = document.getElementById(boxId);
+        if(el) el.style.display = show ? '' : 'none';
+        if(show) visibleCount++;
+      };
+
+      const bitrate = Array.isArray(p.bitrate_timeline) ? p.bitrate_timeline : [];
+      const frameSizes = Array.isArray(p.frame_size_series) ? p.frame_size_series : [];
+      const deltas = Array.isArray(p.video_delta_series) ? p.video_delta_series : [];
+      const gops = Array.isArray(p.gop_intervals_ms) ? p.gop_intervals_ms : [];
+      const avSync = Array.isArray(p.av_sync_timeline) ? p.av_sync_timeline : [];
+
+      showBox('boxBitrate', bitrate.length > 0);
+      showBox('boxFrameSize', frameSizes.length > 0);
+      showBox('boxVideoDelta', deltas.length > 0);
+      showBox('boxIInterval', gops.length > 0);
+      showBox('boxAVSync', avSync.length > 0);
+
+      if(visibleCount === 0){
+        section.style.display = 'none';
+        return;
+      }
+      section.style.display = '';
+
+      const baseGrid = { left: 54, right: 18, top: 28, bottom: 28 };
+      try{
+        if(bitrate.length > 0){
+          const c = echarts.init(document.getElementById('chartBitrate'));
+          charts.bitrate = c;
+          c.setOption({
+            tooltip: { trigger: 'axis' },
+            legend: { top: 0, textStyle: { fontSize: 11 } },
+            grid: baseGrid,
+            xAxis: { type: 'category', data: bitrate.map(pt => pt.sec + 's') },
+            yAxis: { type: 'value', name: 'kbps' },
+            series: [
+              { name: '视频', type: 'line', smooth: true, showSymbol: bitrate.length < 40, data: bitrate.map(pt => pt.video_kbps), areaStyle: { opacity: 0.12 } },
+              { name: '音频', type: 'line', smooth: true, showSymbol: bitrate.length < 40, data: bitrate.map(pt => pt.audio_kbps) }
+            ]
+          });
+        }
+        if(frameSizes.length > 0){
+          const c = echarts.init(document.getElementById('chartFrameSize'));
+          charts.frameSize = c;
+          c.setOption({
+            tooltip: {
+              trigger: 'axis',
+              formatter: params => {
+                const it = params && params[0] && params[0].data;
+                if(!it) return '';
+                return '帧 #' + it.index + ' (' + (it.key ? '关键帧 I' : '非关键帧') + ')<br/>DTS: ' + it.dts + ' ms<br/>大小: ' + fmtBytes(it.value);
+              }
+            },
+            grid: baseGrid,
+            xAxis: { type: 'category', data: frameSizes.map(pt => '#' + pt.index) },
+            yAxis: { type: 'value', name: 'B' },
+            series: [{
+              type: 'bar',
+              barMaxWidth: 10,
+              data: frameSizes.map(pt => ({
+                value: pt.bytes,
+                index: pt.index,
+                dts: pt.dts,
+                key: !!pt.key,
+                itemStyle: { color: pt.key ? '#dc2626' : '#3b82f6' }
+              }))
+            }]
+          });
+        }
+        if(deltas.length > 0){
+          const c = echarts.init(document.getElementById('chartVideoDelta'));
+          charts.videoDelta = c;
+          c.setOption({
+            tooltip: { trigger: 'axis' },
+            grid: baseGrid,
+            xAxis: { type: 'category', data: deltas.map((_, i) => i + 1) },
+            yAxis: { type: 'value', name: 'ms' },
+            series: [{ type: 'line', showSymbol: deltas.length < 40, data: deltas, itemStyle: { color: '#0ea5e9' } }]
+          });
+        }
+        if(gops.length > 0){
+          const c = echarts.init(document.getElementById('chartIInterval'));
+          charts.gop = c;
+          c.setOption({
+            tooltip: { trigger: 'axis' },
+            grid: baseGrid,
+            xAxis: { type: 'category', data: gops.map((_, i) => '#' + (i + 1)) },
+            yAxis: { type: 'value', name: 'ms' },
+            series: [{ type: 'line', smooth: true, data: gops, itemStyle: { color: '#8b5cf6' } }]
+          });
+        }
+        if(avSync.length > 0){
+          const c = echarts.init(document.getElementById('chartAVSync'));
+          charts.avSync = c;
+          c.setOption({
+            tooltip: { trigger: 'axis' },
+            grid: baseGrid,
+            xAxis: { type: 'category', data: avSync.map(pt => pt.sec + 's') },
+            yAxis: { type: 'value', name: 'ms' },
+            series: [{ type: 'line', smooth: true, data: avSync.map(pt => pt.diff_ms), itemStyle: { color: '#10b981' } }]
+          });
+        }
+      }catch(_){}
+    }
+
+    function renderTSStats(flows){
+      const section = document.getElementById('tsStatsSection');
+      const box = document.getElementById('tsStatsCards');
+      if(!section || !box) return;
+      const sum = key => (flows || []).reduce((acc, f) => acc + Number(f && f[key] ? f[key] : 0), 0);
+      const stats = [
+        {k: 'PAT', v: sum('pat_count')},
+        {k: 'PMT', v: sum('pmt_count')},
+        {k: 'Program', v: sum('program_count')},
+        {k: 'PES', v: sum('pes_count')},
+        {k: 'NALU', v: sum('nalu_count')},
+        {k: '视频 PID', v: sum('video_pid_count')},
+        {k: '音频 PID', v: sum('audio_pid_count')}
+      ];
+      box.innerHTML = '';
+      stats.forEach(s => {
+        const card = document.createElement('div');
+        card.className = 'stat-card';
+        card.innerHTML = '<div class="k">' + esc(s.k) + '</div><div class="v">' + esc(s.v) + '</div>';
+        box.appendChild(card);
+      });
+      section.style.display = '';
+    }
+
+    function renderTSPIDs(taskId, flows){
+      const section = document.getElementById('tsPidSection');
+      const body = document.getElementById('tsPidBody');
+      const summary = document.getElementById('tsPidSummary');
+      if(!section || !body || !summary) return;
+      const all = [];
+      (flows || []).forEach(f => (Array.isArray(f.pid_details) ? f.pid_details : []).forEach(it => all.push(it)));
+      all.sort((a,b) => Number(a.pid || 0) - Number(b.pid || 0));
+      body.innerHTML = '';
+      const base = '/api/offline/tasks/' + encodeURIComponent(taskId) + '/files/';
+      all.forEach(it => {
         const tr = document.createElement('tr');
-        const client = (f.client_ip||'-')+':'+(f.client_port||'-');
-        const server = (f.server_ip||'-')+':'+(f.server_port||'-');
+        if((it.cc_errors || 0) > 0) tr.classList.add('anomaly-row');
+        const rel = toRel(taskId, it.output_path || '');
+        const linkCell = document.createElement('td');
+        if(rel){
+          addLink(linkCell, base + rel, rel);
+        }else{
+          linkCell.textContent = '-';
+        }
+        tr.innerHTML =
+          '<td><code>' + esc(it.pid ?? '-') + '</code></td>' +
+          '<td>' + esc(it.stream_type || '-') + '</td>' +
+          '<td>' + esc(it.codec || '-') + '</td>' +
+          '<td>' + esc(it.category || '-') + '</td>' +
+          '<td>' + esc(it.packet_count ?? 0) + '</td>' +
+          '<td>' + esc(it.pes_count ?? 0) + '</td>' +
+          '<td>' + esc(it.nalu_count ?? 0) + '</td>' +
+          '<td' + ((it.cc_errors || 0) > 0 ? ' class="err-text"' : '') + '>' + esc(it.cc_errors ?? 0) + '</td>' +
+          '<td>' + esc(it.pcr_count ?? 0) + '</td>' +
+          '<td>' + esc(fmtBytes(it.bytes ?? 0)) + '</td>';
+        tr.appendChild(linkCell);
+        body.appendChild(tr);
+      });
+      summary.textContent = 'TS PID 明细（共 ' + all.length + ' 项）';
+      section.style.display = '';
+    }
+
+    function fmt90kTick(valid, base){
+      if(!valid) return 'N/A';
+      const v = Number(base);
+      if(!isFinite(v)) return 'N/A';
+      return v + ' (' + (v/90000).toFixed(3) + 's)';
+    }
+
+    function naluBriefLine(nalus){
+      if(!nalus || !nalus.length) return '-';
+      return nalus.slice(0, 10).map(n => {
+        const name = n.type_name ? '(' + n.type_name + ')' : '';
+        return (n.codec || '') + ' t=' + String(n.type) + name + (n.key ? '*' : '');
+      }).join(', ');
+    }
+
+    function enrichFrames(frames){
+      const lastByMedia = {};
+      return (frames || []).map((it, idx) => {
+        const mt = String(it.media_type || '').toLowerCase();
+        const dts = Number(it.dts);
+        let delta = null;
+        if(isFinite(dts) && lastByMedia[mt] !== undefined){
+          delta = dts - lastByMedia[mt];
+        }
+        if(isFinite(dts)) lastByMedia[mt] = dts;
+        const ft = String(it.frame_type || '');
+        const isKey = ft.toUpperCase().startsWith('I');
+        const isAnomaly = delta !== null && (delta < 0 || delta > 1000);
+        return { raw: it, seq: idx + 1, media: mt, dts, delta, isKey, isAnomaly };
+      });
+    }
+
+    function getFilteredRows(){
+      const flow = activeFlow();
+      const mode = String((currentData && currentData.task && currentData.task.mode) || '').toLowerCase();
+      const filter = currentOfflineFilter || 'all';
+      if(!flow) return { kind: 'none', mode, rows: [], total: 0 };
+
+      if(mode === 'ts'){
+        const all = Array.isArray(flow.pes_details) ? flow.pes_details : [];
+        const rows = all.filter(it => {
+          const cat = String(it.category || '').toLowerCase();
+          if(filter === 'all') return true;
+          if(filter === 'video') return cat === 'video';
+          if(filter === 'audio') return cat === 'audio';
+          if(filter === 'key'){
+            const nalus = Array.isArray(it.nalus) ? it.nalus : [];
+            return nalus.some(n => !!n.key || String(n.type_name || '').toUpperCase() === 'IDR');
+          }
+          if(filter === 'anomaly') return false;
+          return true;
+        });
+        return { kind: 'ts', mode, rows, total: flow.pes_detail_total || all.length, truncated: !!flow.pes_details_truncated };
+      }
+
+      const enriched = enrichFrames(flow.frame_details || []);
+      const rows = enriched.filter(it => {
+        if(filter === 'all') return true;
+        if(filter === 'video') return it.media === 'video';
+        if(filter === 'audio') return it.media === 'audio';
+        if(filter === 'key') return it.media === 'video' && it.isKey;
+        if(filter === 'anomaly') return it.isAnomaly;
+        return true;
+      });
+      const total = (filter === 'all' && flow.profile && flow.profile.frame_total) ? Math.max(flow.profile.frame_total, rows.length) : rows.length;
+      return { kind: 'frames', mode, rows, total, truncated: !!(flow.profile && flow.profile.frames_truncated) };
+    }
+
+    function renderDetailTable(){
+      const section = document.getElementById('rawFrameSection');
+      const tsWrap = document.getElementById('tsPesWrap');
+      const rawWrap = document.getElementById('rawFrameWrap');
+      const pager = document.getElementById('detailPager');
+      const pagerInfo = document.getElementById('pagerInfo');
+      const pagerPrev = document.getElementById('pagerPrev');
+      const pagerNext = document.getElementById('pagerNext');
+      const anomalyBtn = document.querySelector('#offlineMediaFilterTabs button[data-filter="anomaly"]');
+
+      const res = getFilteredRows();
+      if(res.kind === 'none'){
+        if(section) section.style.display = 'none';
+        return;
+      }
+      section.style.display = '';
+      if(anomalyBtn) anomalyBtn.style.display = (res.kind === 'ts') ? 'none' : '';
+
+      const totalPages = Math.max(1, Math.ceil(res.rows.length / PAGE_SIZE));
+      if(currentPage > totalPages) currentPage = totalPages;
+      const start = (currentPage - 1) * PAGE_SIZE;
+      const pageRows = res.rows.slice(start, start + PAGE_SIZE);
+
+      if(res.rows.length > PAGE_SIZE){
+        pager.style.display = '';
+        pagerInfo.textContent = '第 ' + currentPage + ' / ' + totalPages + ' 页（共 ' + res.rows.length + ' 条）';
+        pagerPrev.disabled = currentPage <= 1;
+        pagerNext.disabled = currentPage >= totalPages;
+      }else{
+        pager.style.display = 'none';
+      }
+
+      if(res.kind === 'ts'){
+        tsWrap.style.display = '';
+        rawWrap.style.display = 'none';
+        const body = document.getElementById('tsPesBody');
+        const summary = document.getElementById('tsPesSummary');
+        const trunc = document.getElementById('tsPesTruncHint');
+        if(res.truncated){
+          trunc.style.display = '';
+          trunc.textContent = 'PES 明细已截断：全文件共 ' + res.total + ' 个 PES，列表保留前 ' + ((activeFlow().pes_details || []).length) + ' 条，上方概况与图表为全量统计。';
+        }else{
+          trunc.style.display = 'none';
+        }
+        body.innerHTML = '';
+        if(!pageRows.length){
+          body.innerHTML = '<tr><td colspan="11" style="color:var(--muted)">当前筛选条件下无 PES 数据</td></tr>';
+        }else{
+          pageRows.forEach((it, i) => {
+            const tr = document.createElement('tr');
+            tr.innerHTML =
+              '<td>' + esc(it.seq ?? (start + i + 1)) + '</td>' +
+              '<td><code>' + esc(it.pid ?? '-') + '</code></td>' +
+              '<td>' + esc(it.program_number ?? '-') + '</td>' +
+              '<td>' + esc(it.stream_type || '-') + '</td>' +
+              '<td>' + esc(it.category || '-') + '</td>' +
+              '<td>0x' + Number(it.stream_id ?? 0).toString(16) + '</td>' +
+              '<td>' + esc(fmt90kTick(it.pts_valid, it.pts_base)) + '</td>' +
+              '<td>' + esc(fmt90kTick(it.dts_valid, it.dts_base)) + '</td>' +
+              '<td>' + esc(fmtBytes(it.payload_len ?? 0)) + '</td>' +
+              '<td>' + esc(it.nalu_count ?? 0) + '</td>' +
+              '<td style="max-width:280px;word-break:break-all;font-size:.75rem">' + esc(naluBriefLine(it.nalus)) + '</td>';
+            body.appendChild(tr);
+          });
+        }
+        summary.textContent = 'TS PES 包列表（筛选命中 ' + res.rows.length + ' / 全量 ' + res.total + '）';
+        return;
+      }
+
+      tsWrap.style.display = 'none';
+      rawWrap.style.display = '';
+      const head = document.getElementById('rawFrameHead');
+      const body = document.getElementById('rawFrameBody');
+      const summary = document.getElementById('rawFrameSummary');
+      const showCTS = (res.mode !== 'annexb');
+      head.innerHTML = '<tr><th>#</th><th>媒体</th><th>DTS (ms)</th><th>ΔDTS (ms)</th><th>PTS (ms)</th>' + (showCTS ? '<th>CTS (ms)</th>' : '') + '<th>长度</th><th>帧类型</th></tr>';
+      body.innerHTML = '';
+      if(!pageRows.length){
+        const cols = showCTS ? 8 : 7;
+        body.innerHTML = '<tr><td colspan="' + cols + '" style="color:var(--muted)">当前筛选条件下无逐帧数据</td></tr>';
+      }else{
+        pageRows.forEach(item => {
+          const it = item.raw;
+          const tr = document.createElement('tr');
+          if(item.isAnomaly) tr.classList.add('anomaly-row');
+          const deltaStr = item.delta === null ? '-' : (item.delta < 0 ? (item.delta + ' (回退)') : (item.delta > 1000 ? (item.delta + ' (间隔大)') : String(item.delta)));
+          let ftHtml = esc(it.frame_type || '-');
+          if(item.isKey) ftHtml = '<span class="pill key">' + esc(it.frame_type) + '</span>';
+          else if(String(it.frame_type || '').toUpperCase() === 'B') ftHtml = '<span class="pill bframe">B</span>';
+
+          const ctsCell = showCTS ? ('<td>' + esc(it.cts ?? 0) + '</td>') : '';
+          tr.innerHTML =
+            '<td>' + item.seq + '</td>' +
+            '<td>' + esc(it.media_type || '-') + '</td>' +
+            '<td>' + esc(it.dts ?? '-') + '</td>' +
+            '<td' + (item.isAnomaly ? ' class="err-text"' : '') + '>' + esc(deltaStr) + '</td>' +
+            '<td>' + esc(it.pts ?? '-') + '</td>' +
+            ctsCell +
+            '<td>' + esc(fmtBytes(it.frame_len ?? 0)) + '</td>' +
+            '<td>' + ftHtml + '</td>';
+          body.appendChild(tr);
+        });
+      }
+      summary.textContent = res.truncated && currentOfflineFilter === 'all'
+        ? ('音视频帧明细（明细保留前 ' + res.rows.length + ' / 全量 ' + res.total + ' 帧，完整统计见媒体概况）')
+        : ('音视频帧明细（当前筛选 ' + res.rows.length + ' 帧）');
+    }
+
+    function exportCurrentCSV(){
+      const res = getFilteredRows();
+      if(!res.rows.length){ alert('当前没有可导出的数据'); return; }
+      const lines = [];
+      const csvCell = v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
+      if(res.kind === 'ts'){
+        lines.push(['seq','pid','program','stream_type','category','stream_id','pts_90k','dts_90k','payload_len','nalu_count','nalus'].join(','));
+        res.rows.forEach(it => {
+          lines.push([
+            it.seq, it.pid, it.program_number || '', it.stream_type || '', it.category || '',
+            '0x' + Number(it.stream_id || 0).toString(16),
+            it.pts_valid ? it.pts_base : '', it.dts_valid ? it.dts_base : '',
+            it.payload_len || 0, it.nalu_count || 0, naluBriefLine(it.nalus)
+          ].map(csvCell).join(','));
+        });
+      }else{
+        lines.push(['seq','media_type','dts_ms','delta_dts_ms','pts_ms','cts_ms','frame_len','frame_type'].join(','));
+        res.rows.forEach(item => {
+          const it = item.raw;
+          lines.push([
+            item.seq, it.media_type || '', it.dts ?? '', item.delta ?? '',
+            it.pts ?? '', it.cts ?? '', it.frame_len ?? 0, it.frame_type || ''
+          ].map(csvCell).join(','));
+        });
+      }
+      const blob = new Blob(['\ufeff' + lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = (currentId || 'offline') + '_' + (currentOfflineFilter || 'all') + '.csv';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
+
+    function renderSingleFlows(taskId, flows){
+      const tb = document.getElementById('flowRaw');
+      tb.innerHTML = '';
+      const base = '/api/offline/tasks/' + encodeURIComponent(taskId) + '/files/';
+      (flows || []).forEach(f => {
+        const tr = document.createElement('tr');
+        const isTS = String(f.direction || '').toLowerCase() === 'ts';
         const links = document.createElement('div');
-        const isTS = String(f.direction||'').toLowerCase() === 'ts';
         const rawRel = toRel(taskId, f.raw_path);
         const vRel = toRel(taskId, f.video_path);
         const aRel = toRel(taskId, f.audio_path);
         const extras = Array.isArray(f.artifact_paths) ? f.artifact_paths : [];
-        let linkCount = 0;
-        if(!isTS && rawRel){ if(linkCount++) addSep(links); addLink(links, base+rawRel, 'raw'); }
-        if(vRel){ if(linkCount++) addSep(links); addLink(links, base+vRel, 'video'); }
-        if(aRel){ if(linkCount++) addSep(links); addLink(links, base+aRel, 'audio'); }
-        if(!isTS){
-          for(let i=0;i<extras.length;i++){
-            const rel = toRel(taskId, extras[i]);
-            if(!rel) continue;
-            if(linkCount++) addSep(links);
-            addLink(links, base+rel, 'artifact'+(i+1));
-          }
-        }
-
-        const tdFlow = document.createElement('td'); tdFlow.textContent = 'flow'+String(f.flow_id).padStart(3,'0');
-        const tdAddr = document.createElement('td'); tdAddr.textContent = client + ' → ' + server;
-        const tdSyn = document.createElement('td'); tdSyn.textContent = (f.has_syn ? ('Y('+ (f.syn_count||0) +')') : 'N');
-        const tdPkts = document.createElement('td'); tdPkts.textContent = String(f.tcp_pkt_count ?? '-');
-        const tdPayload = document.createElement('td'); tdPayload.textContent = fmtBytes(f.payload_bytes);
-        tr.appendChild(tdFlow); tr.appendChild(tdAddr); tr.appendChild(tdSyn); tr.appendChild(tdPkts); tr.appendChild(tdPayload);
-        if(withDir){
-          const tdDir = document.createElement('td'); tdDir.textContent = f.direction || '-';
-          tr.appendChild(tdDir);
-        }
-        const tdDump = document.createElement('td'); tdDump.textContent = f.dump_raw_dir || '-';
-        const codecLine = (function(){
-          const v = f.video_codec ? String(f.video_codec) : '';
-          const a = f.audio_codec ? String(f.audio_codec) : '';
-          if(v && a) return v + ' / ' + a;
-          if(v) return v;
-          if(a) return a;
-          return '-';
-        })();
-        const tdCodec = document.createElement('td'); tdCodec.textContent = codecLine;
+        let n = 0;
+        if(!isTS && rawRel){ if(n++) addSep(links); addLink(links, base + rawRel, '原始文件'); }
+        if(vRel){ if(n++) addSep(links); addLink(links, base + vRel, '视频裸流'); }
+        if(aRel){ if(n++) addSep(links); addLink(links, base + aRel, '音频裸流'); }
+        extras.forEach(p => {
+          const rel = toRel(taskId, p);
+          if(!rel) return;
+          if(n++) addSep(links);
+          addLink(links, base + rel, rel.split('/').pop());
+        });
+        const codec = [f.video_codec, f.audio_codec].filter(Boolean).join(' / ') || '-';
+        tr.innerHTML =
+          '<td>flow' + String(f.flow_id).padStart(3, '0') + '</td>' +
+          '<td>' + esc(f.direction || '-') + ' (' + esc(f.dump_raw_dir || '-') + ')</td>' +
+          '<td>' + esc(fmtBytes(f.payload_bytes)) + '</td>' +
+          '<td><code>' + esc(codec) + '</code></td>';
         const tdLinks = document.createElement('td'); tdLinks.appendChild(links);
-        const tdErr = document.createElement('td'); tdErr.textContent = f.error || '';
-        tr.appendChild(tdDump); tr.appendChild(tdCodec); tr.appendChild(tdLinks); tr.appendChild(tdErr);
+        const tdErr = document.createElement('td'); tdErr.className = 'err-text'; tdErr.textContent = f.error || '';
+        tr.appendChild(tdLinks);
+        tr.appendChild(tdErr);
         tb.appendChild(tr);
       });
     }
-    let iIntervalChart = null;
-    function destroyOfflineCharts(){
-      if(iIntervalChart){
-        try{ iIntervalChart.dispose(); }catch(_){}
-        iIntervalChart = null;
-      }
-    }
-    function pickTSDTS(item){
-      if(!item) return null;
-      if(item.dts_valid) return Number(item.dts_base);
-      return null;
-    }
-    function calcOfflineSeries(mode, flows){
-      const iIntervals = [];
-      if(mode === 'ts'){
-        const pes = [];
-        (flows || []).forEach(function(f){
-          const items = Array.isArray(f.pes_details) ? f.pes_details : [];
-          items.forEach(function(it){ pes.push(it); });
-        });
-        pes.sort(function(a,b){ return Number(a.seq || 0) - Number(b.seq || 0); });
-        let lastI = null;
-        pes.forEach(function(p){
-          const cat = String(p.category || '').toLowerCase();
-          const ts = pickTSDTS(p);
-          if(ts == null || !isFinite(ts)) return;
-          if(cat === 'video'){
-            const nalus = Array.isArray(p.nalus) ? p.nalus : [];
-            const isI = nalus.some(function(n){ return !!n.key; }) ||
-              nalus.some(function(n){ return String(n.type_name || '').toUpperCase() === 'IDR'; });
-            if(isI){
-              if(lastI != null) iIntervals.push((ts - lastI) / 90);
-              lastI = ts;
-            }
-          }
-        });
-      }else{
-        const frames = [];
-        (flows || []).forEach(function(f){
-          const items = Array.isArray(f.frame_details) ? f.frame_details : [];
-          items.forEach(function(it){ frames.push(it); });
-        });
-        let lastI = null;
-        frames.forEach(function(fr){
-          const media = String(fr.media_type || '').toLowerCase();
-          const dts = Number(fr.dts);
-          const ts = isFinite(dts) ? dts : null;
-          if(ts == null) return;
-          if(media === 'video'){
-            const ft = String(fr.frame_type || '').toUpperCase();
-            if(ft.startsWith('I')){
-              if(lastI != null) iIntervals.push(ts - lastI);
-              lastI = ts;
-            }
-          }
-        });
-      }
-      return { iIntervals };
-    }
-    function renderOfflineCharts(mode, flows){
-      const section = document.getElementById('offlineChartSection');
-      const iEl = document.getElementById('chartIInterval');
-      if(!section || !iEl) return;
-      destroyOfflineCharts();
-      if(typeof echarts === 'undefined'){
-        section.style.display = 'none';
-        return;
-      }
-      const filter = currentOfflineFilter || 'all';
-      if(filter === 'audio'){
-        iIntervalChart = echarts.init(iEl);
-        iIntervalChart.setOption({
-          title:{text:'音频无 I 帧间隔数据', left:'center', top:'middle'},
-          xAxis:{type:'category', data:[]},
-          yAxis:{type:'value'},
-          series:[]
-        });
-        section.style.display = '';
-        return;
-      }
-      const series = calcOfflineSeries(mode, flows);
-      iIntervalChart = echarts.init(iEl);
-      iIntervalChart.setOption({
-        tooltip:{trigger:'axis'},
-        xAxis:{type:'category', data:series.iIntervals.map(function(_,i){ return i+1; }), name:'I间隔序号'},
-        yAxis:{type:'value', name:'ms'},
-        series:[{type:'line', smooth:true, data:series.iIntervals}]
+
+    function renderPCAPFlows(taskId, flows, tbodyId){
+      const tb = document.getElementById(tbodyId);
+      tb.innerHTML = '';
+      const base = '/api/offline/tasks/' + encodeURIComponent(taskId) + '/files/';
+      (flows || []).forEach(f => {
+        const tr = document.createElement('tr');
+        const client = (f.client_ip || '-') + ':' + (f.client_port || '-');
+        const server = (f.server_ip || '-') + ':' + (f.server_port || '-');
+        const links = document.createElement('div');
+        const rawRel = toRel(taskId, f.raw_path);
+        const vRel = toRel(taskId, f.video_path);
+        const aRel = toRel(taskId, f.audio_path);
+        let n = 0;
+        if(rawRel){ if(n++) addSep(links); addLink(links, base + rawRel, 'raw'); }
+        if(vRel){ if(n++) addSep(links); addLink(links, base + vRel, 'video'); }
+        if(aRel){ if(n++) addSep(links); addLink(links, base + aRel, 'audio'); }
+        const codec = [f.video_codec, f.audio_codec].filter(Boolean).join(' / ') || '-';
+
+        tr.innerHTML =
+          '<td>flow' + String(f.flow_id).padStart(3, '0') + '</td>' +
+          '<td>' + esc(client + ' → ' + server) + '</td>' +
+          '<td>' + esc(f.has_syn ? ('Y(' + (f.syn_count || 0) + ')') : 'N') + '</td>' +
+          '<td>' + esc(f.tcp_pkt_count ?? '-') + '</td>' +
+          '<td>' + esc(fmtBytes(f.payload_bytes)) + '</td>' +
+          '<td>' + esc(f.dump_raw_dir || '-') + '</td>' +
+          '<td><code>' + esc(codec) + '</code></td>';
+        const tdLinks = document.createElement('td'); tdLinks.appendChild(links);
+        const tdErr = document.createElement('td'); tdErr.className = 'err-text'; tdErr.textContent = f.error || '';
+        tr.appendChild(tdLinks);
+        tr.appendChild(tdErr);
+        tb.appendChild(tr);
       });
-      section.style.display = '';
     }
-    function renderFLVMetadata(flows){
+
+    function renderFLVMetadata(flow){
       const section = document.getElementById('flvMetadataSection');
       const box = document.getElementById('flvMetadataBox');
       if(!section || !box) return;
-      let raw = '';
-      (flows || []).forEach(function(f){
-        if(!raw && f && f.flv_metadata_json){
-          raw = String(f.flv_metadata_json);
-        }
-      });
+      const raw = (flow && flow.flv_metadata_json) ? String(flow.flv_metadata_json) : '';
       if(!raw){
-        box.textContent = 'metadata: -';
         section.style.display = 'none';
         return;
       }
-      try{
-        box.textContent = JSON.stringify(JSON.parse(raw), null, 2);
-      }catch(_){
-        box.textContent = raw;
-      }
+      try{ box.textContent = JSON.stringify(JSON.parse(raw), null, 2); }
+      catch(_){ box.textContent = raw; }
       section.style.display = '';
     }
+
+    function setupMP4ReportPreview(taskId, flow){
+      const section = document.getElementById('mp4ReportSection');
+      const details = document.getElementById('mp4ReportDetails');
+      const box = document.getElementById('mp4ReportBox');
+      const hint = document.getElementById('mp4ReportHint');
+      if(!section || !details || !box) return;
+      const extras = (flow && Array.isArray(flow.artifact_paths)) ? flow.artifact_paths : [];
+      const reportAbs = extras.find(p => String(p).endsWith('mp4_report.txt'));
+      const rel = reportAbs ? toRel(taskId, reportAbs) : '';
+      if(!rel){
+        section.style.display = 'none';
+        return;
+      }
+      section.style.display = '';
+      details.open = false;
+      box.style.display = 'none';
+      box.textContent = '';
+      hint.textContent = '展开后自动加载前 500 行预览。';
+      const reportKey = taskId + '/' + rel;
+      details.ontoggle = async () => {
+        if(!details.open || loadedMP4ReportKey === reportKey) return;
+        hint.textContent = '加载中…';
+        try{
+          const resp = await fetch('/api/offline/tasks/' + encodeURIComponent(taskId) + '/files/' + rel);
+          if(!resp.ok){ hint.textContent = '加载失败 (HTTP ' + resp.status + ')'; return; }
+          const text = await resp.text();
+          const lines = text.split('\n');
+          const preview = lines.slice(0, 500).join('\n');
+          box.textContent = lines.length > 500 ? (preview + '\n\n... 共 ' + lines.length + ' 行，完整内容请下载 mp4_report.txt 查看') : preview;
+          box.style.display = '';
+          hint.textContent = '共 ' + lines.length + ' 行' + (lines.length > 500 ? '（仅预览前 500 行）' : '');
+          loadedMP4ReportKey = reportKey;
+        }catch(e){
+          hint.textContent = '加载失败：' + (e && e.message ? e.message : e);
+        }
+      };
+    }
+
+    function renderFocusedFlow(){
+      if(!currentData) return;
+      const task = currentData.task || {};
+      const mode = String(task.mode || '').toLowerCase();
+      const flow = activeFlow();
+      renderMediaProfile(mode, flow);
+      renderCharts(flow);
+      renderDetailTable();
+      if(mode === 'flv') renderFLVMetadata(flow);
+      else document.getElementById('flvMetadataSection').style.display = 'none';
+      if(mode === 'mp4') setupMP4ReportPreview(task.id, flow);
+      else document.getElementById('mp4ReportSection').style.display = 'none';
+    }
+
     async function show(id){
       currentId = id;
+      currentPage = 1;
+      loadedMP4ReportKey = '';
       const res = await fetch('/api/offline/tasks/' + encodeURIComponent(id));
-      if (currentId !== id) return;
-      if (!res.ok) {
+      if(currentId !== id) return;
+      if(!res.ok){
         setRunHint('无法读取离线任务（HTTP ' + res.status + '）。');
         return;
       }
       const data = await res.json();
-      if (currentId !== id) return;
+      if(currentId !== id) return;
+      currentData = data;
       document.getElementById('detail').style.display = 'block';
+
       const task = data.task || {};
       const summary = data.summary || {};
-      const flows = (summary.flows || []);
+      const flows = Array.isArray(summary.flows) ? summary.flows : [];
+      const mode = String(task.mode || '').toLowerCase();
+
+      const headerTitle = document.getElementById('detailHeaderTitle');
+      if(headerTitle){
+        headerTitle.innerHTML = '<span>任务详情 · ' + esc(task.input_name || task.id) + '</span>' +
+          '<span class="pill ' + esc(String(task.status || '').toLowerCase()) + '">' + esc(task.status || '-') + '</span>';
+      }
 
       const act = document.getElementById('taskActions');
       act.innerHTML = '';
-      const base = '/api/offline/tasks/'+id+'/files/';
+      const reparseBtn = document.createElement('button');
+      reparseBtn.className = 'btn secondary sm';
+      reparseBtn.textContent = '重新解析';
+      reparseBtn.disabled = String(task.status || '').toLowerCase() === 'running';
+      reparseBtn.onclick = () => reparseTask(task.id);
+      act.appendChild(reparseBtn);
+
+      const base = '/api/offline/tasks/' + encodeURIComponent(id) + '/files/';
       const inputRel = toRel(id, task.input_path);
       const summaryRel = toRel(id, task.summary_path);
-      if(inputRel) addLink(act, base+inputRel, '下载 input');
-      addLink(act, base+'summary.txt', '下载 summary.txt');
-      if(summaryRel) addLink(act, base+summaryRel, '下载 summary.json');
+      if(inputRel) addLink(act, base + inputRel, '下载 input');
+      if(summaryRel){
+        addLink(act, base + 'summary.txt', '下载 summary.txt');
+        addLink(act, base + summaryRel, '下载 summary.json');
+      }
 
-      const mode = String(task.mode||'').toLowerCase();
       const kv = document.getElementById('taskKV');
       kv.innerHTML = '';
-      const lines = [];
-      lines.push(kvLine('task_id', task.id));
-      lines.push(kvLine('mode', task.mode));
-      lines.push(kvLine('status', task.status));
-      lines.push(kvLine('server_port', (mode === 'pcap' && task.server_port) ? task.server_port : '-'));
-      lines.push(kvLine('input_name', task.input_name));
-      lines.push(kvLine('created_at', task.created_at));
-      lines.push(kvLine('started_at', task.started_at));
-      lines.push(kvLine('finished_at', task.finished_at));
-      lines.push(kvLine('flows', flows.length));
-      if(task.error) lines.push(kvLine('error', task.error));
-      lines.flat().forEach(n=>kv.appendChild(n));
+      const lines = [
+        kvLine('task_id', task.id),
+        kvLine('文件名 / 大小', (task.input_name || '-') + (task.input_size ? (' (' + fmtBytes(task.input_size) + ')') : '')),
+        kvLine('模式', (task.mode || '-') + (task.detected_by ? (' · ' + task.detected_by) : '')),
+        kvLine('状态', task.status),
+        kvLine('创建时间', fmtTime(task.created_at)),
+        kvLine('完成时间', fmtTime(task.finished_at)),
+        kvLine('流数量 (flows)', flows.length)
+      ];
+      if(mode === 'pcap'){
+        lines.push(kvLine('RTMP 端口 / skip', (task.server_port || 1935) + ' / ' + (task.skip_bytes ?? 0) + ' B'));
+      }else if(mode === 'raw'){
+        lines.push(kvLine('握手跳过字节', (task.skip_bytes ?? 0) + ' B'));
+      }
+      if(task.error) lines.push(kvLine('错误', task.error));
+      lines.flat().forEach(n => kv.appendChild(n));
+
+      // Pick default primary flow (most video frames)
+      let bestIdx = 0;
+      let bestFrames = -1;
+      flows.forEach((f, idx) => {
+        const vf = (f && f.profile && f.profile.video_frames) || 0;
+        if(vf > bestFrames){ bestFrames = vf; bestIdx = idx; }
+      });
+      currentFlowIndex = bestIdx;
+
+      const switcherWrap = document.getElementById('flowSwitcherWrap');
+      const flowSel = document.getElementById('flowSelect');
+      if(flows.length > 1 && flowSel){
+        flowSel.innerHTML = '';
+        flows.forEach((f, idx) => {
+          const opt = document.createElement('option');
+          opt.value = String(idx);
+          const codec = [f.video_codec, f.audio_codec].filter(Boolean).join('/') || '-';
+          opt.textContent = 'flow' + String(f.flow_id).padStart(3, '0') + ' · ' + (f.direction || 'unknown') + ' · ' + codec + ' · ' + fmtBytes(f.payload_bytes);
+          if(idx === currentFlowIndex) opt.selected = true;
+          flowSel.appendChild(opt);
+        });
+        switcherWrap.style.display = '';
+      }else{
+        switcherWrap.style.display = 'none';
+      }
 
       const rawSection = document.getElementById('rawSection');
       const pushSection = document.getElementById('pushSection');
       const pullSection = document.getElementById('pullSection');
-      const rawHint = document.getElementById('rawHint');
       const tsStatsSection = document.getElementById('tsStatsSection');
       const tsPidSection = document.getElementById('tsPidSection');
-      const rawFrameSection = document.getElementById('rawFrameSection');
-      const offlineChartSection = document.getElementById('offlineChartSection');
-      const flvMetadataSection = document.getElementById('flvMetadataSection');
+      const rawTitle = document.getElementById('offlineRawSectionTitle');
+      const rawHint = document.getElementById('rawHint');
 
-      const push = flows.filter(f=>String(f.direction).toLowerCase()==='push');
-      const pull = flows.filter(f=>String(f.direction).toLowerCase()==='pull');
-      const rawFlows = flows.filter(f=>{
-        const d = String(f.direction).toLowerCase();
-        return d === 'raw' || d === 'flv' || d === 'mp4';
-      });
-      const tsFlows = flows.filter(f=>String(f.direction).toLowerCase()==='ts');
-
-      const rawSectionTitle = document.getElementById('offlineRawSectionTitle');
-      if(rawSectionTitle){
-        if(mode === 'mp4') rawSectionTitle.textContent = 'MP4 解析结果';
-        else if(mode === 'flv') rawSectionTitle.textContent = 'FLV 解析结果';
-        else if(mode === 'ts') rawSectionTitle.textContent = 'TS 解析结果';
-        else if(mode === 'raw') rawSectionTitle.textContent = 'Raw 解析结果（单方向）';
-        else rawSectionTitle.textContent = '单文件 / Raw 解析结果';
-      }
-      const rawFrameSub = document.getElementById('offlineRawFrameSubtitle');
-      if(rawFrameSub){
-        if(mode === 'mp4') rawFrameSub.textContent = '音视频逐帧明细（MP4，DTS/PTS 为毫秒）';
-        else if(mode === 'flv') rawFrameSub.textContent = '音视频逐帧明细（FLV）';
-        else if(mode === 'raw') rawFrameSub.textContent = 'Raw 逐帧明细（RTMP 裸流）';
-        else rawFrameSub.textContent = '音视频逐帧明细';
-      }
-
-      if(mode === 'raw' || mode === 'ts' || mode === 'flv' || mode === 'mp4'){
-        if(rawSection) rawSection.style.display = '';
-        if(rawHint) rawHint.style.display = '';
-        if(rawHint) rawHint.textContent = mode === 'ts' ? 'TS 模式展示单文件解析结果' : ((mode === 'flv' || mode === 'mp4') ? (mode === 'mp4' ? 'MP4 模式展示单文件解析结果' : 'FLV 模式展示单文件解析结果') : '仅 raw 模式展示');
-        if(pushSection) pushSection.style.display = 'none';
-        if(pullSection) pullSection.style.display = 'none';
-      }else{
-        if(rawSection) rawSection.style.display = 'none';
-        if(pushSection) pushSection.style.display = '';
-        if(pullSection) pullSection.style.display = '';
-      }
-      if(mode === 'ts'){
-        renderTSStats(tsFlows);
-        renderTSPIDs(id, tsFlows);
-        renderTSPESDetails(tsFlows);
-        renderOfflineCharts('ts', tsFlows);
-        if(flvMetadataSection) flvMetadataSection.style.display = 'none';
-      }else if(mode === 'raw' || mode === 'flv' || mode === 'mp4'){
-        if(tsStatsSection) tsStatsSection.style.display = 'none';
-        if(tsPidSection) tsPidSection.style.display = 'none';
-        renderRawFrames(mode, rawFlows);
-        renderOfflineCharts(mode, rawFlows);
-        if(mode === 'flv'){
-          renderFLVMetadata(rawFlows);
-        }else if(flvMetadataSection){
-          flvMetadataSection.style.display = 'none';
-        }
-      }else if(tsStatsSection){
+      if(mode === 'pcap'){
+        rawSection.style.display = 'none';
         tsStatsSection.style.display = 'none';
-        if(tsPidSection) tsPidSection.style.display = 'none';
-        if(rawFrameSection) rawFrameSection.style.display = 'none';
-        if(offlineChartSection) offlineChartSection.style.display = 'none';
-        if(flvMetadataSection) flvMetadataSection.style.display = 'none';
-        destroyOfflineCharts();
+        tsPidSection.style.display = 'none';
+        pushSection.style.display = '';
+        pullSection.style.display = '';
+        renderPCAPFlows(id, flows.filter(f => String(f.direction).toLowerCase() === 'push'), 'flowPush');
+        renderPCAPFlows(id, flows.filter(f => String(f.direction).toLowerCase() === 'pull'), 'flowPull');
+      }else{
+        rawSection.style.display = '';
+        pushSection.style.display = 'none';
+        pullSection.style.display = 'none';
+        const titles = { mp4: 'MP4 产物', flv: 'FLV 产物', ts: 'TS 产物', raw: 'RTMP Raw 产物', annexb: 'Annex B 裸流产物' };
+        rawTitle.textContent = titles[mode] || '解析产物';
+        rawHint.textContent = mode === 'ts' ? '各 PID 独立 ES 文件见上方「TS PID 明细」表格。' : '';
+        renderSingleFlows(id, flows);
+        if(mode === 'ts'){
+          renderTSStats(flows);
+          renderTSPIDs(id, flows);
+        }else{
+          tsStatsSection.style.display = 'none';
+          tsPidSection.style.display = 'none';
+        }
       }
 
-      renderFlows(id, mode === 'ts' ? tsFlows : rawFlows, 'flowRaw', false);
-      renderFlows(id, push, 'flowPush', false);
-      renderFlows(id, pull, 'flowPull', false);
+      renderFocusedFlow();
+      await loadTasks();
     }
-    setInterval(loadTasks, 3000);
-    loadTasks();
-    const requestedTask = new URLSearchParams(location.search).get('task');
-    if (requestedTask && /^[A-Za-z0-9_-]{1,128}$/.test(requestedTask)) {
-      show(requestedTask).catch(() => setRunHint('无法连接离线解析服务。'));
-    }
+
+    window.addEventListener('resize', () => {
+      Object.keys(charts).forEach(k => { if(charts[k]) try{ charts[k].resize(); }catch(_){} });
+    });
+
+    initDropzone();
     const modeEl = document.getElementById('mode');
     if(modeEl) modeEl.addEventListener('change', updateModeHint);
     updateModeHint();
+    setInterval(loadTasks, 4000);
+    loadTasks();
+
+    const requestedTask = new URLSearchParams(location.search).get('task');
+    if(requestedTask && /^[A-Za-z0-9_-]{1,128}$/.test(requestedTask)){
+      show(requestedTask).catch(() => setRunHint('无法连接离线解析服务。'));
+    }
   </script>
 </body>
 </html>

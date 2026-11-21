@@ -3,6 +3,7 @@ package offline
 import (
 	"os"
 	"path/filepath"
+	"strings"
 
 	"streamanalyzer/internal/models"
 	"streamanalyzer/internal/mp4parse"
@@ -29,13 +30,16 @@ func (m *Manager) runMP4(task *models.OfflineTask, taskDir string, summary *mode
 		ReportWriter:   rf,
 	})
 	_ = rf.Close()
-	if err != nil {
+	if err != nil && !missingMP4Track(err) {
 		return err
 	}
 
-	frames, vcodec, acodec, err := mp4parse.OfflineFrameDetailsFromPath(task.InputPath)
+	frames, vcodec, acodec, profile, err := mp4parse.OfflineFrameDetailsFromPath(task.InputPath)
 	if err != nil {
 		return err
+	}
+	if profile == nil {
+		profile = &models.OfflineMediaProfile{}
 	}
 
 	flow := models.OfflineFlowResult{
@@ -47,9 +51,9 @@ func (m *Manager) runMP4(task *models.OfflineTask, taskDir string, summary *mode
 		AudioPath:     audioPath,
 		VideoCodec:    vcodec,
 		AudioCodec:    acodec,
-		FrameDetails:  frames,
 		ArtifactPaths: []string{reportPath},
 	}
+	attachMediaProfile(&flow, frames, *profile)
 
 	cleanupEmptyFile(&flow.VideoPath)
 	cleanupEmptyFile(&flow.AudioPath)
@@ -66,4 +70,12 @@ func (m *Manager) runMP4(task *models.OfflineTask, taskDir string, summary *mode
 
 	summary.Flows = append(summary.Flows, flow)
 	return nil
+}
+
+func missingMP4Track(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "未找到视频轨") || strings.Contains(msg, "未找到音频轨")
 }

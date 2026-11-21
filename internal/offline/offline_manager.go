@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
 	"streamanalyzer/internal/models"
+	"streamanalyzer/internal/rtmpraw"
 )
 
 type Manager struct {
@@ -28,7 +30,8 @@ func NewManager(baseDir string) *Manager {
 func (m *Manager) BaseDir() string { return m.baseDir }
 
 // LoadExisting loads persisted task.json under baseDir/offline/* into memory.
-// It is best-effort: invalid entries are skipped.
+// Tasks left in pending/running from an interrupted process are marked failed
+// so they do not stay stuck forever and can be reparsed.
 func (m *Manager) LoadExisting() {
 	root := filepath.Join(m.baseDir, "offline")
 	entries, err := os.ReadDir(root)
@@ -50,6 +53,24 @@ func (m *Manager) LoadExisting() {
 		}
 		if t.ID == "" {
 			t.ID = taskID
+		}
+		changed := false
+		if t.InputSize == 0 && t.InputPath != "" {
+			if st, err := os.Stat(t.InputPath); err == nil {
+				t.InputSize = st.Size()
+				changed = true
+			}
+		}
+		if t.Status == models.OfflineStatusRunning || t.Status == models.OfflineStatusPending {
+			t.Status = models.OfflineStatusFailed
+			if t.Error == "" {
+				t.Error = "服务重启导致解析中断，可点击重新解析"
+			}
+			t.FinishedAt = time.Now()
+			changed = true
+		}
+		if changed {
+			_ = m.writeTaskFile(&t)
 		}
 		m.mu.Lock()
 		m.tasks[t.ID] = &t
@@ -89,7 +110,40 @@ func (m *Manager) CreateTask(req *models.OfflineTaskRequest, uploadedFilename st
 	// Persist task.json early so refresh after restart can show it.
 	_ = m.writeTaskFile(task)
 
-	return task, inputPath, nil
+	cp := *task
+	return &cp, inputPath, nil
+}
+
+// PrepareTask inspects the uploaded input file to record its size and resolve
+// auto-detected mode before launching parsing.
+func (m *Manager) PrepareTask(taskID string, skipExplicit bool) (*models.OfflineTask, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	task, ok := m.tasks[taskID]
+	if !ok {
+		return nil, fmt.Errorf("task not found")
+	}
+	if st, err := os.Stat(task.InputPath); err == nil {
+		task.InputSize = st.Size()
+	}
+	if task.Mode == "" || task.Mode == models.OfflineModeAuto {
+		detected, reason := DetectMode(task.InputPath, task.InputName)
+		if detected == "" {
+			return nil, fmt.Errorf("无法自动识别文件格式，请手动选择模式（支持 pcap / raw / flv / ts / mp4 / annexb）")
+		}
+		task.Mode = detected
+		task.DetectedBy = reason
+		if task.Mode == models.OfflineModePCAP && task.ServerPort == 0 {
+			task.ServerPort = 1935
+		}
+		if (task.Mode == models.OfflineModeRaw || task.Mode == models.OfflineModePCAP) && !skipExplicit {
+			task.SkipBytes = rtmpraw.DefaultHandshakeSkipBytes
+		}
+	}
+	_ = m.writeTaskFile(task)
+	cp := *task
+	return &cp, nil
 }
 
 func (m *Manager) StartTask(taskID string) error {
@@ -104,12 +158,86 @@ func (m *Manager) StartTask(taskID string) error {
 		return nil
 	}
 	task.Status = models.OfflineStatusRunning
+	task.Error = ""
 	task.StartedAt = time.Now()
+	task.FinishedAt = time.Time{}
 	_ = m.writeTaskFile(task)
 	m.mu.Unlock()
 
 	go m.run(taskID)
 	return nil
+}
+
+// DeleteTask removes a finished/failed task from memory and deletes its local directory.
+func (m *Manager) DeleteTask(taskID string) error {
+	if !isSafeTaskID(taskID) {
+		return fmt.Errorf("invalid task id")
+	}
+	m.mu.Lock()
+	task, ok := m.tasks[taskID]
+	if !ok {
+		m.mu.Unlock()
+		return fmt.Errorf("task not found")
+	}
+	if task.Status == models.OfflineStatusRunning {
+		m.mu.Unlock()
+		return fmt.Errorf("任务正在解析中，无法删除")
+	}
+	delete(m.tasks, taskID)
+	m.mu.Unlock()
+
+	taskDir := filepath.Join(m.baseDir, "offline", taskID)
+	return os.RemoveAll(taskDir)
+}
+
+// ReparseTask cleans previous derived artifacts (keeping input/) and re-runs parsing.
+func (m *Manager) ReparseTask(taskID string) (*models.OfflineTask, error) {
+	if !isSafeTaskID(taskID) {
+		return nil, fmt.Errorf("invalid task id")
+	}
+	m.mu.Lock()
+	task, ok := m.tasks[taskID]
+	if !ok {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("task not found")
+	}
+	if task.Status == models.OfflineStatusRunning {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("任务正在解析中")
+	}
+	if task.InputPath == "" {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("输入文件路径缺失")
+	}
+	if st, err := os.Stat(task.InputPath); err != nil {
+		m.mu.Unlock()
+		return nil, fmt.Errorf("输入文件不存在: %w", err)
+	} else {
+		task.InputSize = st.Size()
+	}
+
+	taskDir := filepath.Join(m.baseDir, "offline", taskID)
+	if entries, err := os.ReadDir(taskDir); err == nil {
+		for _, e := range entries {
+			name := e.Name()
+			if name == "input" || name == "task.json" {
+				continue
+			}
+			_ = os.RemoveAll(filepath.Join(taskDir, name))
+		}
+	}
+
+	task.Status = models.OfflineStatusRunning
+	task.Error = ""
+	task.SummaryPath = ""
+	task.StartedAt = time.Now()
+	task.FinishedAt = time.Time{}
+	_ = m.writeTaskFile(task)
+	cp := *task
+	m.mu.Unlock()
+
+	go m.run(taskID)
+	return &cp, nil
 }
 
 func (m *Manager) GetTask(taskID string) (*models.OfflineTask, error) {
@@ -157,11 +285,11 @@ func (m *Manager) writeSummary(taskID string, summary *models.OfflineSummary) er
 	}
 
 	var buf bytes.Buffer
-	buf.WriteString("=== RTMP Offline Summary ===\n")
+	buf.WriteString(fmt.Sprintf("=== Offline Summary (%s) ===\n", summary.Mode))
 	buf.WriteString(fmt.Sprintf("task=%s flows=%d\n", taskID, len(summary.Flows)))
 	for _, f := range summary.Flows {
 		buf.WriteString(fmt.Sprintf(
-			"flow%03d SYN=%v pkts=%d payloadBytes=%d client=%s:%d server=%s:%d dir=%s dump=%s raw=%s codec=%s err=%s\n",
+			"flow%03d SYN=%v pkts=%d payloadBytes=%d client=%s:%d server=%s:%d dir=%s dump=%s raw=%s video=%s audio=%s err=%s\n",
 			f.FlowID,
 			f.HasSYN,
 			f.TCPPktCount,
@@ -171,9 +299,23 @@ func (m *Manager) writeSummary(taskID string, summary *models.OfflineSummary) er
 			f.Direction,
 			f.DumpRawDir,
 			f.RawPath,
-			f.VideoCodec,
+			emptyOrDash(f.VideoCodec),
+			emptyOrDash(f.AudioCodec),
 			emptyOrDash(f.Error),
 		))
+		if p := f.Profile; p != nil {
+			buf.WriteString(fmt.Sprintf(
+				"  profile %dx%d %s@%s duration=%dms v=%d a=%d key=%d bframes=%d fps=%.2f vkbps=%.1f akbps=%.1f gop=%d/%d/%d delta=%d/%d/%d gaps=%d regressions=%d avOffset=%dms tsCC=%d warnings=%d\n",
+				p.Width, p.Height, emptyOrDash(p.Profile), emptyOrDash(p.LevelName),
+				p.DurationMS, p.VideoFrames, p.AudioFrames, p.Keyframes, p.BFrames, p.FrameRate,
+				p.VideoBitrateKbps, p.AudioBitrateKbps, p.GOPMinMS, p.GOPAvgMS, p.GOPMaxMS,
+				p.VideoDeltaMinMS, p.VideoDeltaAvgMS, p.VideoDeltaMaxMS,
+				p.LargeGaps, p.DTSRegressions, p.AVStartOffsetMS, p.TSCCErrors, len(p.Warnings),
+			))
+			for _, w := range p.Warnings {
+				buf.WriteString("  warning: " + w + "\n")
+			}
+		}
 	}
 	return os.WriteFile(filepath.Join(taskDir, "summary.txt"), buf.Bytes(), 0o644)
 }
@@ -185,13 +327,22 @@ func emptyOrDash(s string) string {
 	return s
 }
 
+func isSafeTaskID(id string) bool {
+	if id == "" || len(id) > 128 || strings.Contains(id, "..") || strings.ContainsAny(id, `/\`) {
+		return false
+	}
+	return true
+}
+
 func (m *Manager) run(taskID string) {
 	m.mu.RLock()
-	task, ok := m.tasks[taskID]
-	m.mu.RUnlock()
+	orig, ok := m.tasks[taskID]
 	if !ok {
+		m.mu.RUnlock()
 		return
 	}
+	task := *orig
+	m.mu.RUnlock()
 
 	summary := &models.OfflineSummary{
 		TaskID: taskID,
@@ -203,15 +354,17 @@ func (m *Manager) run(taskID string) {
 	var runErr error
 	switch task.Mode {
 	case models.OfflineModeRaw:
-		runErr = m.runRaw(task, taskDir, summary)
+		runErr = m.runRaw(&task, taskDir, summary)
 	case models.OfflineModePCAP:
-		runErr = m.runPCAP(task, taskDir, summary)
+		runErr = m.runPCAP(&task, taskDir, summary)
 	case models.OfflineModeTS:
-		runErr = m.runTS(task, taskDir, summary)
+		runErr = m.runTS(&task, taskDir, summary)
 	case models.OfflineModeFLV:
-		runErr = m.runFLV(task, taskDir, summary)
+		runErr = m.runFLV(&task, taskDir, summary)
 	case models.OfflineModeMP4:
-		runErr = m.runMP4(task, taskDir, summary)
+		runErr = m.runMP4(&task, taskDir, summary)
+	case models.OfflineModeAnnexB:
+		runErr = m.runAnnexB(&task, taskDir, summary)
 	default:
 		runErr = fmt.Errorf("unsupported mode: %s", task.Mode)
 	}

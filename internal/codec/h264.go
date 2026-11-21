@@ -16,6 +16,14 @@ type VideoMeta struct {
 	ProfileName string
 }
 
+// H264LevelName formats level_idc (for example 31) as "3.1".
+func H264LevelName(levelIDC int) string {
+	if levelIDC <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d.%d", levelIDC/10, levelIDC%10)
+}
+
 // H264ProfileName maps profile_idc to its common name.
 func H264ProfileName(profileIDC int) string {
 	switch profileIDC {
@@ -40,11 +48,11 @@ func H264ProfileName(profileIDC int) string {
 
 // AVCDecoderConfigurationRecord corresponds to ISO/IEC 14496-15 avcC box payload.
 type AVCDecoderConfigurationRecord struct {
-	ConfigurationVersion uint8
-	AVCProfileIndication uint8
-	ProfileCompatibility uint8
-	AVCLevelIndication   uint8
-	LengthSizeMinusOne   uint8
+	ConfigurationVersion  uint8
+	AVCProfileIndication  uint8
+	ProfileCompatibility  uint8
+	AVCLevelIndication    uint8
+	LengthSizeMinusOne    uint8
 	SequenceParameterSets [][]byte
 	PictureParameterSets  [][]byte
 }
@@ -106,6 +114,11 @@ func ParseAVCDecoderConfig(payload []byte) (*VideoMeta, error) {
 		return nil, fmt.Errorf("avc config has no sps")
 	}
 	return parseH264SPS(rec.SequenceParameterSets[0])
+}
+
+// ParseH264SPS reads one H.264 SPS NAL, including its one-byte header.
+func ParseH264SPS(nal []byte) (*VideoMeta, error) {
+	return parseH264SPS(nal)
 }
 
 func parseH264SPS(nal []byte) (*VideoMeta, error) {

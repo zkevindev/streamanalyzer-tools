@@ -51,42 +51,31 @@
 ## 2. 离线文件解析 API（`/api/offline/tasks`）
 
 - `POST /api/offline/tasks`：使用 `multipart/form-data` 上传文件
-  - `mode`：`raw`（完整 RTMP 握手单方向裸流）/ `pcap`（抓包自动区分 push/pull）/ `flv` / `ts` / `mp4`
+  - `mode`：`auto`（默认，基于魔数与扩展名自动识别）/ `flv` / `mp4`（含 fMP4）/ `ts`（MPEG-TS / M2TS）/ `annexb`（H.264 / H.265 裸码流）/ `pcap`（抓包自动区分 push/pull）/ `raw`（单方向 RTMP 裸流）
   - `server_port`：仅 `pcap` 模式有效（RTMP 端口，默认 `1935`）
-  - `skip_bytes`：握手跳过字节数（`raw` / `pcap` 有效）
+  - `skip_bytes`：握手跳过字节数（`raw` / `pcap` 有效，默认 `3073`，无握手可传 `0`）
   - `file`：上传媒体或抓包文件
 - `GET /api/offline/tasks`：列出离线解析任务
-- `GET /api/offline/tasks/:id`：获取任务状态与 `summary.json`（含 flow、编解码、逐帧或 TS PAT/PMT/PES/NALU 明细）
-- `GET /api/offline/tasks/:id/files/*name`：下载提取产物（如 `video.annexb`、`audio.adts.aac`、`mp4_report.txt`、`summary.json`）
+- `GET /api/offline/tasks/:id`：获取任务状态与 `summary.json`（含 flow、编解码、逐帧或 TS PAT/PMT/PES/NALU 明细，以及 `profile`：分辨率、Profile、时长、帧率、码率曲线、帧大小、帧间隔、GOP、音画偏移、TS 传输层 CC/TEI/PCR 与告警）
+- `POST /api/offline/tasks/:id/reparse`：保留原始输入文件并重新解析任务
+- `DELETE /api/offline/tasks/:id`：删除非运行中的离线解析任务及其磁盘产物
+- `GET /api/offline/tasks/:id/files/*name`：下载提取产物（如 `video.annexb`、`audio.adts.aac`、`audio.mp3`、`mp4_report.txt`、`summary.json`）
 
 ---
 
-## 3. HLS 交付分析 API（`/api/hls-stats/tasks`）
+## 3. 推流器模拟器 API（`/api/simulators/pusher`）
 
-在排障工作台选择 HLS 协议并切换至「交付分析与 A/B 对比」使用，按播放列表抽样分片统计 TTFB、吞吐分位、缓存命中、CDN 与 PTS 时长偏差。
+在模拟器工作台 `/simulators/pusher` 使用（仅本机访问），支持最多 **16 路并发** RTMP／RTMPS、RTSP／RTSPS（TCP/UDP）与标准 RFC 9725 WHIP 推流，推流源支持上传录像、本机文件路径（支持循环读取）、内置测试画面（`testsrc2` + 440Hz 正弦波）及浏览器摄像头／屏幕共享采集。
 
-- `POST /api/hls-stats/tasks`：创建任务，返回 `{id, status}`
-- `GET /api/hls-stats/tasks`：列出本次运行期间的 HLS 交付分析任务
-- `GET /api/hls-stats/tasks/:id`：查询状态与报告（`exit_code` 为 2–6 时 HTTP 仍返回 200）
-- `DELETE /api/hls-stats/tasks/:id`：取消运行中的任务（状态变为 `canceled`，保留已采集部分报告）
-
-请求示例：
-
-```json
-{
-  "command": "analyze",
-  "url": "<hls-m3u8-url>",
-  "segments": 10,
-  "variant": -1,
-  "parse_segments": true,
-  "duration": "30s",
-  "timeout": "10s",
-  "error_threshold": 0
-}
-```
-
-- `command` 支持 `analyze`、`manifest`、`monitor`、`compare`（需额外传 `url_b`）。
-- `variant` 为 `-1` 测最高码率，`0` 测最低码率；`EXT-X-GAP` 缺片计入 `summary.segments_skipped`，不计入错误率。
+- `GET /api/simulators/pusher/tasks`：列出所有推流任务与实时状态（已推时长、帧数、实时 FPS、码率、累计流量、ICE 状态、最近日志）
+- `GET /api/simulators/pusher/tasks/:id`：查询单路推流任务详情
+- `POST /api/simulators/pusher/tasks`：JSON 创建并启动推流任务（支持 `source_kind` 为 `file`、`pattern`、`browser`）
+- `POST /api/simulators/pusher/tasks/upload`：`multipart/form-data` 上传录像文件（上限 512 MiB）并启动推流，先传 `config`（JSON）再传 `file`
+- `POST /api/simulators/pusher/tasks/:id/stop`：停止指定推流任务（WHIP 会自动向 `Location` 发 `DELETE` 清理远端会话）
+- `POST /api/simulators/pusher/stop-all`：停止全部运行中任务
+- `DELETE /api/simulators/pusher/tasks/:id`：移除已结束／失败任务记录并清理上传临时文件
+- `GET /api/simulators/pusher/tasks/:id/ingest`：WebSocket 端点，接收浏览器摄像头／屏幕采集流（`MediaRecorder`）并实时转推到 RTMP／RTSP
+- `POST /api/simulators/pusher/whip-proxy` & `DELETE /api/simulators/pusher/whip-proxy`：供浏览器 WebRTC 采集直推外部 WHIP 服务使用的本机信令代理（规避 CORS）
 
 ---
 

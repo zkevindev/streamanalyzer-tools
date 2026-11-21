@@ -186,11 +186,13 @@ type SecondStat struct {
 type OfflineMode string
 
 const (
-	OfflineModeRaw  OfflineMode = "raw"
-	OfflineModePCAP OfflineMode = "pcap"
-	OfflineModeTS   OfflineMode = "ts"
-	OfflineModeFLV  OfflineMode = "flv"
-	OfflineModeMP4  OfflineMode = "mp4"
+	OfflineModeAuto   OfflineMode = "auto"
+	OfflineModeRaw    OfflineMode = "raw"
+	OfflineModePCAP   OfflineMode = "pcap"
+	OfflineModeTS     OfflineMode = "ts"
+	OfflineModeFLV    OfflineMode = "flv"
+	OfflineModeMP4    OfflineMode = "mp4"
+	OfflineModeAnnexB OfflineMode = "annexb"
 )
 
 type OfflineStatus string
@@ -216,8 +218,10 @@ type OfflineTask struct {
 	ServerPort uint16 `json:"server_port"`
 	SkipBytes  int    `json:"skip_bytes"`
 
-	InputName string `json:"input_name"`
-	InputPath string `json:"input_path"`
+	InputName  string `json:"input_name"`
+	InputPath  string `json:"input_path"`
+	InputSize  int64  `json:"input_size,omitempty"`
+	DetectedBy string `json:"detected_by,omitempty"`
 
 	SummaryPath string `json:"summary_path"`
 	Error       string `json:"error,omitempty"`
@@ -267,6 +271,7 @@ type OfflineFlowResult struct {
 	AudioCodec   string               `json:"audio_codec,omitempty"`
 	Error        string               `json:"error,omitempty"`
 	FLVMetadata  string               `json:"flv_metadata_json,omitempty"`
+	Profile      *OfflineMediaProfile `json:"profile,omitempty"`
 	PIDDetails   []OfflinePIDDetail   `json:"pid_details,omitempty"`
 	FrameDetails []OfflineFrameDetail `json:"frame_details,omitempty"`
 
@@ -276,13 +281,103 @@ type OfflineFlowResult struct {
 }
 
 type OfflinePIDDetail struct {
-	PID        uint16 `json:"pid"`
-	StreamType string `json:"stream_type,omitempty"`
-	Category   string `json:"category,omitempty"`
-	PESCount   int    `json:"pes_count,omitempty"`
-	NALUCount  int    `json:"nalu_count,omitempty"`
-	Bytes      int64  `json:"bytes,omitempty"`
-	OutputPath string `json:"output_path,omitempty"`
+	PID         uint16 `json:"pid"`
+	StreamType  string `json:"stream_type,omitempty"`
+	Codec       string `json:"codec,omitempty"`
+	Category    string `json:"category,omitempty"`
+	PacketCount int    `json:"packet_count,omitempty"`
+	PESCount    int    `json:"pes_count,omitempty"`
+	NALUCount   int    `json:"nalu_count,omitempty"`
+	CCErrors    int    `json:"cc_errors,omitempty"`
+	PCRCount    int    `json:"pcr_count,omitempty"`
+	Bytes       int64  `json:"bytes,omitempty"`
+	OutputPath  string `json:"output_path,omitempty"`
+}
+
+type OfflineBitratePoint struct {
+	Sec       int     `json:"sec"`
+	VideoKbps float64 `json:"video_kbps"`
+	AudioKbps float64 `json:"audio_kbps"`
+}
+
+type OfflineFrameSizePoint struct {
+	Index int   `json:"index"`
+	DTS   int64 `json:"dts"`
+	Bytes int   `json:"bytes"`
+	Key   bool  `json:"key,omitempty"`
+}
+
+type OfflineAVSyncPoint struct {
+	Sec    int   `json:"sec"`
+	DiffMS int64 `json:"diff_ms"` // audio DTS - video DTS
+}
+
+// OfflineMediaProfile is the structured readout for one parsed flow: codec
+// parameters, timeline health and downsampled series for charts.
+type OfflineMediaProfile struct {
+	VideoCodec string `json:"video_codec,omitempty"`
+	AudioCodec string `json:"audio_codec,omitempty"`
+
+	Width     int     `json:"width,omitempty"`
+	Height    int     `json:"height,omitempty"`
+	Profile   string  `json:"profile,omitempty"`
+	Level     int     `json:"level,omitempty"`
+	LevelName string  `json:"level_name,omitempty"`
+	FrameRate float64 `json:"frame_rate,omitempty"`
+
+	AudioSampleRate int `json:"audio_sample_rate,omitempty"`
+	AudioChannels   int `json:"audio_channels,omitempty"`
+
+	DurationMS  int64 `json:"duration_ms,omitempty"`
+	VideoFrames int   `json:"video_frames,omitempty"`
+	AudioFrames int   `json:"audio_frames,omitempty"`
+	Keyframes   int   `json:"keyframes,omitempty"`
+	BFrames     int   `json:"b_frames,omitempty"`
+	HasBFrames  bool  `json:"has_b_frames,omitempty"`
+
+	VideoBytes       int64   `json:"video_bytes,omitempty"`
+	AudioBytes       int64   `json:"audio_bytes,omitempty"`
+	VideoBitrateKbps float64 `json:"video_bitrate_kbps,omitempty"`
+	AudioBitrateKbps float64 `json:"audio_bitrate_kbps,omitempty"`
+
+	VideoDeltaMinMS int64 `json:"video_delta_min_ms,omitempty"`
+	VideoDeltaAvgMS int64 `json:"video_delta_avg_ms,omitempty"`
+	VideoDeltaMaxMS int64 `json:"video_delta_max_ms,omitempty"`
+
+	GOPMinMS       int64   `json:"gop_min_ms,omitempty"`
+	GOPAvgMS       int64   `json:"gop_avg_ms,omitempty"`
+	GOPMaxMS       int64   `json:"gop_max_ms,omitempty"`
+	GOPIntervalsMS []int64 `json:"gop_intervals_ms,omitempty"`
+
+	DTSRegressions int   `json:"dts_regressions,omitempty"`
+	LargeGaps      int   `json:"large_gaps,omitempty"`
+	MaxGapMS       int64 `json:"max_gap_ms,omitempty"`
+	AudioLargeGaps int   `json:"audio_large_gaps,omitempty"`
+
+	HasAVOffset     bool  `json:"has_av_offset,omitempty"`
+	AVStartOffsetMS int64 `json:"av_start_offset_ms,omitempty"`
+	AVDriftMaxMS    int64 `json:"av_drift_max_ms,omitempty"`
+
+	MP4FastStart  *bool `json:"mp4_fast_start,omitempty"`
+	MP4Fragmented bool  `json:"mp4_fragmented,omitempty"`
+
+	TSPacketCount int   `json:"ts_packet_count,omitempty"`
+	TSSyncErrors  int   `json:"ts_sync_errors,omitempty"`
+	TSTEIErrors   int   `json:"ts_tei_errors,omitempty"`
+	TSCCErrors    int   `json:"ts_cc_errors,omitempty"`
+	PCRCount      int   `json:"pcr_count,omitempty"`
+	PCRMaxGapMS   int64 `json:"pcr_max_gap_ms,omitempty"`
+
+	BitrateTimeline  []OfflineBitratePoint   `json:"bitrate_timeline,omitempty"`
+	VideoDeltaSeries []int64                 `json:"video_delta_series,omitempty"`
+	FrameSizeSeries  []OfflineFrameSizePoint `json:"frame_size_series,omitempty"`
+	AVSyncTimeline   []OfflineAVSyncPoint    `json:"av_sync_timeline,omitempty"`
+	NALUHistogram    map[string]int          `json:"nalu_histogram,omitempty"`
+
+	FrameTotal      int  `json:"frame_total,omitempty"`
+	FramesTruncated bool `json:"frames_truncated,omitempty"`
+
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 type OfflineFrameDetail struct {

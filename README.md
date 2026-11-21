@@ -8,11 +8,11 @@
 
 | 模块 | 访问路由 | 说明 |
 | --- | --- | --- |
-| **排障工作台** | `/diagnostics` | 支持 HTTP-FLV、RTMP/S、RTSP/S、HLS、HTTP/UDP/RTP MPEG-TS 采样，记录网络阶段耗时、HTTP 头与播放器体验，生成可离线复盘的 SHA-256 证据包及 AI 辅助汇总；选择 **HLS** 协议时可同页切换为**交付分析与 A/B 对比**（抽样分片、播放列表检查、直播窗口监控与缓存命中分析） |
+| **排障工作台** | `/diagnostics` | 支持 HTTP-FLV、RTMP/S、RTSP/S、HLS、HTTP/UDP/RTP MPEG-TS 采样，记录网络阶段耗时、HTTP 头与播放器体验，生成可离线复盘的 SHA-256 证据包及 AI 辅助汇总 |
 | **ONVIF 探测** | `/diagnostics/onvif` | 局域网 WS-Discovery 设备发现、凭据鉴权与 Media Profile 读取，一键回填 RTSP 采样地址 |
-| **协议模拟器** | `/simulators` | 内置 GB28181（含平台侧收流）、ONVIF、通用 SIP、HLS、RTMP/S、HTTP-FLV/MPEG-TS、WHEP 故障源与自动化场景回归 |
-| **离线复盘** | `/diagnostics/review`、`/offline` | 支持排障证据包（ZIP）离线校验与重算，以及 `raw` / `pcap` / `flv` / `ts` / `mp4` 媒体文件解析与裸流提取 |
-| **任务记录** | `/history` | 统一检索与回看排障采样、离线解析、HLS 交付与模拟器回归记录 |
+| **协议模拟器** | `/simulators` | 内置 GB28181（含平台侧收流）、ONVIF、通用 SIP、HLS、RTMP/S、HTTP-FLV/MPEG-TS、WHEP 故障源、多路 RTMP/RTSP/WHIP 推流器与自动化场景回归 |
+| **离线复盘** | `/diagnostics/review`、`/offline` | 支持排障证据包（ZIP）离线校验与重算，以及 `raw` / `pcap` / `flv` / `ts` / `mp4` / `annexb` 媒体文件解析与裸流提取 |
+| **任务记录** | `/history` | 统一检索与回看排障采样、离线解析与模拟器回归记录 |
 
 ## 快速开始
 
@@ -130,7 +130,7 @@ wails3 task package:darwin
 │   ├── diagnostic/       # 排障采样引擎、证据包、播放器与 AI 补查
 │   ├── handler/          # 路由处理器与内嵌前端静态资源 (static/)
 │   ├── hls/              # HLS 拉流客户端（供示例使用）
-│   ├── hlsdelivery/      # HLS 交付统计、监控与 A/B 对比
+│   ├── hlsdelivery/      # HLS 播放列表（m3u8）与分片媒体（TS/fMP4）解析库
 │   ├── models/           # 公共数据模型
 │   ├── mp4parse/         # MP4 解析与裸流导出
 │   ├── offline/          # 离线文件解析（raw / pcap / flv / ts / mp4）

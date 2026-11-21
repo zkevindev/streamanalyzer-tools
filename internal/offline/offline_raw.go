@@ -3,6 +3,7 @@ package offline
 import (
 	"os"
 	"path/filepath"
+	"strings"
 
 	"streamanalyzer/internal/models"
 	"streamanalyzer/internal/rtmpraw"
@@ -51,18 +52,20 @@ func (m *Manager) runRaw(task *models.OfflineTask, taskDir string, summary *mode
 	_ = af.Close()
 
 	flow := models.OfflineFlowResult{
-		FlowID:       1,
-		Direction:    "raw",
-		DumpRawDir:   "single",
-		RawPath:      task.InputPath,
-		VideoPath:    videoPath,
-		AudioPath:    audioPath,
-		VideoCodec:   res.VideoCodec,
-		FrameDetails: frameDetails,
+		FlowID:     1,
+		Direction:  "raw",
+		DumpRawDir: "single",
+		RawPath:    task.InputPath,
+		VideoPath:  videoPath,
+		AudioPath:  audioPath,
+		VideoCodec: res.VideoCodec,
+		AudioCodec: res.AudioCodec,
 	}
 	if parseErr != nil {
 		flow.Error = parseErr.Error()
 	}
+	retargetAudioFile(&flow.AudioPath, res.AudioCodec)
+	attachMediaProfile(&flow, frameDetails, profileFromRTMP(res))
 	summary.Flows = append(summary.Flows, flow)
 
 	// Cleanup: if audio file is empty, delete and hide it, and compute payload size
@@ -83,12 +86,40 @@ func (m *Manager) runRaw(task *models.OfflineTask, taskDir string, summary *mode
 	return parseErr
 }
 
+func profileFromRTMP(res rtmpraw.Result) models.OfflineMediaProfile {
+	seed := profileFromVideoMeta(res.Video, res.HEVC)
+	seed.VideoCodec = res.VideoCodec
+	seed.AudioCodec = res.AudioCodec
+	seed.Warnings = append([]string(nil), res.Warnings...)
+	if res.Audio != nil {
+		seed.AudioSampleRate = res.Audio.SampleRate
+		seed.AudioChannels = res.Audio.Channels
+	}
+	return seed
+}
+
+func retargetAudioFile(path *string, codecName string) {
+	if path == nil || *path == "" || codecName != "mp3" {
+		return
+	}
+	next := strings.TrimSuffix(*path, ".adts.aac") + ".mp3"
+	if next == *path {
+		return
+	}
+	if err := os.Rename(*path, next); err == nil {
+		*path = next
+	}
+}
+
 func cleanupEmptyFile(path *string) {
 	if path == nil || *path == "" {
 		return
 	}
 	st, err := os.Stat(*path)
 	if err != nil {
+		if os.IsNotExist(err) {
+			*path = ""
+		}
 		return
 	}
 	if st.Size() == 0 {

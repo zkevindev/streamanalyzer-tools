@@ -83,7 +83,7 @@
 
         <div class="card">
             <form id="history-filters" class="history-filters" aria-label="筛选任务记录">
-                <div><label for="history-source">任务来源</label><select id="history-source"><option value="all">全部来源</option><option value="diagnostic">排障采样</option><option value="offline">离线解析</option><option value="hls">HLS 交付</option><option value="simulator">模拟器回归</option></select></div>
+                <div><label for="history-source">任务来源</label><select id="history-source"><option value="all">全部来源</option><option value="diagnostic">排障采样</option><option value="offline">离线解析</option><option value="simulator">模拟器回归</option></select></div>
                 <div><label for="history-state">任务状态</label><select id="history-state"><option value="all">全部状态</option><option value="active">进行中</option><option value="finished">已结束</option><option value="error">失败或部分完成</option></select></div>
                 <div class="history-search"><label for="history-query">搜索记录</label><input type="search" id="history-query" placeholder="地址、文件名或任务 ID"></div>
                 <button type="button" class="btn secondary" id="refresh-history">刷新</button>
@@ -256,7 +256,6 @@
         const historySources = {
             diagnostic: { title: '排障采样', path: '/api/diagnostics/runs', rows: value => value || [] },
             offline: { title: '离线解析', path: '/api/offline/tasks', rows: value => value.tasks || [] },
-            hls: { title: 'HLS 交付', path: '/api/hls-stats/tasks', rows: value => value || [] },
             simulator: { title: '模拟器回归', path: '/api/simulators/runs?summary=1', rows: value => value.map(task => ({...task, status: task.passed ? 'passed' : 'failed'})) },
         };
         const historyStates = {
@@ -333,8 +332,6 @@
                     actions.append(historyLink('查看记录', '/diagnostics#' + encodedID));
                 } else if (kind === 'offline') {
                     actions.append(historyLink('查看解析', '/offline?task=' + encodedID));
-                } else if (kind === 'hls') {
-                    actions.append(historyLink('查看分析', '/diagnostics?protocol=hls&hls_mode=delivery&task=' + encodedID));
                 } else if (kind === 'simulator') {
                     actions.append(historyLink('查看回归', '/simulators/scenarios#run-' + encodedID));
                 } else if (state === 'running') {
@@ -347,8 +344,7 @@
             empty.textContent = historyRows.length ? '没有符合筛选条件的记录。' : '暂无历史记录。';
             empty.hidden = shown > 0 || (historyRows.length === 0 && historyUnavailable.length > 0);
             const available = historyUnavailable.length ? ` · 暂时无法读取${historyUnavailable.join('、')}` : '';
-            const scope = source === 'hls' ? ' · HLS 交付仅显示本次应用运行的任务' : '';
-            document.getElementById('history-status').textContent = `显示 ${shown} 条，共 ${historyRows.length} 条${available}${scope}`;
+            document.getElementById('history-status').textContent = `显示 ${shown} 条，共 ${historyRows.length} 条${available}`;
         }
         async function loadAllTasks() {
             const refresh = document.getElementById('refresh-history');
