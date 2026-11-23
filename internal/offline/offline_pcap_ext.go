@@ -61,6 +61,7 @@ type tcpStreamKey struct {
 
 type tcpSeg struct {
 	seq     uint32
+	ts      time.Time
 	payload []byte
 }
 
@@ -68,6 +69,7 @@ type tcpSeg struct {
 // 1. UDP RTP / RTCP flows (per SSRC: loss, out-of-order, jitter, payload depacketization for H.264/H.265/PS/TS/G.711)
 // 2. UDP raw MPEG-TS flows (188-byte sync 0x47)
 // 3. TCP HTTP-FLV & HTTP MPEG-TS responses
+// 4. TCP RTSP control signaling & RTSP-over-TCP interleaved RTP/RTCP ($ frames)
 func (m *Manager) extractExtendedPCAPFlows(ctx context.Context, task *models.OfflineTask, taskDir string, nextFlowID int) ([]models.OfflineFlowResult, error) {
 	f, err := os.Open(task.InputPath)
 	if err != nil {
@@ -185,11 +187,11 @@ func (m *Manager) extractExtendedPCAPFlows(ctx context.Context, task *models.Off
 			if len(tcp.Payload) == 0 {
 				continue
 			}
-			// Skip RTMP standard port handled by pcaprtmp unless user set another port; still inspect HTTP-FLV/TS on any port.
+			// Skip RTMP standard port handled by pcaprtmp unless user set another port; still inspect HTTP-FLV/TS/RTSP on any port.
 			tk := tcpStreamKey{srcIP, uint16(tcp.SrcPort), dstIP, uint16(tcp.DstPort)}
 			cp := make([]byte, len(tcp.Payload))
 			copy(cp, tcp.Payload)
-			tcpSegs[tk] = append(tcpSegs[tk], tcpSeg{seq: tcp.Seq, payload: cp})
+			tcpSegs[tk] = append(tcpSegs[tk], tcpSeg{seq: tcp.Seq, ts: pkt.Metadata().Timestamp, payload: cp})
 		}
 	}
 
@@ -318,6 +320,10 @@ func (m *Manager) extractExtendedPCAPFlows(ctx context.Context, task *models.Off
 			}
 		}
 	}
+
+	// 4. Process TCP RTSP signaling & RTSP-over-TCP interleaved RTP/RTCP streams
+	rtspFlows, _ := m.extractRTSPTCPFlows(ctx, task.ID, tcpSegs, taskDir, nextFlowID)
+	results = append(results, rtspFlows...)
 
 	return results, nil
 }

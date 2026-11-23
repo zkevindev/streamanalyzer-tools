@@ -68,7 +68,7 @@ func TestRollingValidation(t *testing.T) {
 	}
 	defer service.Close()
 	for _, req := range []SampleRequest{
-		{Protocol: ProtocolRTSPS, URL: "rtsps://camera.example/live", SegmentSeconds: 1},
+		{Protocol: ProtocolUDPTS, URL: "udp://127.0.0.1:5000", SegmentSeconds: 1},
 		{Protocol: ProtocolHTTPFLV, URL: "http://example.test/live.flv", SegmentSeconds: 1, RollingSegments: 13},
 		{Protocol: ProtocolHTTPFLV, URL: "http://example.test/live.flv", SegmentSeconds: 1, Playback: true},
 	} {

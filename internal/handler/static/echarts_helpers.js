@@ -35,13 +35,21 @@
     return out;
   }
 
+  const BENCH_COLORS_LIGHT = ['#0b6e82', '#4a525d', '#1f8a4c', '#c97a16', '#c82348', '#6c7582'];
+  const BENCH_COLORS_DARK = ['#38a8be', '#9fb0c2', '#34d399', '#f59e0b', '#fb7185', '#788494'];
+  const BENCH_MONO = 'ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace';
+
+  function isDarkBench() {
+    return document.documentElement.dataset.theme === 'dark';
+  }
+
   function avSyncLevel(diffMs) {
     var v = Math.abs(Number(diffMs));
-    if (Number.isNaN(v)) return { label: '未知', color: '#6b7280' };
-    if (v <= 20) return { label: '优秀', color: '#16a34a' };
-    if (v <= 50) return { label: '可接受', color: '#ca8a04' };
-    if (v <= 100) return { label: '偏大', color: '#ea580c' };
-    return { label: '异常', color: '#dc2626' };
+    if (Number.isNaN(v)) return { label: '未知', color: isDarkBench() ? '#788494' : '#6c7582' };
+    if (v <= 20) return { label: '优秀', color: isDarkBench() ? '#4ade80' : '#166534' };
+    if (v <= 50) return { label: '可接受', color: isDarkBench() ? '#fbbf24' : '#92400e' };
+    if (v <= 100) return { label: '偏大', color: isDarkBench() ? '#fb923c' : '#b45309' };
+    return { label: '异常', color: isDarkBench() ? '#fb7185' : '#9f1239' };
   }
 
   function baseGrid() {
@@ -53,6 +61,48 @@
       containLabel: true,
     };
   }
+
+  function applyBenchTheme(option) {
+    if (!option || typeof option !== 'object') return option;
+    const dark = isDarkBench();
+    option.color = dark ? BENCH_COLORS_DARK : BENCH_COLORS_LIGHT;
+    const titleColor = dark ? '#e6ebf1' : '#111418';
+    const legendColor = dark ? '#a2adba' : '#4a525d';
+    const mutedColor = dark ? '#788494' : '#6c7582';
+    const axisColor = dark ? 'rgba(255,255,255,0.16)' : '#d8dde3';
+    const splitColor = dark ? 'rgba(255,255,255,0.08)' : '#eceff3';
+    if (option.title) {
+      option.title.textStyle = Object.assign({ fontSize: 13, fontWeight: 500, color: titleColor }, option.title.textStyle);
+    }
+    if (option.legend) {
+      option.legend.textStyle = Object.assign({ fontSize: 12, color: legendColor }, option.legend.textStyle);
+    }
+    const styleAxis = function (ax) {
+      if (!ax) return;
+      ax.axisLabel = Object.assign({ color: mutedColor, fontFamily: BENCH_MONO, fontSize: 11 }, ax.axisLabel);
+      ax.nameTextStyle = Object.assign({ color: mutedColor, fontSize: 11 }, ax.nameTextStyle);
+      ax.axisLine = Object.assign({ lineStyle: { color: axisColor } }, ax.axisLine);
+      ax.splitLine = Object.assign({ lineStyle: { color: splitColor } }, ax.splitLine);
+    };
+    if (Array.isArray(option.xAxis)) option.xAxis.forEach(styleAxis);
+    else styleAxis(option.xAxis);
+    if (Array.isArray(option.yAxis)) option.yAxis.forEach(styleAxis);
+    else styleAxis(option.yAxis);
+    return option;
+  }
+
+  window.__streamAnalyzerLastMainOption = null;
+  window.__streamAnalyzerLastHLSOption = null;
+
+  function rethemeOpenCharts() {
+    if (window.__streamAnalyzerChart && window.__streamAnalyzerLastMainOption) {
+      window.__streamAnalyzerChart.setOption(applyBenchTheme(window.__streamAnalyzerLastMainOption), true);
+    }
+    if (window.__streamAnalyzerHLSChart && window.__streamAnalyzerLastHLSOption) {
+      window.__streamAnalyzerHLSChart.setOption(applyBenchTheme(window.__streamAnalyzerLastHLSOption), true);
+    }
+  }
+  window.addEventListener('workbench-theme-change', rethemeOpenCharts);
 
   window.ensureMainChart = function (domId) {
     const dom = document.getElementById(domId || 'mainChart');
@@ -71,6 +121,7 @@
       window.__streamAnalyzerChart.dispose();
       window.__streamAnalyzerChart = null;
     }
+    window.__streamAnalyzerLastMainOption = null;
   };
 
   /**
@@ -471,7 +522,8 @@
         };
     }
 
-    chart.setOption(option, true);
+    window.__streamAnalyzerLastMainOption = option;
+    chart.setOption(applyBenchTheme(option), true);
   };
 
   window.ensureHLSChart = function (domId) {
@@ -686,6 +738,7 @@
         };
     }
 
-    chart.setOption(option, true);
+    window.__streamAnalyzerLastHLSOption = option;
+    chart.setOption(applyBenchTheme(option), true);
   };
 })();

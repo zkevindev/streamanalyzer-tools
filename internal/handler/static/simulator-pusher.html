@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>推流器模拟器（RTMP／RTSP／WHIP）· Stream Analyzer</title>
+  <title>推流器模拟器（RTMP / RTSP / WHIP）· Stream Analyzer</title>
   <link rel="stylesheet" href="/static/workbench-theme.css">
   <link rel="stylesheet" href="/static/diagnostics.css">
   <link rel="stylesheet" href="/static/simulators.css">
@@ -18,7 +18,7 @@
     <div class="page-heading">
       <div>
         <h1>推流器模拟器</h1>
-        <p class="muted">支持同时启动多路 RTMP／RTMPS、RTSP／RTSPS、WHIP 推流，支持循环读取本地录像、内置测试画面与浏览器摄像头／屏幕采集。</p>
+        <p class="muted">支持同时启动多路 RTMP / RTMPS、RTSP / RTSPS 与 WHIP 推流，支持循环读取本地录像、内置测试画面与浏览器采集</p>
       </div>
     </div>
     <p id="notice" class="error" role="alert" hidden></p>
@@ -50,13 +50,13 @@
             </div>
           </div>
 
-          <div style="margin-top:0.75rem;">
+          <div class="sim-field-group">
             <label for="target-url">目标推流地址</label>
             <input id="target-url" type="url" placeholder="rtmp://127.0.0.1:1935/live/test" required>
-            <p id="target-hint" class="field-hint">支持 rtmp:// 或 rtmps:// 地址，可直接推向本机 RTMP 模拟器或任意流媒体服务器。</p>
+            <p id="target-hint" class="field-hint">支持 rtmp:// 或 rtmps:// 地址，可直接推向本机 RTMP 模拟器或任意流媒体服务器</p>
           </div>
 
-          <div id="rtsp-opts" style="margin-top:0.75rem;" hidden>
+          <div id="rtsp-opts" class="sim-field-group" hidden>
             <label for="rtsp-transport">RTSP 传输方式</label>
             <select id="rtsp-transport">
               <option value="tcp">TCP（推荐，穿透友好）</option>
@@ -64,13 +64,13 @@
             </select>
           </div>
 
-          <div id="whip-opts" style="margin-top:0.75rem;" hidden>
+          <div id="whip-opts" class="sim-field-group" hidden>
             <label for="bearer-token">WHIP Bearer Token（可选）</label>
             <input id="bearer-token" type="password" autocomplete="off" placeholder="Authorization: Bearer <token>">
           </div>
 
           <!-- Source 1: Upload local recording -->
-          <div id="src-upload" style="margin-top:0.8rem;">
+          <div id="src-upload" class="sim-field-group">
             <label>选择录像文件（支持循环读取，上限 512 MiB）</label>
             <label id="dropzone" class="pusher-dropzone" for="upload-file">
               <input id="upload-file" type="file" accept=".mp4,.flv,.ts,.m2ts,.mkv,.mov,.webm,.h264,.h265,.264,.265,video/*">
@@ -80,14 +80,14 @@
           </div>
 
           <!-- Source 2: Local disk file path -->
-          <div id="src-file" style="margin-top:0.8rem;" hidden>
+          <div id="src-file" class="sim-field-group" hidden>
             <label for="file-path">本机录像文件绝对路径</label>
             <input id="file-path" type="text" placeholder="/path/to/recording.mp4">
-            <p class="field-hint">直接读取本机磁盘文件，大文件无需上传复制。</p>
+            <p class="field-hint">直接读取本机磁盘文件，大文件无需上传复制</p>
           </div>
 
           <!-- Source 3: Built-in test pattern -->
-          <div id="src-pattern" class="sim-fields" style="margin-top:0.8rem;" hidden>
+          <div id="src-pattern" class="sim-fields sim-field-group" hidden>
             <div>
               <label for="pattern-res">测试画面分辨率</label>
               <select id="pattern-res">
@@ -103,7 +103,7 @@
           </div>
 
           <!-- Source 4: Browser camera / screen capture -->
-          <div id="src-browser" style="margin-top:0.8rem;" hidden>
+          <div id="src-browser" class="sim-field-group" hidden>
             <div class="sim-fields">
               <div>
                 <label for="capture-mode">采集方式</label>
@@ -122,18 +122,18 @@
             </div>
             <div class="pusher-preview-box">
               <video id="local-preview" class="pusher-preview" autoplay muted playsinline hidden></video>
-              <div class="sim-controls" style="margin-top:0;">
+              <div class="sim-controls">
                 <button id="btn-preview" type="button" class="secondary">开启本地预览</button>
                 <button id="btn-stop-preview" type="button" class="secondary" hidden>关闭预览</button>
               </div>
-              <p id="capture-hint" class="field-hint">选择 WHIP 时通过浏览器原生 WebRTC 低延迟直推；选择 RTMP/RTSP 时经本机 WebSocket 喂给 FFmpeg 实时转码推流。</p>
+              <p id="capture-hint" class="field-hint">选择 WHIP 时通过浏览器原生 WebRTC 低延迟直推；选择 RTMP / RTSP 时经本机 WebSocket 喂给 FFmpeg 实时转码推流</p>
             </div>
           </div>
 
           <!-- Loop controls -->
-          <div id="loop-opts" class="sim-fields" style="margin-top:0.8rem;align-items:end;">
+          <div id="loop-opts" class="sim-fields sim-field-group">
             <div>
-              <label class="sim-check" style="margin-top:0;">
+              <label class="sim-check">
                 <input id="loop-enabled" type="checkbox" checked>
                 循环读取推流
               </label>

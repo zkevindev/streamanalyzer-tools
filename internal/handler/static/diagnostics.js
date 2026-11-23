@@ -157,7 +157,8 @@ function renderRTSPReport(report) {
     node('rtsp-sequence-note').textContent = metrics?.transport === 'udp' ? '序号缺口和缺失包是接收点估计，使用有限回填窗口；源端漏发、链路丢包和迟到包都可能影响结果，需对照源端及中间网络证据。' : rtspSequenceNote;
     if (!metrics) {
         renderMetrics('rtsp-metrics', []);
-        for (const id of ['rtsp-request-table', 'rtsp-declared-tracks', 'rtsp-received-tracks', 'rtsp-sequence-table']) node(id).replaceChildren();
+        for (const id of ['rtsp-request-table', 'rtsp-declared-tracks', 'rtsp-received-tracks', 'rtsp-sequence-table', 'rtsp-packet-filters', 'rtsp-packet-table']) node(id)?.replaceChildren();
+        if (node('rtsp-packets-section')) node('rtsp-packets-section').hidden = true;
         node('rtsp-report-state').textContent = '当前报告未包含 RTSP 会话与 RTP 接收指标。';
         return;
     }
@@ -189,14 +190,139 @@ function renderRTSPReport(report) {
         `#${track.id}`, track.media_id, rtspKindLabels[track.kind] || track.kind || '未声明', track.codec || '未声明', track.payload_type,
         track.clock_rate > 0 ? `${track.clock_rate} Hz` : '未声明', track.kind === 'audio' ? (track.channels > 0 ? track.channels : '未声明') : '不适用',
     ])) : element('p', metrics.sdp_available ? 'SDP 未声明可识别的媒体轨道。' : '未取得可解析 SDP，不能据此确认轨道或编码。', 'timing-note muted'));
-    node('rtsp-received-tracks').replaceChildren(tracks.length ? renderTable(['轨道', '接收状态', 'RTP 包', 'RTP 字节', '首个 RTP 到达', '末个 RTP 到达', '最大包到达间隔', '分析范围'], tracks.map((track) => [
-        `#${track.id}`, track.received ? '已收到 RTP' : '未收到对应 RTP', track.rtp_packets ?? '未观测', track.rtp_bytes ?? '未观测', videoObservedTime(track.first_rtp_ms), videoObservedTime(track.last_rtp_ms),
-        track.rtp_packets > 1 ? videoObservedTime(track.max_arrival_gap_ms) : '未观测', track.analysis_limited ? '达到分析上限' : '按已保存窗口统计',
-    ])) : element('p', '没有可对应到声明轨道的 RTP 接收记录。', 'timing-note muted'));
-    node('rtsp-sequence-table').replaceChildren(tracks.length ? renderTable(['轨道', '序号缺口次数', '估计缺失包', '乱序包', '重复包', 'SSRC 变化', '序号跳变/重置候选', 'RTP 时间戳回退'], tracks.map((track) => [
-        `#${track.id}`, ...['sequence_gaps', 'missing_sequence_packets', 'out_of_order_packets', 'duplicate_packets', 'ssrc_changes', 'sequence_resets', 'timestamp_regressions'].map((key) => rtspObservedCounter(track, track[key])),
-    ])) : element('p', '轨道序号统计未观测。', 'timing-note muted'));
+    const packetReport = report.rtsp_packets;
+    const headerByTrack = new Map((packetReport?.tracks || []).map((t) => [t.track_id, t]));
+    const fmtSSRC = (value) => value == null ? '未观测' : hexLabel(value, 8);
+    const fmtRange = (first, last) => first == null || last == null ? '未观测' : `${first} → ${last}`;
+    node('rtsp-received-tracks').replaceChildren(tracks.length ? renderTable(['轨道', '接收状态', 'SSRC', 'RTP 包', 'Marker 包', 'RTP 序号范围', 'RTP 时间戳范围', 'RTP 字节', '首个 RTP 到达', '末个 RTP 到达', '最大包到达间隔', '分析范围'], tracks.map((track) => {
+        const hdr = headerByTrack.get(track.id);
+        return [
+            `#${track.id}`, track.received ? '已收到 RTP' : '未收到对应 RTP', fmtSSRC(hdr?.ssrc), track.rtp_packets ?? '未观测', track.received ? (hdr?.marker_packets ?? '未观测') : '未观测',
+            fmtRange(hdr?.first_sequence, hdr?.last_sequence), fmtRange(hdr?.first_rtp_timestamp, hdr?.last_rtp_timestamp),
+            track.rtp_bytes ?? '未观测', videoObservedTime(track.first_rtp_ms), videoObservedTime(track.last_rtp_ms),
+            track.rtp_packets > 1 ? videoObservedTime(track.max_arrival_gap_ms) : '未观测', track.analysis_limited ? '达到分析上限' : '按已保存窗口统计',
+        ];
+    })) : element('p', '没有可对应到声明轨道的 RTP 接收记录。', 'timing-note muted'));
+    node('rtsp-sequence-table').replaceChildren(tracks.length ? renderTable(['轨道', 'SSRC', '序号范围', '时间戳范围', '序号缺口次数', '估计缺失包', '乱序包', '重复包', 'SSRC 变化', '序号跳变/重置候选', 'RTP 时间戳回退'], tracks.map((track) => {
+        const hdr = headerByTrack.get(track.id);
+        return [
+            `#${track.id}`, fmtSSRC(hdr?.ssrc), fmtRange(hdr?.first_sequence, hdr?.last_sequence), fmtRange(hdr?.first_rtp_timestamp, hdr?.last_rtp_timestamp),
+            ...['sequence_gaps', 'missing_sequence_packets', 'out_of_order_packets', 'duplicate_packets', 'ssrc_changes', 'sequence_resets', 'timestamp_regressions'].map((key) => rtspObservedCounter(track, track[key])),
+        ];
+    })) : element('p', '轨道序号统计未观测。', 'timing-note muted'));
+    renderRTSPPacketSamples(packetReport);
     for (const table of node('rtsp-report').querySelectorAll('.scroll')) { table.tabIndex = 0; table.setAttribute('role', 'region'); table.setAttribute('aria-label', 'RTSP 与 RTP 证据表，可横向滚动'); }
+}
+
+const rtspAnomalyLabels = { seq_gap: '序号缺口', out_of_order: '乱序', duplicate: '重复', seq_reset: '序号重置', ts_regression: '时间戳回退', ssrc_change: 'SSRC 变化' };
+let rtspPacketFilter = 'all';
+
+function renderRTSPDeltaChart(samples) {
+    const points = samples.filter((pkt) => pkt.timestamp_delta_ms != null);
+    if (points.length < 2) return null;
+    const figure = element('figure', '', 'player-buffer-chart');
+    figure.append(element('figcaption', `RTP 时间戳步进 ΔTS (ms) · 共 ${points.length} 包（异常包以红/橙点标出）`));
+    const svgEl = (tag, attrs, text) => {
+        const part = document.createElementNS('http://www.w3.org/2000/svg', tag);
+        for (const [k, v] of Object.entries(attrs)) part.setAttribute(k, v);
+        if (text != null) part.textContent = text;
+        return part;
+    };
+    const vals = points.map((p) => p.timestamp_delta_ms);
+    const minVal = Math.min(0, ...vals);
+    const maxVal = Math.max(40, ...vals);
+    const span = Math.max(1, maxVal - minVal);
+    const x = (i) => 48 + (536 * i) / Math.max(1, points.length - 1);
+    const y = (v) => 108 - (86 * (v - minVal)) / span;
+    const svg = svgEl('svg', { viewBox: '0 0 615 138', role: 'img', 'aria-label': 'RTP 报文时间戳步进 ΔTS 曲线' });
+    for (const tick of [minVal, (minVal + maxVal) / 2, maxVal]) {
+        svg.append(
+            svgEl('line', { x1: 48, y1: y(tick), x2: 584, y2: y(tick), class: 'grid' }),
+            svgEl('text', { x: 42, y: y(tick) + 4, 'text-anchor': 'end' }, `${tick.toFixed(0)}ms`)
+        );
+    }
+    svg.append(svgEl('polyline', {
+        points: points.map((p, i) => `${x(i).toFixed(1)},${y(p.timestamp_delta_ms).toFixed(1)}`).join(' '),
+        class: 'line',
+    }));
+    points.forEach((p, i) => {
+        if (!p.anomaly) return;
+        const fill = (p.anomaly === 'seq_gap' || p.anomaly === 'seq_reset') ? 'var(--danger-dot)' : 'var(--warn-dot)';
+        const dot = svgEl('circle', { cx: x(i).toFixed(1), cy: y(p.timestamp_delta_ms).toFixed(1), r: 3.5, fill });
+        dot.append(svgEl('title', `#${p.index} Seq=${p.sequence} ΔTS=${p.timestamp_delta_ms.toFixed(1)}ms (${rtspAnomalyLabels[p.anomaly] || p.anomaly})`));
+        svg.append(dot);
+    });
+    svg.append(
+        svgEl('text', { x: 48, y: 128, 'text-anchor': 'start' }, `#${points[0].index}`),
+        svgEl('text', { x: 316, y: 128, 'text-anchor': 'middle' }, 'RTP 报文序'),
+        svgEl('text', { x: 584, y: 128, 'text-anchor': 'end' }, `#${points[points.length - 1].index}`)
+    );
+    figure.append(svg);
+    return figure;
+}
+
+function renderRTSPPacketSamples(packetReport) {
+    const section = node('rtsp-packets-section');
+    if (!section) return;
+    const samples = packetReport?.samples || [];
+    section.hidden = !samples.length;
+    if (!samples.length) {
+        node('rtsp-packet-filters').replaceChildren();
+        node('rtsp-packet-table').replaceChildren();
+        return;
+    }
+    const anomalyCount = samples.filter((item) => Boolean(item.anomaly)).length;
+    const videoCount = samples.filter((item) => item.kind === 'video').length;
+    const audioCount = samples.filter((item) => item.kind === 'audio').length;
+    node('rtsp-packets-summary').textContent = `RTP 报文序号与时间戳明细（${samples.length} 条${anomalyCount ? ` · ${anomalyCount} 条异常` : ''}）`;
+    const noteParts = ['展示采样前缀与异常 RTP 报文的头字段（SSRC、PT、Sequence Number、RTP Timestamp 及相邻增量）。'];
+    if (packetReport.truncated > 0) noteParts.push(`另有 ${packetReport.truncated.toLocaleString()} 个 RTP 包未在此展开，已全部计入轨道统计。`);
+    node('rtsp-packets-note').textContent = noteParts.join(' ');
+
+    const options = [
+        ['all', `全部 (${samples.length})`],
+        ...(videoCount ? [['video', `视频 (${videoCount})`]] : []),
+        ...(audioCount ? [['audio', `音频 (${audioCount})`]] : []),
+        ...(anomalyCount ? [['anomaly', `仅异常 (${anomalyCount})`]] : []),
+    ];
+    if (!options.some(([key]) => key === rtspPacketFilter)) rtspPacketFilter = 'all';
+
+    const draw = () => {
+        node('rtsp-packet-filters').replaceChildren(...options.map(([key, label]) => {
+            const btn = element('button', label, key === rtspPacketFilter ? '' : 'secondary');
+            btn.type = 'button';
+            btn.setAttribute('aria-pressed', String(key === rtspPacketFilter));
+            btn.addEventListener('click', () => { rtspPacketFilter = key; draw(); });
+            return btn;
+        }));
+        const filtered = samples.filter((item) => {
+            if (rtspPacketFilter === 'video') return item.kind === 'video';
+            if (rtspPacketFilter === 'audio') return item.kind === 'audio';
+            if (rtspPacketFilter === 'anomaly') return Boolean(item.anomaly);
+            return true;
+        });
+        const chartHost = node('rtsp-packet-chart');
+        if (chartHost) {
+            const chartEl = renderRTSPDeltaChart(filtered);
+            chartHost.replaceChildren(...(chartEl ? [chartEl] : []));
+        }
+        node('rtsp-packet-table').replaceChildren(filtered.length ? renderTable(
+            ['包序', '轨道', '编码', 'SSRC', 'PT', 'RTP 序号 (Seq)', 'ΔSeq', 'RTP 时间戳 (TS)', 'ΔTS (ticks / ms)', 'M', '到达偏移 (ms)', '载荷字节', '状态'],
+            filtered.map((pkt) => {
+                const dSeq = pkt.sequence_delta == null ? '—' : (pkt.sequence_delta > 0 ? `+${pkt.sequence_delta}` : String(pkt.sequence_delta));
+                const dTS = pkt.timestamp_delta == null ? '—' : `${pkt.timestamp_delta > 0 ? '+' : ''}${pkt.timestamp_delta}${pkt.timestamp_delta_ms == null ? '' : ` (${pkt.timestamp_delta_ms.toFixed(1)} ms)`}`;
+                const stateText = pkt.anomaly ? (rtspAnomalyLabels[pkt.anomaly] || pkt.anomaly) : '正常';
+                const stateEl = pkt.anomaly ? element('span', stateText, 'severity') : stateText;
+                if (pkt.anomaly) stateEl.dataset.severity = pkt.anomaly === 'seq_gap' || pkt.anomaly === 'seq_reset' ? 'error' : 'warn';
+                return [
+                    `#${pkt.index}`, `#${pkt.track_id} · ${rtspKindLabels[pkt.kind] || pkt.kind || '其他'}`, pkt.codec || '—',
+                    hexLabel(pkt.ssrc, 8), pkt.payload_type, pkt.sequence, dSeq, pkt.timestamp, dTS,
+                    pkt.marker ? '1' : '0', pkt.arrival_ms, pkt.payload_bytes, stateEl,
+                ];
+            })
+        ) : element('p', '当前筛选条件下没有 RTP 报文。', 'timing-note muted'));
+    };
+    draw();
 }
 const playerSources = { same_capture: '同一采样流', independent_pull: '独立拉流' };
 const playerStates = {
@@ -536,8 +662,8 @@ function renderEvidence(protocol, events) {
             events.map((event) => [kind(event), event.arrival_ms, event.arrival_ms + (event.duration_ms ?? 0), event.duration_ms, event.artifact]));
     }
     if (protocols[protocol]?.nativeRTSP) {
-        return renderTable(['对象', '轨道', 'SDP 编码', 'RTP 序号', '到达偏移 (ms)', '原始条目', '偏移（字节）', '长度（字节）'], events.map((event) => [
-            ['rtp_packet', 'video_rtp', 'audio_rtp'].includes(event.kind) ? 'RTP 包' : '协议字节', event.track > 0 ? `#${event.track}` : '未记录', event.codec || '未声明', event.rtp_sequence == null ? '未观测' : String(event.rtp_sequence), event.arrival_ms, rtspEvidenceArtifact(event.artifact), event.offset, event.size,
+        return renderTable(['对象', '轨道', 'SDP 编码', 'RTP 序号', 'RTP 时间戳', '到达偏移 (ms)', '原始条目', '偏移（字节）', '长度（字节）'], events.map((event) => [
+            ['rtp_packet', 'video_rtp', 'audio_rtp'].includes(event.kind) ? 'RTP 包' : '协议字节', event.track > 0 ? `#${event.track}` : '未记录', event.codec || '未声明', event.rtp_sequence == null ? '未观测' : String(event.rtp_sequence), event.rtp_timestamp == null ? '未观测' : String(event.rtp_timestamp), event.arrival_ms, rtspEvidenceArtifact(event.artifact), event.offset, event.size,
         ]));
     }
     if (protocol === 'hls') {
@@ -2366,9 +2492,9 @@ node('protocol').addEventListener('change', () => {
     const httpAccess = ['http-flv', 'hls', 'http-ts', 'whep'].includes(protocol);
     node('http-access-options').hidden = !httpAccess && !['rtmp', 'rtsps'].includes(protocol);
     node('whep-options').hidden = protocol !== 'whep';
-    node('reconnect-options').hidden = !['http-flv', 'rtmp'].includes(protocol);
+    node('reconnect-options').hidden = !['http-flv', 'rtmp', 'rtsp', 'rtsps'].includes(protocol);
     node('hls-variant-option').hidden = protocol !== 'hls';
-    node('rolling-options').hidden = !['http-flv', 'rtmp', 'hls'].includes(protocol);
+    node('rolling-options').hidden = !['http-flv', 'rtmp', 'hls', 'rtsp', 'rtsps'].includes(protocol);
     for (const id of ['http-headers', 'http-proxy-url']) {
         node(id).hidden = !httpAccess;
         document.querySelector(`label[for="${id}"]`).hidden = !httpAccess;
@@ -2428,6 +2554,15 @@ if (launchOptions.get('rtmp_simulator') === '1') {
         node('protocol').dispatchEvent(new Event('change'));
         node('url').value = source.url;
         node('seconds').value = '10';
+    }).catch(() => {});
+}
+if (launchOptions.get('rtsp_simulator') === '1') {
+    void fetch('/api/simulators/rtsp', {cache: 'no-store'}).then(response => response.json()).then(source => {
+        if (!source.active || !/^rtsps?:\/\/(?:[^@/\s]+@)?127\.0\.0\.1:\d+\/live\/test$/.test(source.url)) return;
+        node('protocol').value = source.url.startsWith('rtsps://') ? 'rtsps' : 'rtsp';
+        node('protocol').dispatchEvent(new Event('change'));
+        node('url').value = source.url;
+        node('seconds').value = '12';
     }).catch(() => {});
 }
 node('flv-replay').addEventListener('click', () => {
@@ -2604,7 +2739,7 @@ bindForm('sample', async () => {
     const protocol = node('protocol').value;
     const run = await api('/runs', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ protocol, transport: protocols[protocol]?.nativeRTSP ? node('rtsp-transport').value : undefined, ice_transport_policy: protocol === 'whep' ? node('whep-ice-policy').value : undefined, url, seconds, playback, auto_investigate: autoInvestigate, reconnect_attempts: ['http-flv', 'rtmp'].includes(protocol) ? node('reconnect-attempts').valueAsNumber : 0, reconnect_delay_ms: ['http-flv', 'rtmp'].includes(protocol) ? node('reconnect-delay').valueAsNumber : 0, hls_variant: protocol === 'hls' ? node('hls-variant').valueAsNumber : undefined, segment_seconds: ['http-flv', 'rtmp', 'hls'].includes(protocol) ? node('segment-seconds').valueAsNumber : 0, rolling_segments: ['http-flv', 'rtmp', 'hls'].includes(protocol) ? node('rolling-segments').valueAsNumber : 0, profile: node('analysis-profile').value, custom_thresholds: node('analysis-profile').value === 'custom' ? { first_frame_warn_ms: node('threshold-first-frame').valueAsNumber, video_gap_warn_ms: node('threshold-video-gap').valueAsNumber, dts_gap_warn_ms: node('threshold-dts-gap').valueAsNumber, gop_warn_ms: node('threshold-gop').valueAsNumber } : undefined, ...captureAccessOptions(protocol) }),
+        body: JSON.stringify({ protocol, transport: protocols[protocol]?.nativeRTSP ? node('rtsp-transport').value : undefined, ice_transport_policy: protocol === 'whep' ? node('whep-ice-policy').value : undefined, url, seconds, playback, auto_investigate: autoInvestigate, reconnect_attempts: ['http-flv', 'rtmp', 'rtsp', 'rtsps'].includes(protocol) ? node('reconnect-attempts').valueAsNumber : 0, reconnect_delay_ms: ['http-flv', 'rtmp', 'rtsp', 'rtsps'].includes(protocol) ? node('reconnect-delay').valueAsNumber : 0, hls_variant: protocol === 'hls' ? node('hls-variant').valueAsNumber : undefined, segment_seconds: ['http-flv', 'rtmp', 'hls', 'rtsp', 'rtsps'].includes(protocol) ? node('segment-seconds').valueAsNumber : 0, rolling_segments: ['http-flv', 'rtmp', 'hls', 'rtsp', 'rtsps'].includes(protocol) ? node('rolling-segments').valueAsNumber : 0, profile: node('analysis-profile').value, custom_thresholds: node('analysis-profile').value === 'custom' ? { first_frame_warn_ms: node('threshold-first-frame').valueAsNumber, video_gap_warn_ms: node('threshold-video-gap').valueAsNumber, dts_gap_warn_ms: node('threshold-dts-gap').valueAsNumber, gop_warn_ms: node('threshold-gop').valueAsNumber } : undefined, ...captureAccessOptions(protocol) }),
     });
     stopPlayback(activePlayer);
     startPlayback(run, startedAt, startedAtPerformanceMS, seconds, hlsRecovery, hlsABR, hlsLowLatency);

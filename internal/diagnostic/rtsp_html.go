@@ -128,8 +128,49 @@ func rtspArtifactName(name string) string {
 	return "server-wire.bin"
 }
 
+func rtspHexSSRC(v *uint32) string {
+	if v == nil {
+		return "未观测"
+	}
+	return fmt.Sprintf("0x%08X", *v)
+}
+
+func rtspSeqRange(first, last *uint16) string {
+	if first == nil || last == nil {
+		return "未观测"
+	}
+	return fmt.Sprintf("%d → %d", *first, *last)
+}
+
+func rtspTSRange(first, last *uint32) string {
+	if first == nil || last == nil {
+		return "未观测"
+	}
+	return fmt.Sprintf("%d → %d", *first, *last)
+}
+
+func rtspAnomalyLabel(code string) string {
+	switch code {
+	case "seq_gap":
+		return "序号缺口"
+	case "out_of_order":
+		return "乱序"
+	case "duplicate":
+		return "重复"
+	case "seq_reset":
+		return "序号重置"
+	case "ts_regression":
+		return "时间戳回退"
+	case "ssrc_change":
+		return "SSRC 变化"
+	default:
+		return "正常"
+	}
+}
+
 var rtspReportPage = template.Must(template.New("rtsp").Funcs(template.FuncMap{
 	"previewState": rtspPreviewStateLabel, "previewReason": rtspPreviewReasonLabel, "previewReasonFor": rtspPreviewReasonLabelFor, "g711State": rtspG711StateLabel, "g711Reason": rtspG711ReasonLabel, "sampleCount": playerVideoObservedCount, "ms": playerVideoObservedTime, "kind": rtspKindLabel, "failure": rtspFailureLabel, "duration": rtspRequestDuration, "counter": rtspObservedCounter, "transport": rtspTransportLabel,
+	"hexSSRC": rtspHexSSRC, "hexSSRCVal": func(v uint32) string { return fmt.Sprintf("0x%08X", v) }, "seqRange": rtspSeqRange, "tsRange": rtspTSRange, "anomalyLabel": rtspAnomalyLabel,
 }).Parse(`<article id="rtsp-report"><h2>RTSP 会话与 RTP 接收</h2>
 {{if not .Metrics}}<p class="timing-note">原生 RTSP/RTP 采样不依赖浏览器预览。未记录转封装能力，播放器首屏、缓冲和呈帧指标以实际保存的播放器记录为准。</p>{{else}}{{if not .Metrics.Preview}}<p class="timing-note">原生 RTSP/RTP 采样不依赖浏览器预览。未记录转封装能力，播放器首屏、缓冲和呈帧指标以实际保存的播放器记录为准。</p>{{end}}{{end}}
 <p class="timing-note">首音视频时间表示对应 RTP 包到达本接收点，不是解码首帧。SDP 声明的轨道与编码单独列出，不代表已收到或解码媒体。</p>
@@ -169,10 +210,17 @@ var rtspReportPage = template.Must(template.New("rtsp").Funcs(template.FuncMap{
 <p class="timing-note">按轨道和 SSRC 比较发送报告的 RTP/NTP 时间增量。接收间隔偏差独立统计，偏移以该轨道首个可比较报告为基准。</p>
 <table><thead><tr><th>轨道 / SSRC</th><th>发送报告</th><th>有效间隔</th><th>累计偏移 (ms)</th><th>最大时钟步进 (ms)</th><th>最大接收间隔偏差 (ms)</th></tr></thead><tbody>
 {{range .SenderClocks}}<tr><td>#{{.TrackID}} / {{.SSRC}}</td><td>{{.Samples}}</td><td>{{.Intervals}}</td><td>{{printf "%+.1f" .OffsetMS}}</td><td>{{printf "%+.1f" .MaxStepMS}}</td><td>{{printf "%.1f" .MaxArrivalVariationMS}}</td></tr>{{end}}</tbody></table></details>{{end}}
-<details class="report-details"><summary>RTP 序号与时间戳统计</summary><p class="timing-note">{{if eq .Transport "udp"}}序号缺口和缺失包是接收点估计，使用有限回填窗口；源端漏发、链路丢包和迟到包都可能影响结果，需对照源端及中间网络证据。{{else}}序号缺口和缺失包是接收点估计，使用有限回填窗口，不能直接等同于 TCP 网络丢包。{{end}}序号跳变/重置属于候选，时间戳回退也可能来自 B 帧或乱序，需结合源端编码、流切换和 RTP 记录验证。</p>
+<details class="report-details" open><summary>RTP 序号与时间戳统计</summary><p class="timing-note">{{if eq .Transport "udp"}}序号缺口和缺失包是接收点估计，使用有限回填窗口；源端漏发、链路丢包和迟到包都可能影响结果，需对照源端及中间网络证据。{{else}}序号缺口和缺失包是接收点估计，使用有限回填窗口，不能直接等同于 TCP 网络丢包。{{end}}序号跳变/重置属于候选，时间戳回退也可能来自 B 帧或乱序，需结合源端编码、流切换和 RTP 记录验证。</p>
 {{if .Tracks}}<div class="scroll"><table><thead><tr><th scope="col">轨道</th><th scope="col">序号缺口次数</th><th scope="col">估计缺失包</th><th scope="col">乱序包</th><th scope="col">重复包</th><th scope="col">SSRC 变化</th><th scope="col">序号跳变/重置候选</th><th scope="col">RTP 时间戳回退</th></tr></thead><tbody>
 {{range .Tracks}}<tr><th scope="row">#{{.ID}}</th><td>{{counter . .SequenceGaps}}</td><td>{{counter . .MissingSequencePackets}}</td><td>{{counter . .OutOfOrderPackets}}</td><td>{{counter . .DuplicatePackets}}</td><td>{{counter . .SSRCChanges}}</td><td>{{counter . .SequenceResets}}</td><td>{{counter . .TimestampRegressions}}</td></tr>{{end}}
 </tbody></table></div>{{else}}<p class="timing-note">轨道序号统计未观测。</p>{{end}}</details>
+{{with $.Packets}}<details class="report-details" open><summary>RTP 报文序号与时间戳明细（{{len .Samples}} 条）</summary>
+{{if .Tracks}}<div class="scroll"><table><thead><tr><th scope="col">轨道</th><th scope="col">SSRC</th><th scope="col">Marker 包</th><th scope="col">RTP 序号范围</th><th scope="col">RTP 时间戳范围</th></tr></thead><tbody>
+{{range .Tracks}}<tr><th scope="row">#{{.TrackID}}</th><td><code>{{hexSSRC .SSRC}}</code></td><td>{{.MarkerPackets}}</td><td>{{seqRange .FirstSequence .LastSequence}}</td><td>{{tsRange .FirstRTPTimestamp .LastRTPTimestamp}}</td></tr>{{end}}
+</tbody></table></div>{{end}}
+{{if .Samples}}<div class="scroll"><table><thead><tr><th scope="col">包序</th><th scope="col">轨道</th><th scope="col">编码</th><th scope="col">SSRC</th><th scope="col">PT</th><th scope="col">RTP 序号</th><th scope="col">ΔSeq</th><th scope="col">RTP 时间戳</th><th scope="col">ΔTS (ticks / ms)</th><th scope="col">M</th><th scope="col">到达偏移 (ms)</th><th scope="col">载荷字节</th><th scope="col">状态</th></tr></thead><tbody>
+{{range .Samples}}<tr><td>#{{.Index}}</td><td>#{{.TrackID}} ({{kind .Kind}})</td><td>{{.Codec}}</td><td><code>{{hexSSRCVal .SSRC}}</code></td><td>{{.PayloadType}}</td><td>{{.Sequence}}</td><td>{{with .SequenceDelta}}{{.}}{{else}}—{{end}}</td><td>{{.Timestamp}}</td><td>{{with .TimestampDelta}}{{.}}{{else}}—{{end}}{{with .TimestampDeltaMS}} ({{printf "%.1f" .}} ms){{end}}</td><td>{{if .Marker}}1{{else}}0{{end}}</td><td>{{.ArrivalMS}}</td><td>{{.PayloadBytes}}</td><td>{{anomalyLabel .Anomaly}}</td></tr>{{end}}
+</tbody></table></div>{{if .Truncated}}<p class="timing-note">另有 {{.Truncated}} 个 RTP 报文未在明细表中展开（已完整计入上方轨道统计）。</p>{{end}}{{end}}</details>{{end}}
 {{else}}<p class="timing-note">当前报告未包含 RTSP 会话与 RTP 接收指标。</p>{{end}}
 <p class="timing-note">原始 stream.rtsp.zip 保存 server-wire.bin 服务端应用字节、session.sdp 原文和 session.json 数字元数据；RTSPS 字节在 TLS 解密后保存。导入证据包可离线复盘，无需连接摄像头。</p>
 {{if .Metrics}}{{if eq .Metrics.Transport "udp"}}<p class="timing-note">UDP 证据另含 udp-datagrams.bin 完整数据报及 udp-index.ndjson 边界、到达时间和来源记录。原始数据含被过滤的数据报，轨道指标仅统计符合协商来源的包。</p>{{end}}{{end}}
@@ -190,8 +238,9 @@ func renderRTSPHTML(report Report) (template.HTML, error) {
 	var output bytes.Buffer
 	if err := rtspReportPage.Execute(&output, struct {
 		Metrics       *RTSPMetrics
+		Packets       *RTSPPacketReport
 		DNS, TCP, TLS string
-	}{metrics, rtspPhaseDuration(stages, "dns"), rtspPhaseDuration(stages, "connect"), rtspPhaseDuration(stages, "tls")}); err != nil {
+	}{metrics, report.RTSPPackets, rtspPhaseDuration(stages, "dns"), rtspPhaseDuration(stages, "connect"), rtspPhaseDuration(stages, "tls")}); err != nil {
 		return "", err
 	}
 	// Every variable in this fragment was escaped by html/template above.

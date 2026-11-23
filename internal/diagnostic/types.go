@@ -220,6 +220,7 @@ type Report struct {
 	Throughput             *ThroughputReport       `json:"throughput,omitempty"`
 	RTMPControl            *RTMPControlReport      `json:"rtmp_control,omitempty"`
 	HLSABR                 *HLSABRReport           `json:"hls_abr,omitempty"`
+	RTSPPackets            *RTSPPacketReport       `json:"rtsp_packets,omitempty"`
 	modelScope             string
 	Requests               []HTTPRequestTiming  `json:"requests,omitempty"`
 	RequestsTruncated      int                  `json:"requests_truncated,omitempty"`
