@@ -70,6 +70,7 @@ type tcpSeg struct {
 // 2. UDP raw MPEG-TS flows (188-byte sync 0x47)
 // 3. TCP HTTP-FLV & HTTP MPEG-TS responses
 // 4. TCP RTSP control signaling & RTSP-over-TCP interleaved RTP/RTCP ($ frames)
+// 5. UDP / TCP SIP & GB28181 signaling + SDP / MANSCDP XML transcripts
 func (m *Manager) extractExtendedPCAPFlows(ctx context.Context, task *models.OfflineTask, taskDir string, nextFlowID int) ([]models.OfflineFlowResult, error) {
 	f, err := os.Open(task.InputPath)
 	if err != nil {
@@ -107,6 +108,7 @@ func (m *Manager) extractExtendedPCAPFlows(ctx context.Context, task *models.Off
 		fracLost   float64
 	}{}
 	udpTS := map[udpFlowKey]*bytes.Buffer{}
+	var udpSIP []sipDatagram
 	tcpSegs := map[tcpStreamKey][]tcpSeg{}
 
 	for pkt := range src.Packets() {
@@ -135,6 +137,21 @@ func (m *Manager) extractExtendedPCAPFlows(ctx context.Context, task *models.Off
 					udpTS[uk] = buf
 				}
 				buf.Write(payload)
+				continue
+			}
+			// Check UDP SIP / GB28181 signaling
+			if looksLikeSIPPayload(payload) {
+				cp := make([]byte, len(payload))
+				copy(cp, payload)
+				udpSIP = append(udpSIP, sipDatagram{
+					srcIP:     srcIP,
+					srcPort:   uint16(udp.SrcPort),
+					dstIP:     dstIP,
+					dstPort:   uint16(udp.DstPort),
+					transport: "udp",
+					ts:        pkt.Metadata().Timestamp,
+					payload:   cp,
+				})
 				continue
 			}
 			// Check RTCP (RFC 5761: PT 200..204, version == 2)
@@ -322,8 +339,12 @@ func (m *Manager) extractExtendedPCAPFlows(ctx context.Context, task *models.Off
 	}
 
 	// 4. Process TCP RTSP signaling & RTSP-over-TCP interleaved RTP/RTCP streams
-	rtspFlows, _ := m.extractRTSPTCPFlows(ctx, task.ID, tcpSegs, taskDir, nextFlowID)
+	rtspFlows, nextFlowID := m.extractRTSPTCPFlows(ctx, task.ID, tcpSegs, taskDir, nextFlowID)
 	results = append(results, rtspFlows...)
+
+	// 5. Process UDP / TCP SIP & GB28181 signaling flows
+	sipFlows, _ := m.extractPCAPSIPFlows(udpSIP, tcpSegs, taskDir, nextFlowID)
+	results = append(results, sipFlows...)
 
 	return results, nil
 }
@@ -621,18 +642,18 @@ func depacketizeRTPVideo(ordered []rtpPacketRec, outDir string, stats *models.Of
 	}()
 
 	var (
-		fuBuf        bytes.Buffer
-		inFU         bool
-		auBuf        bytes.Buffer
-		auTS         uint32
-		hasAU        bool
-		baseTS       = ordered[0].pkt.Timestamp
-		videoPos     int64
-		frames       []models.OfflineFrameDetail
-		samples      []timedSample
-		naluHist     = map[string]int{}
-		naluCount    int
-		videoMeta    *codec.VideoMeta
+		fuBuf     bytes.Buffer
+		inFU      bool
+		auBuf     bytes.Buffer
+		auTS      uint32
+		hasAU     bool
+		baseTS    = ordered[0].pkt.Timestamp
+		videoPos  int64
+		frames    []models.OfflineFrameDetail
+		samples   []timedSample
+		naluHist  = map[string]int{}
+		naluCount int
+		videoMeta *codec.VideoMeta
 	)
 
 	flushAU := func() {
