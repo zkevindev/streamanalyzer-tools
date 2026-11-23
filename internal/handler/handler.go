@@ -78,7 +78,8 @@ func (h *Handler) CreateOfflineTask(c *gin.Context) {
 		models.OfflineModeMP4,
 		models.OfflineModeAnnexB,
 		models.OfflineModePS,
-		models.OfflineModeWebM:
+		models.OfflineModeWebM,
+		models.OfflineModeDASH:
 	default:
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid mode"})
 		return
@@ -247,7 +248,8 @@ func (h *Handler) CreateLocalOfflineTask(c *gin.Context) {
 		models.OfflineModeMP4,
 		models.OfflineModeAnnexB,
 		models.OfflineModePS,
-		models.OfflineModeWebM:
+		models.OfflineModeWebM,
+		models.OfflineModeDASH:
 	default:
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid mode"})
 		return

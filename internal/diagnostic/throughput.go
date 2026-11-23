@@ -159,6 +159,12 @@ func buildThroughput(dir string, report Report) (*ThroughputReport, error) {
 		}); err != nil {
 			return nil, err
 		}
+	case ProtocolDASH:
+		if err := walkDASHThroughput(dir, func(kind, rendition string, size int64, arrivalMS int64) {
+			account(throughputEvent{kind: kind, rendition: rendition, size: size, arrivalMS: arrivalMS})
+		}); err != nil {
+			return nil, err
+		}
 	case ProtocolRTSP, ProtocolRTSPS:
 		if err := walkRTSPMediaEvents(dir, report.Manifest, func(event Event) {
 			account(throughputEvent{kind: event.Kind, size: int64(event.Size), arrivalMS: event.ArrivalMS})

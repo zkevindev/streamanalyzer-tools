@@ -563,6 +563,8 @@ func (m *Manager) run(ctx context.Context, taskID string) {
 		runErr = m.runPS(&task, taskDir, summary)
 	case models.OfflineModeWebM:
 		runErr = m.runWebM(&task, taskDir, summary)
+	case models.OfflineModeDASH:
+		runErr = m.runDASH(&task, taskDir, summary)
 	default:
 		runErr = fmt.Errorf("unsupported mode: %s", task.Mode)
 	}

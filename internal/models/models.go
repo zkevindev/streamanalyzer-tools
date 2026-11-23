@@ -195,6 +195,7 @@ const (
 	OfflineModeAnnexB OfflineMode = "annexb"
 	OfflineModePS     OfflineMode = "ps"
 	OfflineModeWebM   OfflineMode = "webm"
+	OfflineModeDASH   OfflineMode = "dash"
 )
 
 type OfflineStatus string
@@ -408,16 +409,16 @@ type OfflineHealthCheck struct {
 }
 
 type OfflineFrameDetail struct {
-	MediaType    string `json:"media_type,omitempty"`     // video/audio
+	MediaType    string `json:"media_type,omitempty"` // video/audio
 	DTS          int64  `json:"dts,omitempty"`
 	PTS          int64  `json:"pts,omitempty"`
 	CTS          int64  `json:"cts,omitempty"`
 	FrameLen     int    `json:"frame_len,omitempty"`
-	FrameType    string `json:"frame_type,omitempty"`     // I/P/B/- for audio
-	StreamSource string `json:"stream_source,omitempty"`  // "video" | "audio" | "input" | "pid:<n>"
+	FrameType    string `json:"frame_type,omitempty"`    // I/P/B/- for audio
+	StreamSource string `json:"stream_source,omitempty"` // "video" | "audio" | "input" | "pid:<n>"
 	StreamOffset int64  `json:"stream_offset,omitempty"`
 	StreamLen    int    `json:"stream_len,omitempty"`
-	NALULenSize  int    `json:"nalu_len_size,omitempty"`  // 0 = Annex B / raw audio; 1..4 = AVCC/HVCC
+	NALULenSize  int    `json:"nalu_len_size,omitempty"` // 0 = Annex B / raw audio; 1..4 = AVCC/HVCC
 }
 
 // OfflinePESDetail 对应 TS 每个 PES 包一行（与 example/parse_ts 输出字段对齐）。
@@ -482,17 +483,17 @@ type OfflineTimeRange struct {
 
 // OfflineDecodeAudit holds FFmpeg decode/black/freeze/silence audit output.
 type OfflineDecodeAudit struct {
-	TaskID         string             `json:"task_id"`
-	FlowIndex      int                `json:"flow_index"`
-	InputPath      string             `json:"input_path"`
-	DurationMS     int64              `json:"duration_ms"`
-	DecodeErrors   int                `json:"decode_errors"`
-	ErrorSamples   []string           `json:"error_samples,omitempty"`
-	BlackFrames    []OfflineTimeRange `json:"black_frames,omitempty"`
-	FreezeFrames   []OfflineTimeRange `json:"freeze_frames,omitempty"`
-	SilenceRanges  []OfflineTimeRange `json:"silence_ranges,omitempty"`
-	Warnings       []string           `json:"warnings,omitempty"`
-	GeneratedAt    time.Time          `json:"generated_at"`
+	TaskID        string             `json:"task_id"`
+	FlowIndex     int                `json:"flow_index"`
+	InputPath     string             `json:"input_path"`
+	DurationMS    int64              `json:"duration_ms"`
+	DecodeErrors  int                `json:"decode_errors"`
+	ErrorSamples  []string           `json:"error_samples,omitempty"`
+	BlackFrames   []OfflineTimeRange `json:"black_frames,omitempty"`
+	FreezeFrames  []OfflineTimeRange `json:"freeze_frames,omitempty"`
+	SilenceRanges []OfflineTimeRange `json:"silence_ranges,omitempty"`
+	Warnings      []string           `json:"warnings,omitempty"`
+	GeneratedAt   time.Time          `json:"generated_at"`
 }
 
 // OfflineDiffRow is one field-level comparison entry between Task A and Task B.
@@ -520,10 +521,9 @@ type OfflineCompareSide struct {
 
 // OfflineCompareResult holds the full side-by-side comparison of two offline tasks.
 type OfflineCompareResult struct {
-	SideA         OfflineCompareSide `json:"side_a"`
-	SideB         OfflineCompareSide `json:"side_b"`
-	Rows          []OfflineDiffRow   `json:"rows"`
-	SummaryNotes  []string           `json:"summary_notes,omitempty"`
-	ChangedCount  int                `json:"changed_count"`
+	SideA        OfflineCompareSide `json:"side_a"`
+	SideB        OfflineCompareSide `json:"side_b"`
+	Rows         []OfflineDiffRow   `json:"rows"`
+	SummaryNotes []string           `json:"summary_notes,omitempty"`
+	ChangedCount int                `json:"changed_count"`
 }
-

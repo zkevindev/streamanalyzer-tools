@@ -43,6 +43,7 @@
                             <option value="rtsp">RTSP · TCP / UDP</option>
                             <option value="rtsps">RTSPS · TLS/TCP</option>
                             <option value="whep">WHEP (WebRTC)</option>
+                            <option value="dash">MPEG-DASH (.mpd)</option>
                             <option value="hls">HLS</option>
                             <option value="http-ts">HTTP MPEG-TS</option>
                             <option value="udp-ts">UDP MPEG-TS</option>
@@ -128,6 +129,7 @@
                         <option value="http-flv">HTTP-FLV</option><option value="rtmp">RTMP / RTMPS</option>
                         <option value="rtsp">RTSP · TCP</option><option value="rtsps">RTSPS · TLS/TCP</option>
                         <option value="whep">WHEP (WebRTC)</option>
+                        <option value="dash">MPEG-DASH (.mpd)</option>
                         <option value="hls">HLS</option><option value="http-ts">HTTP MPEG-TS</option>
                         <option value="udp-ts">UDP MPEG-TS</option><option value="rtp-ts">RTP MPEG-TS</option>
                     </select>
@@ -292,6 +294,13 @@
                         <p id="whep-note" class="timing-note muted"></p>
                         <dl id="whep-metrics" class="metrics"></dl>
                         <div id="whep-tracks-table"></div>
+                    </section>
+                    <section id="dash-report" aria-labelledby="dash-title" hidden>
+                        <h3 id="dash-title" class="report-title">MPEG-DASH 清单与分片指标</h3>
+                        <p id="dash-note" class="timing-note muted"></p>
+                        <dl id="dash-metrics" class="metrics"></dl>
+                        <div id="dash-reps-table"></div>
+                        <div id="dash-segments-table"></div>
                     </section>
                     <section id="player-report" aria-labelledby="player-report-title" hidden>
                         <h3 id="player-report-title" class="report-title">播放器体验</h3>

@@ -25,6 +25,7 @@ const protocols = {
     'http-ts': { label: 'HTTP MPEG-TS', example: 'https://live.example.com/app/stream.ts', dump: '原始 TS', mpegTS: true },
     'udp-ts': { label: 'UDP MPEG-TS', example: 'udp://127.0.0.1:5000', dump: '原始 UDP 载荷', mpegTS: true, receive: true },
     'rtp-ts': { label: 'RTP MPEG-TS', example: 'rtp://127.0.0.1:5000', dump: '原始 RTP 数据报', mpegTS: true, receive: true },
+    dash: { label: 'MPEG-DASH', example: '/live/manifest.mpd', dump: '原始 DASH ZIP' },
 };
 const stageLabels = {
     dns: 'DNS 解析', connect: 'TCP 建连', tls: 'TLS 握手', request_send: '发送请求',
@@ -38,7 +39,7 @@ const httpStages = [
     ['dns', 'DNS'], ['connect', 'TCP'], ['tls', 'TLS'], ['request_send', '发送请求'],
     ['response_first_byte', '等待首字节'], ['response_headers', '接收响应头'],
 ];
-const requestKinds = { hls_playlist: '播放列表', hls_init: '初始化段', hls_segment: '媒体分片' };
+const requestKinds = { hls_playlist: '播放列表', hls_init: '初始化段', hls_segment: '媒体分片', dash_manifest: 'MPD 清单', dash_init: 'DASH 初始化段', dash_segment: 'DASH 媒体分片' };
 const mediaArrivalLabels = {
     segment: ['首个视频分片完成', '首个音频分片完成'],
     pes: ['首个视频 PES 起始', '首个音频 PES 起始'],
@@ -362,6 +363,7 @@ const severityLabels = { error: '错误', warn: '警告', info: '提示' };
 const tagLabels = {
     video: '视频', audio: '音频', invalid_audio: '音频标签异常', invalid_video: '视频标签异常', invalid_tag_size: '标签长度异常',
     hls_playlist: '播放列表', hls_init: '初始化段', hls_segment: '媒体分片', hls_gap: '标记缺失的分片',
+    dash_init: 'DASH 初始化段', dash_segment: 'DASH 媒体分片',
     ts_packet: 'TS 包', ts_sync_loss: 'TS 同步丢失', rtp_datagram: 'RTP 数据报',
     player_stall: '播放器卡顿',
 };
@@ -1231,6 +1233,45 @@ function renderWHEPReport(report) {
     }
     table.append(thead, tbody);
     node('whep-tracks-table').replaceChildren(element('h4', '媒体轨道 RTP / 帧质量'), table);
+}
+
+function renderDASHReport(report) {
+    const section = node('dash-report');
+    if (!section) return;
+    const d = report?.dash;
+    section.hidden = !d;
+    if (!d) return;
+    const noteParts = ['纯 Go 解析 ISO/IEC 23009-1 MPD 清单，抽样拉取主视频与音频初始化段及媒体分片并归档于 stream.dash.zip。'];
+    if (d.drm_systems?.length) noteParts.push(`检测到 DRM 保护：${d.drm_systems.join(', ')}。`);
+    node('dash-note').textContent = noteParts.join(' ');
+    renderMetrics('dash-metrics', [
+        ['MPD 类型', d.mpd_type || '未知'],
+        ['Period / AdaptationSet / Rep', `${d.periods || 0} / ${d.adaptation_sets || 0} / ${d.representations_count || 0}`],
+        ['清单快照 / 失败', `${d.manifests_captured || 0} / ${d.manifest_failures || 0}`],
+        ['初始化段 / 失败', `${d.init_segments_captured || 0} / ${d.init_segments_failed || 0}`],
+        ['媒体分片 / 失败', `${d.segments_captured || 0} / ${d.segments_failed || 0}`],
+        ['SegmentTimeline 缺口', d.timeline_gaps ?? 0],
+        ['最长分片下载', d.segments_captured ? time(d.max_segment_download_ms || 0) : '未测得'],
+        ['采集媒体数据', bytes(d.media_bytes || 0)],
+        ['DRM 保护', d.drm_systems?.length ? d.drm_systems.join(', ') : '无'],
+    ]);
+    const reps = d.representations || [];
+    node('dash-reps-table').replaceChildren(...(reps.length ? [
+        element('h4', `码率档位（Representations · ${reps.length}）`),
+        renderTable(['ID', '类型', '码率', '编码', '分辨率 / 帧率', '时间线缺口', '采样'], reps.map((r) => [
+            r.id || '—', r.content_type || '—', `${((r.bandwidth || 0) / 1000).toFixed(1)} kbps`, r.codecs || '—',
+            (r.width && r.height ? `${r.width}×${r.height}` : '—') + (r.frame_rate ? ` @ ${r.frame_rate}` : ''),
+            r.timeline_gaps ?? 0, r.sampled ? '已采样' : '—',
+        ])),
+    ] : []));
+    const segs = d.sampled_segments || [];
+    node('dash-segments-table').replaceChildren(...(segs.length ? [
+        element('h4', `采样分片明细（${segs.length}）`),
+        renderTable(['类型', '档位', '序号', 'HTTP', '到达 (ms)', '下载耗时 (ms)', '字节', '状态'], segs.map((s) => [
+            `${s.kind} (${s.content_type || '—'})`, s.representation_id || '—', s.number ? `#${s.number}` : 'init',
+            s.http_status || '—', s.arrival_ms, s.download_ms, bytes(s.bytes || 0), s.error || 'OK',
+        ])),
+    ] : []));
 }
 
 function renderPlayerReport(player, elapsed) {
@@ -2230,6 +2271,14 @@ function renderReport(report) {
             ['采样变体带宽', bandwidth],
             ['媒体数据', bytes(hls.media_bytes ?? 0)],
         );
+    } else if (protocol === 'dash') {
+        const d = report.dash || {};
+        values.push(
+            ['MPD 类型', d.mpd_type || '—'],
+            ['采集分片 / 失败', `${d.segments_captured ?? 0} / ${d.segments_failed ?? 0}`],
+            ['时间线缺口', d.timeline_gaps ?? 0],
+            ['最长分片下载', time(d.segments_captured ? d.max_segment_download_ms ?? 0 : null)],
+        );
     } else if (!protocols[protocol]?.mpegTS && !protocols[protocol]?.nativeRTSP) {
         values.push(
             ['视频帧 / 音频帧', `${m.video_frames} / ${m.audio_frames}`],
@@ -2261,6 +2310,7 @@ function renderReport(report) {
     renderSamplingTiming(report, requests);
     renderRTSPReport(report);
     renderWHEPReport(report);
+    renderDASHReport(report);
     renderPlayerReport(report.player, observed.elapsed_ms);
     renderPlayerNetwork(report);
     renderStallInvestigations(report);
@@ -2554,12 +2604,12 @@ node('protocol').addEventListener('change', () => {
     const playback = node('analyze-playback');
     playback.disabled = false;
     node('playback-capability-note').hidden = !selected.nativeRTSP;
-    const httpAccess = ['http-flv', 'hls', 'http-ts', 'whep'].includes(protocol);
+    const httpAccess = ['http-flv', 'hls', 'http-ts', 'whep', 'dash'].includes(protocol);
     node('http-access-options').hidden = !httpAccess && !['rtmp', 'rtsps'].includes(protocol);
     node('whep-options').hidden = protocol !== 'whep';
-    node('reconnect-options').hidden = !['http-flv', 'http-ts', 'rtmp', 'rtsp', 'rtsps', 'whep'].includes(protocol);
+    node('reconnect-options').hidden = !['http-flv', 'http-ts', 'rtmp', 'rtsp', 'rtsps', 'whep', 'dash'].includes(protocol);
     node('hls-variant-option').hidden = protocol !== 'hls';
-    node('rolling-options').hidden = !['http-flv', 'http-ts', 'rtmp', 'hls', 'rtsp', 'rtsps', 'whep'].includes(protocol);
+    node('rolling-options').hidden = !['http-flv', 'http-ts', 'rtmp', 'hls', 'rtsp', 'rtsps', 'whep', 'dash'].includes(protocol);
     for (const id of ['http-headers', 'http-proxy-url']) {
         node(id).hidden = !httpAccess;
         document.querySelector(`label[for="${id}"]`).hidden = !httpAccess;
@@ -2670,7 +2720,7 @@ async function changeRTSPReplay(start) {
 node('rtsp-replay').addEventListener('click', () => { void changeRTSPReplay(true); });
 node('rtsp-replay-stop').addEventListener('click', () => { void changeRTSPReplay(false); });
 function captureAccessOptions(protocol) {
-    const httpAccess = ['http-flv', 'hls', 'http-ts', 'whep'].includes(protocol);
+    const httpAccess = ['http-flv', 'hls', 'http-ts', 'whep', 'dash'].includes(protocol);
     const tlsAccess = httpAccess || ['rtmp', 'rtsps'].includes(protocol);
     if (!tlsAccess) return {};
     const headers = {};
@@ -2804,7 +2854,7 @@ bindForm('sample', async () => {
     const protocol = node('protocol').value;
     const run = await api('/runs', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ protocol, transport: protocols[protocol]?.nativeRTSP ? node('rtsp-transport').value : undefined, ice_transport_policy: protocol === 'whep' ? node('whep-ice-policy').value : undefined, url, seconds, playback, auto_investigate: autoInvestigate, reconnect_attempts: ['http-flv', 'http-ts', 'rtmp', 'rtsp', 'rtsps', 'whep'].includes(protocol) ? node('reconnect-attempts').valueAsNumber : 0, reconnect_delay_ms: ['http-flv', 'http-ts', 'rtmp', 'rtsp', 'rtsps', 'whep'].includes(protocol) ? node('reconnect-delay').valueAsNumber : 0, hls_variant: protocol === 'hls' ? node('hls-variant').valueAsNumber : undefined, segment_seconds: ['http-flv', 'http-ts', 'rtmp', 'hls', 'rtsp', 'rtsps', 'whep'].includes(protocol) ? node('segment-seconds').valueAsNumber : 0, rolling_segments: ['http-flv', 'http-ts', 'rtmp', 'hls', 'rtsp', 'rtsps', 'whep'].includes(protocol) ? node('rolling-segments').valueAsNumber : 0, profile: node('analysis-profile').value, custom_thresholds: node('analysis-profile').value === 'custom' ? { first_frame_warn_ms: node('threshold-first-frame').valueAsNumber, video_gap_warn_ms: node('threshold-video-gap').valueAsNumber, dts_gap_warn_ms: node('threshold-dts-gap').valueAsNumber, gop_warn_ms: node('threshold-gop').valueAsNumber } : undefined, ...captureAccessOptions(protocol) }),
+        body: JSON.stringify({ protocol, transport: protocols[protocol]?.nativeRTSP ? node('rtsp-transport').value : undefined, ice_transport_policy: protocol === 'whep' ? node('whep-ice-policy').value : undefined, url, seconds, playback, auto_investigate: autoInvestigate, reconnect_attempts: ['http-flv', 'http-ts', 'rtmp', 'rtsp', 'rtsps', 'whep', 'dash'].includes(protocol) ? node('reconnect-attempts').valueAsNumber : 0, reconnect_delay_ms: ['http-flv', 'http-ts', 'rtmp', 'rtsp', 'rtsps', 'whep', 'dash'].includes(protocol) ? node('reconnect-delay').valueAsNumber : 0, hls_variant: protocol === 'hls' ? node('hls-variant').valueAsNumber : undefined, segment_seconds: ['http-flv', 'http-ts', 'rtmp', 'hls', 'rtsp', 'rtsps', 'whep', 'dash'].includes(protocol) ? node('segment-seconds').valueAsNumber : 0, rolling_segments: ['http-flv', 'http-ts', 'rtmp', 'hls', 'rtsp', 'rtsps', 'whep', 'dash'].includes(protocol) ? node('rolling-segments').valueAsNumber : 0, profile: node('analysis-profile').value, custom_thresholds: node('analysis-profile').value === 'custom' ? { first_frame_warn_ms: node('threshold-first-frame').valueAsNumber, video_gap_warn_ms: node('threshold-video-gap').valueAsNumber, dts_gap_warn_ms: node('threshold-dts-gap').valueAsNumber, gop_warn_ms: node('threshold-gop').valueAsNumber } : undefined, ...captureAccessOptions(protocol) }),
     });
     stopPlayback(activePlayer);
     startPlayback(run, startedAt, startedAtPerformanceMS, seconds, hlsRecovery, hlsABR, hlsLowLatency);
