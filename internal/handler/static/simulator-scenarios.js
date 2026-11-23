@@ -4,6 +4,7 @@ const el = id => document.getElementById(id);
 const gb = '/api/simulators/gb28181';
 const platform = gb + '/platform';
 const onvif = '/api/simulators/onvif';
+const rtspSim = '/api/simulators/rtsp';
 const hls = '/api/simulators/hls';
 const media = '/api/simulators/media';
 const runs = '/api/diagnostics/runs';
@@ -848,6 +849,53 @@ async function runLLHLS(entry) {
   }
 }
 
+async function runRTSPSimulatorFault(fault, entry) {
+  let source;
+  let runPath;
+  try {
+    progress('启动独立 RTSP 故障源…');
+    const payload = fault === 'rtp_drop' ? {fault, drop_every: 6} : {fault};
+    source = await request(rtspSim + '/start', payload);
+    progress('启动排障采样并观测 RTSP 信令与 RTP 报文头…');
+    const run = await request(runs, {protocol: 'rtsp', transport: 'tcp', url: source.url, seconds: fault === 'rtp_drop' ? 4 : 3});
+    runPath = runs + '/' + run.id;
+    entry.diagnostic_id = run.id;
+    const report = await waitFor(async () => {
+      const detail = await request(runPath);
+      if (detail.status !== 'running' && !detail.report) throw new Error('RTSP 采样未生成报告。');
+      return detail.report;
+    }, 9000, 'RTSP 采样观测超时。');
+    const rtsp = report.rtsp || {};
+    const requests = (rtsp.requests || []).map(({method, status_code}) => ({method, status_code}));
+    entry.evidence = {fault, url: source.url, rtp_packets: rtsp.rtp_packets, requests};
+    if (fault === 'rtp_drop') {
+      const videoTrack = (rtsp.tracks || []).find(t => t.kind === 'video') || (rtsp.tracks || [])[0];
+      const gapSamples = (report.rtsp_packets?.samples || []).filter(s => s.anomaly === 'seq_gap');
+      entry.evidence.sequence_gaps = videoTrack?.sequence_gaps || 0;
+      entry.evidence.missing_packets = videoTrack?.missing_sequence_packets || 0;
+      entry.evidence.gap_sample_count = gapSamples.length;
+      entry.passed = Boolean(videoTrack && videoTrack.sequence_gaps > 0 && gapSamples.length > 0);
+      entry.detail = entry.passed
+        ? `检测到 ${videoTrack.sequence_gaps} 次序号缺口（缺失 ${videoTrack.missing_sequence_packets} 包，报文明细命中 ${gapSamples.length} 条）`
+        : '未在 RTSP 报告或报文明细中观测到预期序号缺口';
+    } else if (fault === 'not_found') {
+      const hit = requests.some(r => r.method === 'DESCRIBE' && r.status_code === 404);
+      entry.passed = hit && report.manifest?.observation?.failure_stage === 'rtsp_describe';
+      entry.detail = entry.passed ? 'DESCRIBE 返回 404 并定位至 rtsp_describe 阶段' : '未观测到预期的 DESCRIBE 404 故障';
+    } else {
+      const hit = requests.some(r => r.method === 'DESCRIBE' && r.status_code === 302);
+      entry.passed = hit;
+      entry.detail = entry.passed ? 'DESCRIBE 返回 302 重定向响应' : '未观测到预期的 DESCRIBE 302 响应';
+    }
+  } finally {
+    if (runPath) {
+      const latest = await request(runPath).catch(() => null);
+      if (latest?.status === 'running') await request(runPath + '/stop', null).catch(() => {});
+    }
+    if (source) await stopOwned(rtspSim, 'url', source.url).catch(() => {});
+  }
+}
+
 el('scenario-form').addEventListener('submit', async event => {
   event.preventDefault();
   if (busy) return;
@@ -863,6 +911,7 @@ el('scenario-form').addEventListener('submit', async event => {
     else if (expected === 'source_port') await runRTSPSourcePort(entry);
     else if (expected === 'resolution') await runRTSPResolution(entry);
     else if (expected === 'fallback') await runRTSPFallback(entry);
+    else if (['rtp_drop', 'not_found', 'redirect'].includes(expected)) await runRTSPSimulatorFault(expected, entry);
     else if (family === 'rtsp') await runRTSPReconnect(entry);
     else if (family === 'ts') await runTSJoin(expected, entry);
     else if (expected === 'audio_boundary') await runHLSAudioBoundary(entry);

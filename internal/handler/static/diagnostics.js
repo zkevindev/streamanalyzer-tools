@@ -287,20 +287,41 @@ function renderRTSPPacketSamples(packetReport) {
     ];
     if (!options.some(([key]) => key === rtspPacketFilter)) rtspPacketFilter = 'all';
 
+    const exportCSV = (rows) => {
+        const header = 'index,track_id,kind,codec,ssrc,pt,sequence,seq_delta,timestamp,ts_delta,ts_delta_ms,marker,arrival_ms,payload_bytes,packet_bytes,anomaly';
+        const body = rows.map((p) => [
+            p.index, p.track_id, p.kind || '', p.codec || '', hexLabel(p.ssrc, 8), p.payload_type,
+            p.sequence, p.sequence_delta ?? '', p.timestamp, p.timestamp_delta ?? '',
+            p.timestamp_delta_ms ?? '', p.marker ? 1 : 0, p.arrival_ms, p.payload_bytes, p.packet_bytes, p.anomaly || '',
+        ].join(','));
+        const blob = new Blob([[header, ...body].join('\n')], { type: 'text/csv;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `rtsp-packets-${currentID || 'sample'}.csv`;
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    };
+
     const draw = () => {
-        node('rtsp-packet-filters').replaceChildren(...options.map(([key, label]) => {
-            const btn = element('button', label, key === rtspPacketFilter ? '' : 'secondary');
-            btn.type = 'button';
-            btn.setAttribute('aria-pressed', String(key === rtspPacketFilter));
-            btn.addEventListener('click', () => { rtspPacketFilter = key; draw(); });
-            return btn;
-        }));
         const filtered = samples.filter((item) => {
             if (rtspPacketFilter === 'video') return item.kind === 'video';
             if (rtspPacketFilter === 'audio') return item.kind === 'audio';
             if (rtspPacketFilter === 'anomaly') return Boolean(item.anomaly);
             return true;
         });
+        const filterButtons = options.map(([key, label]) => {
+            const btn = element('button', label, key === rtspPacketFilter ? '' : 'secondary');
+            btn.type = 'button';
+            btn.setAttribute('aria-pressed', String(key === rtspPacketFilter));
+            btn.addEventListener('click', () => { rtspPacketFilter = key; draw(); });
+            return btn;
+        });
+        const csvBtn = element('button', '导出 CSV', 'secondary');
+        csvBtn.type = 'button';
+        csvBtn.disabled = !filtered.length;
+        csvBtn.addEventListener('click', () => exportCSV(filtered));
+        node('rtsp-packet-filters').replaceChildren(...filterButtons, csvBtn);
         const chartHost = node('rtsp-packet-chart');
         if (chartHost) {
             const chartEl = renderRTSPDeltaChart(filtered);
@@ -2083,16 +2104,60 @@ function renderRTMPControl(control) {
     node('rtmp-control-boundary').textContent = control.boundary;
 }
 
+function renderThroughputChart(throughput) {
+    const samples = throughput?.samples || [];
+    if (samples.length < 2) return null;
+    const figure = element('figure', '', 'player-buffer-chart');
+    figure.append(element('figcaption', `每秒网络吞吐曲线 (kb/s) · 均值 ${throughput.average_network_kbps.toFixed(1)} kb/s`));
+    const svgEl = (tag, attrs, text) => {
+        const part = document.createElementNS('http://www.w3.org/2000/svg', tag);
+        for (const [k, v] of Object.entries(attrs)) part.setAttribute(k, v);
+        if (text != null) part.textContent = text;
+        return part;
+    };
+    const maxKbps = Math.max(10, throughput.maximum_network_kbps * 1.15);
+    const x = (i) => 52 + (532 * i) / Math.max(1, samples.length - 1);
+    const y = (v) => 108 - (86 * v) / maxKbps;
+    const svg = svgEl('svg', { viewBox: '0 0 615 138', role: 'img', 'aria-label': '每秒网络吞吐曲线' });
+    for (const tick of [0, maxKbps / 2, maxKbps]) {
+        svg.append(
+            svgEl('line', { x1: 52, y1: y(tick), x2: 584, y2: y(tick), class: 'grid' }),
+            svgEl('text', { x: 46, y: y(tick) + 4, 'text-anchor': 'end' }, `${Math.round(tick)}`)
+        );
+    }
+    const avgY = y(throughput.average_network_kbps);
+    svg.append(svgEl('line', { x1: 52, y1: avgY, x2: 584, y2: avgY, stroke: 'var(--muted)', 'stroke-dasharray': '4 3', 'stroke-width': 1 }));
+    svg.append(svgEl('polyline', {
+        points: samples.map((s, i) => `${x(i).toFixed(1)},${y(s.network_kbps).toFixed(1)}`).join(' '),
+        class: 'line',
+    }));
+    svg.append(
+        svgEl('text', { x: 52, y: 128, 'text-anchor': 'start' }, `${samples[0].second}s`),
+        svgEl('text', { x: 318, y: 128, 'text-anchor': 'middle' }, '采样秒'),
+        svgEl('text', { x: 584, y: 128, 'text-anchor': 'end' }, `${samples[samples.length - 1].second}s`)
+    );
+    figure.append(svg);
+    return figure;
+}
+
 function renderThroughput(report) {
     const throughput = report.throughput;
     node('throughput-report').hidden = !throughput;
-    if (!throughput) return;
+    if (!throughput) {
+        node('throughput-chart')?.replaceChildren();
+        return;
+    }
     renderMetrics('throughput-metrics', [
         ['平均网络吞吐', throughput.average_network_kbps.toFixed(1) + ' kb/s'],
         ['平均媒体码率', throughput.average_media_kbps.toFixed(1) + ' kb/s'],
         ['视频 / 音频媒体码率', `${throughput.average_video_kbps.toFixed(1)} / ${throughput.average_audio_kbps.toFixed(1)} kb/s`],
         ['每秒吞吐最低 / 最高', `${throughput.minimum_network_kbps.toFixed(1)} / ${throughput.maximum_network_kbps.toFixed(1)} kb/s`],
     ]);
+    const chartHost = node('throughput-chart');
+    if (chartHost) {
+        const chartEl = renderThroughputChart(throughput);
+        chartHost.replaceChildren(...(chartEl ? [chartEl] : []));
+    }
     node('throughput-samples').replaceChildren(renderTable(['秒', '有效时长', '网络字节', '媒体字节', '视频字节', '音频字节', '网络吞吐'],
         (throughput.samples || []).map(sample => [sample.second, time(sample.duration_ms), bytes(sample.network_bytes), bytes(sample.media_bytes), bytes(sample.video_bytes), bytes(sample.audio_bytes), sample.network_kbps.toFixed(1) + ' kb/s'])));
     node('throughput-boundary').textContent = throughput.boundary;
