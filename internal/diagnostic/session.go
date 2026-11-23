@@ -67,7 +67,7 @@ func (s *Service) finishSession(req SampleRequest, runID string) {
 	rolling := group != nil && group.rolling && !group.stopped && detail.Status != "canceled"
 	s.mu.Unlock()
 	retry := rolling || req.SessionAttempt < req.ReconnectAttempts && detail.Status != "canceled" &&
-		(reason == "request_error" || reason == "body_error" || reason == "rtmp_error" || reason == "eof")
+		(reason == "request_error" || reason == "body_error" || reason == "rtmp_error" || reason == "rtsp_error" || reason == "eof")
 	if !retry {
 		s.mu.Lock()
 		if group := s.sessionGroups[req.SessionGroupID]; group != nil {
@@ -152,8 +152,8 @@ func validateRolling(req *SampleRequest) error {
 	if req.SegmentSeconds < 1 || req.SegmentSeconds > maxSeconds || req.RollingSegments < 0 || req.RollingSegments > 12 {
 		return fmt.Errorf("%w: 分段时长须为 1–300 秒，保留段数须为 1–12", ErrInvalid)
 	}
-	if req.Protocol != ProtocolHTTPFLV && req.Protocol != ProtocolRTMP && req.Protocol != ProtocolHLS {
-		return fmt.Errorf("%w: 滚动分段目前适用于 HTTP-FLV、RTMP/RTMPS 与 HLS", ErrInvalid)
+	if req.Protocol != ProtocolHTTPFLV && req.Protocol != ProtocolRTMP && req.Protocol != ProtocolHLS && req.Protocol != ProtocolRTSP && req.Protocol != ProtocolRTSPS {
+		return fmt.Errorf("%w: 滚动分段目前适用于 HTTP-FLV、RTMP/RTMPS、RTSP/RTSPS 与 HLS", ErrInvalid)
 	}
 	if req.ReconnectAttempts != 0 || req.Playback || req.AutoInvestigate {
 		return fmt.Errorf("%w: 滚动分段不叠加自动重连或播放器观测", ErrInvalid)
@@ -169,8 +169,8 @@ func validateReconnect(req SampleRequest) error {
 	if req.ReconnectAttempts < 0 || req.ReconnectAttempts > 3 || req.ReconnectDelayMS < 0 || req.ReconnectDelayMS > 5000 {
 		return fmt.Errorf("%w: 重连次数须为 0–3，重连间隔须为 0–5000 ms", ErrInvalid)
 	}
-	if req.ReconnectAttempts > 0 && req.Protocol != ProtocolHTTPFLV && req.Protocol != ProtocolRTMP {
-		return fmt.Errorf("%w: 自动重连目前适用于 HTTP-FLV 与 RTMP/RTMPS", ErrInvalid)
+	if req.ReconnectAttempts > 0 && req.Protocol != ProtocolHTTPFLV && req.Protocol != ProtocolRTMP && req.Protocol != ProtocolRTSP && req.Protocol != ProtocolRTSPS {
+		return fmt.Errorf("%w: 自动重连目前适用于 HTTP-FLV、RTMP/RTMPS 与 RTSP/RTSPS", ErrInvalid)
 	}
 	if req.ReconnectAttempts > 0 && (req.Playback || req.AutoInvestigate) {
 		return fmt.Errorf("%w: 重连会话请分别分析各段播放体验，暂不在会话组内自动续接播放器", ErrInvalid)

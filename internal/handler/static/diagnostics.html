@@ -273,10 +273,17 @@
                             <p>偏移以各轨道的发送报告为基准，接收间隔偏差单独统计。</p>
                             <div id="rtsp-clock-table"></div>
                         </details>
-                        <details class="report-details">
+                        <details class="report-details" open>
                             <summary>RTP 序号与时间戳统计</summary>
                             <p id="rtsp-sequence-note" class="timing-note muted"></p>
                             <div id="rtsp-sequence-table"></div>
+                        </details>
+                        <details id="rtsp-packets-section" class="report-details" open hidden>
+                            <summary id="rtsp-packets-summary">RTP 报文序号与时间戳明细</summary>
+                            <p id="rtsp-packets-note" class="timing-note muted"></p>
+                            <div id="rtsp-packet-filters" class="tool-row" role="group" aria-label="筛选 RTP 报文"></div>
+                            <div id="rtsp-packet-chart"></div>
+                            <div id="rtsp-packet-table"></div>
                         </details>
                     </section>
                     <section id="whep-report" aria-labelledby="whep-title" hidden>

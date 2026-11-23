@@ -7,12 +7,15 @@
     </a>
     <nav class="workbench-sections" aria-label="主导航">
       <a class="workbench-tab" href="/diagnostics"{{if eq .Page "diagnostics"}} aria-current="page"{{else if .Diagnostics}} aria-current="true"{{end}}>排障工作台</a>
-      <a class="workbench-tab" href="/simulators"{{if eq .Page "simulators"}} aria-current="page"{{else if .Simulator}} aria-current="true"{{end}}>模拟器</a>
+      <a class="workbench-tab" href="/simulators"{{if eq .Page "simulators"}} aria-current="page"{{else if .Simulator}} aria-current="true"{{end}}>协议模拟器</a>
       <a class="workbench-tab" href="/history"{{if eq .Page "history"}} aria-current="page"{{end}}>任务记录</a>
     </nav>
-    {{if eq .Page "diagnostics" -}}
-    <button type="button" class="workbench-setting" id="model-settings" aria-haspopup="dialog" hidden>模型设置</button>
-    {{- end}}
+    <div class="workbench-actions">
+      <button type="button" class="workbench-setting workbench-theme-toggle" id="theme-toggle" aria-pressed="false" title="切换浅色 / 暗夜示波器主题">暗夜示波器</button>
+      {{if eq .Page "diagnostics" -}}
+      <button type="button" class="workbench-setting" id="model-settings" aria-haspopup="dialog" hidden>模型设置</button>
+      {{- end}}
+    </div>
   </div>
 </header>
 {{- end}}
@@ -40,8 +43,9 @@
   <a href="/simulators/onvif"{{if eq .Page "simulator-onvif"}} aria-current="page"{{end}}>ONVIF</a>
   <a href="/simulators/sip"{{if eq .Page "simulator-sip"}} aria-current="page"{{end}}>通用 SIP</a>
   <a href="/simulators/hls"{{if eq .Page "simulator-hls"}} aria-current="page"{{end}}>HLS</a>
-  <a href="/simulators/media"{{if eq .Page "simulator-media"}} aria-current="page"{{end}}>HTTP-FLV／MPEG-TS</a>
-  <a href="/simulators/rtmp"{{if eq .Page "simulator-rtmp"}} aria-current="page"{{end}}>RTMP／RTMPS</a>
+  <a href="/simulators/media"{{if eq .Page "simulator-media"}} aria-current="page"{{end}}>HTTP-FLV / MPEG-TS</a>
+  <a href="/simulators/rtmp"{{if eq .Page "simulator-rtmp"}} aria-current="page"{{end}}>RTMP / RTMPS</a>
+  <a href="/simulators/rtsp"{{if eq .Page "simulator-rtsp"}} aria-current="page"{{end}}>RTSP / RTSPS</a>
   <a href="/simulators/whep"{{if eq .Page "simulator-whep"}} aria-current="page"{{end}}>WHEP</a>
   <a href="/simulators/pusher"{{if eq .Page "simulator-pusher"}} aria-current="page"{{end}}>推流器</a>
   <a href="/simulators/scenarios"{{if eq .Page "simulator-scenarios"}} aria-current="page"{{end}}>场景回归</a>

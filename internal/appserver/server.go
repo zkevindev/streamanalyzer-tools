@@ -27,6 +27,7 @@ type simulators struct {
 	pusher     pusher.Manager
 	whep       whep.Manager
 	rtmp       mediasource.RTMPManager
+	rtsp       mediasource.RTSPManager
 	media      mediasource.Manager
 	gb28181    gb28181.Manager
 	gbPlatform gb28181.PlatformManager
@@ -40,6 +41,7 @@ func (s *simulators) Close() {
 	s.pusher.Close()
 	s.whep.Close()
 	s.rtmp.Close()
+	s.rtsp.Close()
 	s.media.Close()
 	s.discovery.Close()
 	s.hls.Close()
@@ -79,6 +81,7 @@ func newEngine(cfg *Config, model diagnostic.Explainer, sim *simulators) (*gin.E
 	handler.RegisterONVIFDiscoveryRoutes(r, &sim.discovery)
 	handler.RegisterSimulatorHistoryRoutes(r, cfg.Server.DataDir)
 	handler.RegisterSimulatorRoutes(r, &sim.gb28181, &sim.onvif, &sim.sip, &sim.hls, &sim.gbPlatform, &sim.media, &sim.rtmp, &sim.whep, &sim.pusher)
+	handler.RegisterRTSPSimulatorRoutes(r, &sim.rtsp)
 	return r, diagnostics, nil
 }
 

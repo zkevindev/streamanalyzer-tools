@@ -402,6 +402,9 @@ func (s *Service) Start(req SampleRequest) (Run, error) {
 				report.Throughput, err = buildThroughput(dir, report)
 			}
 			if err == nil {
+				report.RTSPPackets, err = buildRTSPPacketReport(dir, report)
+			}
+			if err == nil {
 				report.HLSABR = buildHLSABR(report)
 				report.Assessment = assessReport(report)
 				err = persistReport(dir, report)

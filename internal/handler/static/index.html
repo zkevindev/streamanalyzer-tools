@@ -16,77 +16,131 @@
       <div class="home-intro">
         <div class="home-kicker">
           <span class="home-kicker-dot" aria-hidden="true"></span>
-          音视频流排障与协议联调工作台
+          本地音视频流排障与协议联调工作台
         </div>
-        <h1 id="home-title">流媒体排障与协议联调</h1>
-        <p>从线上实时采样到本地证据包复盘，一站式查看码流结构、请求时序、播放器体验与协议模拟回归。</p>
+        <h1 id="home-title">流媒体排障、码流深钻与协议联调</h1>
+        <p>面向实时采样、离线文件解析与故障源回归。统一查看网络请求时序、码流结构、播放器缓冲体验与可校验的 SHA-256 证据包。</p>
+        <div class="home-actions">
+          <a class="home-btn-primary" href="/diagnostics">进入排障工作台</a>
+          <a class="home-btn-secondary" href="/simulators">打开协议模拟器</a>
+        </div>
         <ul class="home-protocols" aria-label="支持协议">
           <li>HTTP-FLV</li>
           <li>RTMP / RTMPS</li>
           <li>RTSP / RTSPS</li>
-          <li>HLS</li>
-          <li>MPEG-TS</li>
+          <li>HLS / LL-HLS</li>
+          <li>MPEG-TS / PS</li>
           <li>GB28181</li>
           <li>ONVIF</li>
           <li>SIP</li>
-          <li>WHEP</li>
+          <li>WHEP / WHIP</li>
         </ul>
       </div>
 
-      <nav class="home-workflows" aria-label="主要工具">
+      <nav class="home-workflows" aria-label="主要工作流">
         <a class="home-workflow home-workflow-primary" href="/diagnostics">
           <div class="home-card-top">
-            <span class="home-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+            <span class="home-card-lead">
+              <span class="home-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+              </span>
+              <span class="home-card-tag">/diagnostics</span>
             </span>
             <span class="home-arrow" aria-hidden="true">→</span>
           </div>
           <span class="home-tool-copy">
             <strong>排障工作台</strong>
-            <span>采集真实音视频流、探测 ONVIF 设备、执行多协议诊断并生成离线证据包</span>
+            <span>采集实时音视频流、探测局域网 ONVIF 设备、记录播放器体验并生成离线证据包</span>
           </span>
         </a>
         <a class="home-workflow" href="/simulators">
           <div class="home-card-top">
-            <span class="home-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+            <span class="home-card-lead">
+              <span class="home-icon" aria-hidden="true">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="14" rx="2"/><path d="M8 20h8M12 18v2"/></svg>
+              </span>
+              <span class="home-card-tag">/simulators</span>
             </span>
             <span class="home-arrow" aria-hidden="true">→</span>
           </div>
           <span class="home-tool-copy">
             <strong>协议模拟器</strong>
-            <span>模拟 GB28181、ONVIF、SIP、HLS、RTMP、MPEG-TS、WHEP 故障源，支持多路 RTMP/RTSP/WHIP 推流与场景回归</span>
+            <span>启动可重复的 GB28181、ONVIF、SIP、HLS、RTMP、MPEG-TS 与 WHEP 故障源，执行多路推流与场景回归</span>
           </span>
         </a>
       </nav>
     </section>
 
     <section class="home-analysis" aria-labelledby="analysis-title">
-      <h2 id="analysis-title">分析与回看</h2>
-      <ul class="home-tool-list">
-        <li>
-          <a href="/diagnostics/review">
-            <span class="home-tool-lead">
-              <span class="home-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8M16 17H8M10 9H8"/></svg>
+      <div>
+        <div class="home-section-head">
+          <h2 id="analysis-title">复盘与任务记录</h2>
+          <span class="home-section-meta">本地数据目录</span>
+        </div>
+        <ul class="home-tool-list">
+          <li>
+            <a href="/diagnostics/review">
+              <span class="home-tool-lead">
+                <span class="home-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8M16 17H8M10 9H8"/></svg>
+                </span>
+                <span class="home-tool-copy">
+                  <strong>离线复盘</strong>
+                  <span>校验并重算证据包 ZIP，或解析 PCAP / FLV / TS / PS / WebM / MP4</span>
+                </span>
               </span>
-              <span class="home-tool-copy"><strong>离线复盘</strong><span>导入排障证据包，或解析 PCAP / FLV / TS / MP4 文件</span></span>
-            </span>
-            <span class="home-arrow" aria-hidden="true">→</span>
-          </a>
-        </li>
-        <li>
-          <a href="/history">
-            <span class="home-tool-lead">
-              <span class="home-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>
+              <span class="home-arrow" aria-hidden="true">→</span>
+            </a>
+          </li>
+          <li>
+            <a href="/offline">
+              <span class="home-tool-lead">
+                <span class="home-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M7 8h10M7 12h6M7 16h8"/></svg>
+                </span>
+                <span class="home-tool-copy">
+                  <strong>离线媒体文件解析</strong>
+                  <span>逐帧深钻 NALU 与 Hex、查看 MP4 Box 树、执行 FFmpeg 解码体检与 A/B 对比</span>
+                </span>
               </span>
-              <span class="home-tool-copy"><strong>任务记录</strong><span>集中回看排障采样、实时分析、离线解析与回归结果</span></span>
-            </span>
-            <span class="home-arrow" aria-hidden="true">→</span>
-          </a>
-        </li>
-      </ul>
+              <span class="home-arrow" aria-hidden="true">→</span>
+            </a>
+          </li>
+          <li>
+            <a href="/history">
+              <span class="home-tool-lead">
+                <span class="home-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l3 2"/></svg>
+                </span>
+                <span class="home-tool-copy">
+                  <strong>任务记录</strong>
+                  <span>按来源与状态筛选排障采样、离线解析与模拟器回归历史</span>
+                </span>
+              </span>
+              <span class="home-arrow" aria-hidden="true">→</span>
+            </a>
+          </li>
+        </ul>
+      </div>
+
+      <div>
+        <div class="home-section-head">
+          <h2>模拟器快捷入口</h2>
+          <span class="home-section-meta">10 个内置模块</span>
+        </div>
+        <ul class="home-matrix">
+          <li><a href="/simulators"><strong>GB28181</strong><span>国标设备与平台侧收流</span></a></li>
+          <li><a href="/simulators/onvif"><strong>ONVIF</strong><span>WS-Discovery 与 RTSP 联调</span></a></li>
+          <li><a href="/simulators/sip"><strong>通用 SIP</strong><span>分机注册与双向 G.711</span></a></li>
+          <li><a href="/simulators/hls"><strong>HLS</strong><span>分片延迟、404 与密钥轮换</span></a></li>
+          <li><a href="/simulators/media"><strong>FLV / TS</strong><span>关键帧与 CC 连续计数异常</span></a></li>
+          <li><a href="/simulators/rtmp"><strong>RTMP / S</strong><span>握手、转发与主备切换</span></a></li>
+          <li><a href="/simulators/rtsp"><strong>RTSP / S</strong><span>鉴权、302、丢包与推流中继</span></a></li>
+          <li><a href="/simulators/whep"><strong>WHEP</strong><span>ICE、DTLS 与本机播放诊断</span></a></li>
+          <li><a href="/simulators/pusher"><strong>推流器</strong><span>多路 RTMP / RTSP / WHIP</span></a></li>
+          <li><a href="/simulators/scenarios"><strong>场景回归</strong><span>预设保存与重复对比运行</span></a></li>
+        </ul>
+      </div>
     </section>
   </main>
 </body>
