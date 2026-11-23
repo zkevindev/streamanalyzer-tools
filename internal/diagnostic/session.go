@@ -153,8 +153,8 @@ func validateRolling(req *SampleRequest) error {
 	if req.SegmentSeconds < 1 || req.SegmentSeconds > maxSeconds || req.RollingSegments < 0 || req.RollingSegments > 12 {
 		return fmt.Errorf("%w: 分段时长须为 1–300 秒，保留段数须为 1–12", ErrInvalid)
 	}
-	if req.Protocol != ProtocolHTTPFLV && req.Protocol != ProtocolRTMP && req.Protocol != ProtocolHLS && req.Protocol != ProtocolRTSP && req.Protocol != ProtocolRTSPS && req.Protocol != ProtocolWHEP && req.Protocol != ProtocolHTTPTS {
-		return fmt.Errorf("%w: 滚动分段目前适用于 HTTP-FLV、HTTP-TS、RTMP/RTMPS、RTSP/RTSPS、WHEP 与 HLS", ErrInvalid)
+	if req.Protocol != ProtocolHTTPFLV && req.Protocol != ProtocolRTMP && req.Protocol != ProtocolHLS && req.Protocol != ProtocolRTSP && req.Protocol != ProtocolRTSPS && req.Protocol != ProtocolWHEP && req.Protocol != ProtocolHTTPTS && req.Protocol != ProtocolDASH {
+		return fmt.Errorf("%w: 滚动分段目前适用于 HTTP-FLV、HTTP-TS、RTMP/RTMPS、RTSP/RTSPS、WHEP、HLS 与 MPEG-DASH", ErrInvalid)
 	}
 	if req.ReconnectAttempts != 0 || req.Playback || req.AutoInvestigate {
 		return fmt.Errorf("%w: 滚动分段不叠加自动重连或播放器观测", ErrInvalid)
@@ -170,8 +170,8 @@ func validateReconnect(req SampleRequest) error {
 	if req.ReconnectAttempts < 0 || req.ReconnectAttempts > 3 || req.ReconnectDelayMS < 0 || req.ReconnectDelayMS > 5000 {
 		return fmt.Errorf("%w: 重连次数须为 0–3，重连间隔须为 0–5000 ms", ErrInvalid)
 	}
-	if req.ReconnectAttempts > 0 && req.Protocol != ProtocolHTTPFLV && req.Protocol != ProtocolRTMP && req.Protocol != ProtocolRTSP && req.Protocol != ProtocolRTSPS && req.Protocol != ProtocolWHEP && req.Protocol != ProtocolHTTPTS {
-		return fmt.Errorf("%w: 自动重连目前适用于 HTTP-FLV、HTTP-TS、RTMP/RTMPS、RTSP/RTSPS 与 WHEP", ErrInvalid)
+	if req.ReconnectAttempts > 0 && req.Protocol != ProtocolHTTPFLV && req.Protocol != ProtocolRTMP && req.Protocol != ProtocolRTSP && req.Protocol != ProtocolRTSPS && req.Protocol != ProtocolWHEP && req.Protocol != ProtocolHTTPTS && req.Protocol != ProtocolDASH {
+		return fmt.Errorf("%w: 自动重连目前适用于 HTTP-FLV、HTTP-TS、RTMP/RTMPS、RTSP/RTSPS、WHEP 与 MPEG-DASH", ErrInvalid)
 	}
 	if req.ReconnectAttempts > 0 && (req.Playback || req.AutoInvestigate) {
 		return fmt.Errorf("%w: 重连会话请分别分析各段播放体验，暂不在会话组内自动续接播放器", ErrInvalid)

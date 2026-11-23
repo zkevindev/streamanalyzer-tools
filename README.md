@@ -2,24 +2,24 @@
 
 ![Stream Analyzer](analyzer-logo.png)
 
-面向音视频流排障、离线文件解析与多协议模拟联调的一体化工作台（Web & 桌面端）。
+面向音视频流排障、离线文件解析与多协议模拟联调的一体化工作台（Web & 桌面端），全站采用零外部 CDN 依赖的原生 SVG 时序可视化与统一的亮/暗色工程控制台界面。
 
 ## 核心能力
 
 | 模块 | 访问路由 | 说明 |
 | --- | --- | --- |
-| **排障工作台** | `/diagnostics` | 支持 HTTP-FLV、RTMP/S、RTSP/S、WHEP (WebRTC)、HLS、HTTP/UDP/RTP MPEG-TS 采样，记录网络/信令/ICE/DTLS 阶段耗时、HTTP 头、RTP/RTCP/PLI 与浏览器原生 WebRTC `getStats()` 播放器体验，生成可离线复盘的 SHA-256 证据包及 AI 辅助汇总 |
+| **排障工作台** | `/diagnostics` | 支持 **HTTP-FLV、RTMP/RTMPS、RTSP/RTSPS、WHEP (WebRTC)、HLS/LL-HLS、MPEG-DASH (.mpd)、HTTP/UDP/RTP MPEG-TS** 在线采样；支持断流自动重连、滚动分段采集与多路并发对比；记录网络/信令/ICE/DTLS 阶段耗时、HTTP 头、RTP/RTCP/PLI、SegmentTimeline 缺口与浏览器播放体验，生成可离线复盘的 SHA-256 证据包及 AI 辅助汇总 |
 | **ONVIF 探测** | `/diagnostics/onvif` | 局域网 WS-Discovery 设备发现、凭据鉴权与 Media Profile 读取，一键回填 RTSP 采样地址 |
-| **协议模拟器** | `/simulators` | 内置 GB28181（含平台侧收流）、ONVIF、通用 SIP、HLS、RTMP/S、HTTP-FLV/MPEG-TS、WHEP 故障源、多路 RTMP/RTSP/WHIP 推流器与自动化场景回归 |
-| **离线复盘** | `/diagnostics/review`、`/offline` | 支持排障证据包（ZIP）离线校验与重算，以及 `raw` / `pcap`（RTMP·RTP/RTCP·HTTP-FLV·TS）/ `flv` / `ts` / `ps`（含 G.711 转 WAV）/ `webm`（含 AV1）/ `mp4` / `annexb` 离线解析、逐帧深钻、MP4 Box 树、FFmpeg 黑帧/冻结/静音体检与无损切片、两文件 A/B 对比和独立 HTML/Markdown 诊断报告导出 |
-| **任务记录** | `/history` | 统一检索与回看排障采样、离线解析与模拟器回归记录 |
+| **协议模拟器** | `/simulators` | 内置 **GB28181**（含平台侧收流）、**ONVIF**、**通用 SIP**、**HLS/LL-HLS**、**RTMP/RTMPS**、**RTSP/RTSPS**、**HTTP-FLV / MPEG-TS**、**WHEP 故障源**（支持 `auth_401` / `not_found_404` / `sdp_reject_406` / `rtp_drop` 故障注入）、多路 RTMP/RTSP/WHIP 推流器（支持本机源地址一键回填）与自动化场景回归（含 WHEP / RTMP 回归预设） |
+| **离线解析与复盘** | `/offline`、`/diagnostics/review` | 支持排障证据包（ZIP）离线校验与重算；以及 **`flv` / `mp4` (含 fMP4) / `ts` (含 M2TS) / `ps` (GB28181 含 G.711 转 WAV) / `webm` (MKV 含 AV1/VP8/VP9/Opus) / `dash` (MPEG-DASH `.mpd` 清单) / `annexb` / `raw` / `pcap` (RTMP·RTSP 信令/SDP·SIP/GB28181 信令/SDP/XML·RTP/RTCP·HTTP-FLV·TS)** 离线解析、零依赖原生 SVG 码率/帧大小/GOP/AV 同步图表、逐帧深钻与 Hex 视图、交互式 MP4 Box 树、FFmpeg 黑帧/冻结/静音体检与无损切片、两文件 A/B 对比和独立 HTML/Markdown 报告导出 |
+| **任务记录** | `/history` | 统一检索与按协议筛选排障采样、离线解析与模拟器回归记录 |
 
 ## 快速开始
 
 ### 环境要求
 
 - **Go 1.26+**（macOS / Linux 构建需要 CGO 与 `libpcap` 开发环境）
-- **可选依赖**：本地安装 `ffmpeg` / `ffprobe`（放在程序同级目录、加入 `PATH`、通过 Homebrew / MacPorts 安装，或在排障工作台「FFmpeg 工具设置」中指定路径），用于卡顿片段与截图提取、源内容黑帧/冻结/静音检测、G.711 转码预览及模拟器本地视频推流
+- **可选依赖**：本地安装 `ffmpeg` / `ffprobe`（放在程序同级目录、加入 `PATH`、通过 Homebrew / MacPorts 安装，或在排障工作台「FFmpeg 工具设置」中指定路径），用于卡顿片段与截图提取、源内容黑帧/冻结/静音检测、G.711 转码预览、离线无损切片及模拟器本地视频推流
 
 ### 启动 Web 服务
 
@@ -32,7 +32,10 @@ go build -o bin/server ./cmd/server
 
 - 首页：`/`
 - 排障工作台：`/diagnostics`
+- 离线文件解析：`/offline`
+- 证据包离线复盘：`/diagnostics/review`
 - 协议模拟器：`/simulators`
+- 任务记录：`/history`
 
 > 排障工作台及对应 API 默认仅接受本机连接，同一数据目录请由单个服务实例使用。
 
@@ -40,9 +43,9 @@ go build -o bin/server ./cmd/server
 
 无需真实流地址，可直接使用内置故障源跑通采样、播放器分析、自动补查与离线复盘：
 
-1. 打开 `/simulators/hls`，启动一个正常或故障 HLS 源，并使用页面的一键带入功能进入排障工作台。
-2. 确认协议与地址，保持默认 60 秒或缩短采样时间，勾选「同时分析播放器体验」及「采样后自动补查并汇总」。
-3. 开始采样，在报告中查看请求耗时、首屏与缓冲、收流间隔和「已观测 / 待验证 / 证据不足」的排查方向。
+1. 打开 `/simulators/hls`（或 `/simulators/whep` / `/simulators/rtsp`），启动一个正常或故障模拟源，使用页面的一键带入功能进入排障工作台。
+2. 确认协议与地址，保持默认 60 秒或缩短采样时间，按需勾选「同时分析播放器体验」与「采样后自动补查并汇总」。
+3. 开始采样，在报告中查看请求耗时、首屏与缓冲、收流间隔、RTP/分片明细和「已观测 / 待验证 / 证据不足」的分层排查方向。
 4. 下载「证据包 ZIP」，再进入 `/diagnostics/review` 导入，确认无需源流在线也能校验并重算报告。
 
 ### 服务配置与数据
@@ -103,7 +106,7 @@ wails3 task package:darwin
 
 - 原始流、播放地址和任务数据保存在本机数据目录；排障 API 仅接受本机连接，但服务监听地址不等于访问授权机制。
 - 大模型只接收受控、脱敏后的指标和证据 ID，以及按设置附带的异常截图；不会上传完整原始流。
-- 完整证据包可能包含原始媒体、播放列表、RTSP SDP 和异常片段，外发前应确认内容允许共享；只需协作查看时，可使用默认排除完整原始流的「最小化分享包」。
+- 完整证据包可能包含原始媒体、播放列表、MPD 清单、RTSP/WHEP SDP 和异常片段，外发前应确认内容允许共享；只需协作查看时，可使用默认排除完整原始流的「最小化分享包」。
 - SHA-256 清单用于检测证据损坏或篡改，**不代表证据包已加密或完成隐私脱敏**。
 - H.265 预览依赖浏览器和系统解码能力；片段提取、G.711 转码及本地视频模拟依赖可选的 FFmpeg/FFprobe。
 
@@ -111,8 +114,8 @@ wails3 task package:darwin
 
 为保持主文档简洁，各模块的协议细节、完整接口与回归测试已拆分至 `docs/` 目录：
 
-- **[排障工作台与证据包复盘指南](docs/diagnostics.md)**：各协议原始产物、RTSP/HLS 采样细节、ONVIF 设备探测、播放器体验指标（v1–v4）、自动/手动卡顿补查与多模态汇总机制
-- **[协议模拟器与场景回归指南](docs/simulators.md)**：GB28181（含平台侧收流）、ONVIF、通用 SIP、HTTP-FLV/MPEG-TS、HLS、RTMP/S、WHEP 故障源与回归预设使用说明
+- **[排障工作台与证据包复盘指南](docs/diagnostics.md)**：各协议原始产物、RTSP/HLS/WHEP/DASH 采样细节、ONVIF 设备探测、播放器体验指标、自动/手动卡顿补查与多模态汇总机制
+- **[协议模拟器与场景回归指南](docs/simulators.md)**：GB28181（含平台侧收流）、ONVIF、通用 SIP、HTTP-FLV/MPEG-TS、HLS、RTMP/S、RTSP/S、WHEP 故障源与回归预设使用说明
 - **[API 接口与数据格式参考](docs/api-reference.md)**：排障、离线解析与 HLS 交付完整 HTTP API，以及 Enhanced FourCC 归一映射表
 - **[端到端回归测试指南](docs/testing.md)**：H.265 / Opus 预览、RTSP 卡顿补查、多模态与自动补查的真实 Chrome 回归命令
 
@@ -125,19 +128,20 @@ wails3 task package:darwin
 │   └── server/           # 独立 Web 服务入口
 ├── internal/
 │   ├── appserver/        # HTTP 服务与配置加载
-│   ├── codec/            # H.264 / H.265 / AAC 码流头解析
+│   ├── codec/            # H.264 / H.265 / AV1 / AAC 码流头解析
+│   ├── dash/             # 纯 Go ISO/IEC 23009-1 MPEG-DASH MPD 解析、模板展开与时间线缺口检测
 │   ├── desktop/          # 桌面端壳页面、凭据存储与在线升级
-│   ├── diagnostic/       # 排障采样引擎、证据包、播放器与 AI 补查
-│   ├── handler/          # 路由处理器与内嵌前端静态资源 (static/)
+│   ├── diagnostic/       # 多协议排障采样引擎、证据包、播放器体验与 AI 补查
+│   ├── handler/          # 路由处理器与零 CDN 内嵌前端静态资源 (static/)
 │   ├── hls/              # HLS 拉流客户端（供示例使用）
 │   ├── hlsdelivery/      # HLS 播放列表（m3u8）与分片媒体（TS/fMP4）解析库
 │   ├── models/           # 公共数据模型
-│   ├── mp4parse/         # MP4 解析与裸流导出
-│   ├── offline/          # 离线文件解析（raw / pcap / flv / ts / ps / webm / mp4 / annexb / FFmpeg 联动 / A/B 对比 / 报告导出）
+│   ├── mp4parse/         # MP4/fMP4 解析、Box 树与裸流导出
+│   ├── offline/          # 离线文件解析（flv / mp4 / ts / ps / webm / dash / annexb / raw / pcap 含 RTSP·SIP/GB28181·RTP / FFmpeg 联动 / A/B 对比 / 报告导出）
 │   ├── onvifdiscovery/   # ONVIF 设备发现与 Media Profile 查询
 │   ├── pcaprtmp/         # PCAP 抓包 RTMP 会话重组
 │   ├── rtmpraw/          # RTMP 裸流解析
-│   └── simulator/        # 多协议模拟器与场景回归引擎
+│   └── simulator/        # 多协议模拟器、故障注入与场景回归引擎
 ├── third-party/          # 本地增强的 go-rtmp 与 go-flv
 ├── example/              # 独立命令行解析与拉流示例
 ├── docs/                 # 专题技术文档

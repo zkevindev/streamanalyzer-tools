@@ -288,10 +288,10 @@ func (s *Service) Start(req SampleRequest) (Run, error) {
 	if seconds < 1 || seconds > maxSeconds {
 		return Run{}, fmt.Errorf("%w: 采样时长须为 1 至 %d 秒", ErrInvalid, maxSeconds)
 	}
-	httpAccess := protocol == ProtocolHTTPFLV || protocol == ProtocolHLS || protocol == ProtocolHTTPTS || protocol == ProtocolWHEP
+	httpAccess := protocol == ProtocolHTTPFLV || protocol == ProtocolHLS || protocol == ProtocolHTTPTS || protocol == ProtocolWHEP || protocol == ProtocolDASH
 	tlsAccess := httpAccess || protocol == ProtocolRTMP && target.Scheme == "rtmps" || protocol == ProtocolRTSPS
 	if !httpAccess && (len(req.Headers) > 0 || req.ProxyURL != "") {
-		return Run{}, fmt.Errorf("%w: 自定义请求头和代理仅适用于 HTTP-FLV、HLS、HTTP MPEG-TS 与 WHEP", ErrInvalid)
+		return Run{}, fmt.Errorf("%w: 自定义请求头和代理仅适用于 HTTP-FLV、HLS、MPEG-DASH、HTTP MPEG-TS 与 WHEP", ErrInvalid)
 	}
 	if req.CACertificate != "" && !tlsAccess {
 		return Run{}, fmt.Errorf("%w: 自定义 CA 仅适用于 HTTPS、RTMPS 与 RTSPS", ErrInvalid)
@@ -474,6 +474,8 @@ func (s *Service) sampleProtocolWithOptions(ctx context.Context, dir string, tar
 		return sampleRTSPTransportWithTLS(ctx, dir, target, seconds, protocol, transport, captureTLSConfig(ctx))
 	case ProtocolWHEP:
 		return sampleWHEP(ctx, captureHTTPClient(ctx, s.client), dir, target, seconds, whepOpts)
+	case ProtocolDASH:
+		return sampleDASH(ctx, captureHTTPClient(ctx, s.client), dir, target, seconds)
 	default:
 		return Report{}, fmt.Errorf("%w: 不支持的采样协议", ErrInvalid)
 	}
@@ -818,11 +820,19 @@ func reportStatus(report Report) string {
 	if report.WHEP != nil {
 		samples = report.WHEP.TotalPackets
 	}
+	if report.DASH != nil {
+		samples = report.DASH.SegmentsCaptured + report.DASH.ManifestsCaptured
+	}
 	if samples == 0 {
 		return "failed"
 	}
 	if hls := report.HLS; hls != nil {
 		if hls.SegmentsFailed+hls.InitSegmentsFailed+hls.PlaylistFailures > 0 {
+			return "partial"
+		}
+	}
+	if dm := report.DASH; dm != nil {
+		if dm.SegmentsFailed+dm.InitSegmentsFailed+dm.ManifestFailures > 0 {
 			return "partial"
 		}
 	}

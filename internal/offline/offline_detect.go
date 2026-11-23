@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"streamanalyzer/internal/codec"
+	"streamanalyzer/internal/dash"
 	"streamanalyzer/internal/models"
 )
 
@@ -89,6 +90,11 @@ func DetectMode(path, filename string) (models.OfflineMode, string) {
 	// 5. Annex B H.264 / H.265 elementary stream
 	if looksLikeAnnexB(head) {
 		return models.OfflineModeAnnexB, "magic:annexb"
+	}
+
+	// 5.5 MPEG-DASH MPD XML manifest
+	if dash.LooksLikeMPD(head) {
+		return models.OfflineModeDASH, "magic:mpd"
 	}
 
 	// 6. Extension fallback
@@ -202,6 +208,8 @@ func detectByExt(filename string) (models.OfflineMode, string) {
 		return models.OfflineModePS, "ext:" + ext
 	case ".webm", ".mkv", ".mka":
 		return models.OfflineModeWebM, "ext:" + ext
+	case ".mpd":
+		return models.OfflineModeDASH, "ext:.mpd"
 	case ".pcap", ".pcapng", ".cap":
 		return models.OfflineModePCAP, "ext:" + ext
 	case ".h264", ".264", ".h265", ".265", ".hevc", ".annexb", ".es":
