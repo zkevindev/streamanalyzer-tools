@@ -29,23 +29,25 @@ type SessionStatus struct {
 	FirstRTPAt        time.Time `json:"first_rtp_at,omitzero"`
 	LastRTPAt         time.Time `json:"last_rtp_at,omitzero"`
 	RTPPackets        uint64    `json:"rtp_packets"`
+	RTPPacketsDropped uint64    `json:"rtp_packets_dropped,omitempty"`
 	MediaStoppedAt    time.Time `json:"media_stopped_at,omitzero"`
 	ICEPacketsDropped uint64    `json:"ice_packets_dropped,omitempty"`
 }
 
 type session struct {
-	mode      string
-	pc        *webrtc.PeerConnection
-	track     *webrtc.TrackLocalStaticRTP
-	sender    *webrtc.RTPSender
-	closeWire func() error
-	ctx       context.Context
-	cancel    context.CancelFunc
-	connected chan struct{}
-	done      chan struct{}
-	mu        sync.Mutex
-	status    SessionStatus
-	dropped   atomic.Uint64
+	mode       string
+	pc         *webrtc.PeerConnection
+	track      *webrtc.TrackLocalStaticRTP
+	sender     *webrtc.RTPSender
+	closeWire  func() error
+	ctx        context.Context
+	cancel     context.CancelFunc
+	connected  chan struct{}
+	done       chan struct{}
+	mu         sync.Mutex
+	status     SessionStatus
+	dropped    atomic.Uint64
+	rtpDropped atomic.Uint64
 }
 
 func newSession(mode string) *session {
@@ -59,6 +61,7 @@ func (p *session) snapshot() SessionStatus {
 	defer p.mu.Unlock()
 	status := p.status
 	status.ICEPacketsDropped = p.dropped.Load()
+	status.RTPPacketsDropped = p.rtpDropped.Load()
 	return status
 }
 
@@ -234,6 +237,7 @@ func (p *session) sendVideo() {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	begin := time.Now()
+	var pktSeq uint64
 	for frame := 0; ; frame++ {
 		if p.mode == "media_stop" && time.Since(begin) >= mediaStopAfter {
 			p.mu.Lock()
@@ -247,6 +251,11 @@ func (p *session) sendVideo() {
 		for _, packet := range packets {
 			if p.ctx.Err() != nil {
 				return
+			}
+			pktSeq++
+			if p.mode == "rtp_drop" && pktSeq > 1 && pktSeq%6 == 0 {
+				p.rtpDropped.Add(1)
+				continue
 			}
 			if p.track.WriteRTP(packet) == nil {
 				count++

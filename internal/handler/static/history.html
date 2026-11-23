@@ -4,25 +4,18 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>任务记录 · Stream Analyzer</title>
-    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
     <link rel="stylesheet" href="/static/workbench-theme.css">
     <style>
         *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
         body{background:var(--bg);color:var(--text);min-height:100dvh;font-size:14px;line-height:1.55}
         .container{max-width:1440px;margin:0 auto}
         .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px;box-shadow:var(--shadow);margin-bottom:16px}
-        .card-title{font-size:15px;font-weight:600;margin-bottom:16px;display:flex;align-items:center;gap:8px}
-        .back-link{display:inline-flex;align-items:center;gap:6px;color:var(--text-secondary);text-decoration:none;font-size:13px;padding:6px 12px;border-radius:var(--radius-sm);transition:background-color var(--dur-fast) var(--ease),color var(--dur-fast) var(--ease)}
-        .back-link:hover{color:var(--text);background:var(--surface-hover)}
-        .back-link svg{width:16px;height:16px}
         .table-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:var(--radius-sm)}
         table{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}
         th,td{padding:10px 12px;text-align:left;border-bottom:1px solid var(--border);vertical-align:top}
         th{background:var(--surface-inset);font-weight:500;font-size:12px;color:var(--muted)}
         tr:last-child td{border-bottom:none}
         tbody tr:hover td{background:var(--surface-inset)}
-        tr.active td{background:var(--accent-light)}
-        .task-id{font-family:var(--font-data);font-size:12px;background:var(--surface-inset);border:1px solid var(--border);padding:2px 6px;border-radius:var(--radius-xs)}
         .pill{display:inline-flex;align-items:center;gap:6px;padding:2px 8px;border-radius:var(--radius-xs);font-size:12px;font-weight:500;border:1px solid var(--border);background:var(--surface-inset);color:var(--text-secondary);white-space:nowrap}
         .pill::before{content:"";width:6px;height:6px;border-radius:999px;background:var(--muted);flex:none}
         .pill.running,.pill.queued,.pill.pending{background:var(--accent-light);color:var(--accent-hover);border-color:var(--accent-border)}
@@ -33,50 +26,25 @@
         .pill.partial::before{background:var(--warn-dot)}
         .pill.stopped,.pill.failed{background:var(--danger-bg);color:var(--danger);border-color:var(--danger-border)}
         .pill.stopped::before,.pill.failed::before{background:var(--danger-dot)}
+        .meta-tag{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:var(--radius-xs);font-size:11px;font-weight:500;border:1px solid var(--border);background:var(--surface-inset);color:var(--text-secondary);font-family:var(--font-data);vertical-align:middle}
+        .meta-tag.protected{border-color:var(--accent-border);background:var(--accent-light);color:var(--accent-hover)}
         .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:36px;background:var(--primary);color:#fff;text-decoration:none;padding:6px 14px;border-radius:var(--radius-sm);font-size:13px;font-weight:500;border:1px solid var(--primary);cursor:pointer;transition:background-color var(--dur-fast) var(--ease),border-color var(--dur-fast) var(--ease),color var(--dur-fast) var(--ease)}
         .btn:hover{background:var(--primary-hover);border-color:var(--primary-hover)}
         .btn:active{transform:scale(.99)}
-        .btn.stop{background:var(--danger);border-color:var(--danger)}.btn.stop:hover{background:#881337;border-color:#881337}
-        .btn.secondary{background:var(--surface);color:var(--text);border-color:var(--border-strong);box-shadow:var(--shadow)}.btn.secondary:hover{background:var(--surface-hover);border-color:rgb(17 20 24 / .24)}
-        .btn.success{background:var(--accent);border-color:var(--accent)}.btn.success:hover{background:var(--accent-hover);border-color:var(--accent-hover)}
-        .actions{display:flex;gap:6px;flex-wrap:wrap}.actions button,.actions .btn{min-height:28px;padding:4px 10px;font-size:12px}
+        .btn.secondary{background:var(--surface);color:var(--text);border-color:var(--border-strong);box-shadow:var(--shadow)}
+        .btn.secondary:hover{background:var(--surface-hover);border-color:rgb(17 20 24 / .24)}
+        .actions{display:flex;gap:6px;flex-wrap:wrap}
+        .actions button,.actions .btn{min-height:28px;padding:4px 10px;font-size:12px}
         .empty{text-align:center;padding:40px 16px;color:var(--muted);font-size:13px}
-        .detail{margin-top:20px;display:none}
-        .detail-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;flex-wrap:wrap;gap:12px}
-        .detail-title{font-size:16px;font-weight:600}
-        .stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:8px;margin-bottom:16px}
-        .stat-item{text-align:left;background:var(--surface-inset);border:1px solid var(--border);border-radius:var(--radius-sm);padding:10px 12px}
-        .stat-value{font-family:var(--font-data);font-variant-numeric:tabular-nums;font-size:16px;font-weight:600;color:var(--text)}
-        .stat-label{font-size:12px;color:var(--muted);margin-top:4px}
-        .chart-tabs{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}
-        .chart-tabs button{min-height:32px;padding:4px 12px;font-size:13px;font-weight:500;border:1px solid var(--border-strong);background:var(--surface);color:var(--text-secondary);border-radius:var(--radius-sm);cursor:pointer;transition:background-color var(--dur-fast) var(--ease),border-color var(--dur-fast) var(--ease),color var(--dur-fast) var(--ease)}
-        .chart-tabs button:hover{border-color:rgb(17 20 24 / .24);color:var(--text);background:var(--surface-hover)}
-        .chart-tabs button.active{background:var(--accent);color:#fff;border-color:var(--accent)}
-        .chart-tabs button.success{background:var(--primary);color:#fff;border-color:var(--primary)}
-        .chart-frame{width:100%;height:400px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--surface);margin-bottom:16px}
-        .chart-table{overflow:auto;max-height:260px;border:1px solid var(--border);border-radius:var(--radius-sm)}
-        .chart-table table{font-size:12px}
-        .chart-table th,.chart-table td{padding:8px 12px}
-        .chart-table th{background:var(--surface-inset);position:sticky;top:0}
-        .chart-table th.video{color:var(--accent)}
-        .chart-table th.audio{color:var(--success)}
-        .metadata-box{background:var(--code-bg);color:var(--code-text);border:1px solid var(--code-border);border-radius:var(--radius-sm);padding:14px 16px;font-family:var(--font-data);font-size:12px;max-height:180px;overflow:auto;margin-top:16px;white-space:pre-wrap;word-break:break-all}
-        .hls-wrap{margin-top:16px}
-        .hls-wrap .hint{font-size:13px;color:var(--muted);margin-bottom:12px}
-        .hls-table-wrap{overflow:auto;max-height:420px;border:1px solid var(--border);border-radius:var(--radius-sm)}
-        .hls-table-wrap table{font-size:12px}
-        .hls-table-wrap th,.hls-table-wrap td{padding:8px 10px;vertical-align:top}
-        .hls-table-wrap th{background:var(--surface-inset);position:sticky;top:0}
-        .hls-uri{max-width:220px;word-break:break-all}
-        @media(max-width:640px){.stats-grid{grid-template-columns:repeat(2,1fr)}}
         .history-filters{display:flex;flex-wrap:wrap;align-items:end;gap:12px;margin-bottom:12px}
         .history-filters label{display:block;margin-bottom:6px;font-size:13px;font-weight:500;color:var(--text-secondary)}
         .history-filters input,.history-filters select{min-height:36px;width:100%;min-width:0;padding:6px 12px;border:1px solid var(--border-strong);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);font:inherit;font-size:14px;transition:border-color var(--dur-fast) var(--ease),box-shadow var(--dur-fast) var(--ease)}
         .history-filters input:focus,.history-filters select:focus{outline:none;border-color:var(--accent);box-shadow:var(--ring)}
         .history-filters .history-search{flex:1 1 224px}
         .history-status{margin:8px 0 12px;color:var(--muted);font:400 13px/1.4 var(--font-data);font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
-        td.history-input{min-width:208px;max-width:400px;white-space:normal;overflow-wrap:anywhere}
+        td.history-input{min-width:208px;max-width:420px;white-space:normal;overflow-wrap:anywhere}
         td.history-input code{display:block;margin-top:4px;color:var(--muted);font-family:var(--font-data);font-size:12px}
+        .history-sub{display:block;margin-top:4px;color:var(--muted);font-size:12px;font-family:var(--font-data)}
         #taskBody .btn{display:inline-flex;align-items:center;text-decoration:none;white-space:nowrap}
     </style>
     <script src="/static/workbench-navigation.js" defer></script>
@@ -88,175 +56,52 @@
 
         <div class="card">
             <form id="history-filters" class="history-filters" aria-label="筛选任务记录">
-                <div><label for="history-source">任务来源</label><select id="history-source"><option value="all">全部来源</option><option value="diagnostic">排障采样</option><option value="offline">离线解析</option><option value="simulator">模拟器回归</option></select></div>
-                <div><label for="history-state">任务状态</label><select id="history-state"><option value="all">全部状态</option><option value="active">进行中</option><option value="finished">已结束</option><option value="error">失败或部分完成</option></select></div>
-                <div class="history-search"><label for="history-query">搜索记录</label><input type="search" id="history-query" placeholder="地址、文件名或任务 ID"></div>
+                <div>
+                    <label for="history-source">任务来源</label>
+                    <select id="history-source">
+                        <option value="all">全部来源</option>
+                        <option value="diagnostic">排障采样</option>
+                        <option value="offline">离线解析</option>
+                        <option value="simulator">模拟器回归</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="history-protocol">协议 / 格式</label>
+                    <select id="history-protocol">
+                        <option value="all">全部协议</option>
+                    </select>
+                </div>
+                <div>
+                    <label for="history-state">任务状态</label>
+                    <select id="history-state">
+                        <option value="all">全部状态</option>
+                        <option value="active">进行中</option>
+                        <option value="finished">已结束</option>
+                        <option value="error">失败或部分完成</option>
+                    </select>
+                </div>
+                <div class="history-search">
+                    <label for="history-query">搜索记录</label>
+                    <input type="search" id="history-query" placeholder="地址、文件名、协议或任务 ID">
+                </div>
+                <button type="button" class="btn secondary" id="reset-filters" hidden>重置筛选</button>
                 <button type="button" class="btn secondary" id="refresh-history">刷新</button>
             </form>
             <p id="history-status" class="history-status" role="status">正在读取任务…</p>
             <div class="table-wrap">
                 <table>
                     <thead>
-                        <tr><th scope="col">来源</th><th scope="col">地址或文件</th><th scope="col">状态</th><th scope="col">记录时间</th><th scope="col">操作</th></tr>
+                        <tr><th scope="col">来源与协议</th><th scope="col">地址或文件</th><th scope="col">状态</th><th scope="col">记录时间</th><th scope="col">操作</th></tr>
                     </thead>
                     <tbody id="taskBody"></tbody>
                 </table>
             </div>
             <p id="emptyState" class="empty" hidden></p>
         </div>
-
-        <div id="analysisSection" class="detail">
-            <div class="card">
-                <div class="detail-header">
-                    <div class="detail-title">分析详情 - <span id="currentTaskTitle"></span></div>
-                    <button class="btn secondary" onclick="closeAnalysis()">关闭</button>
-                </div>
-                <div id="statsGrid" class="stats-grid"></div>
-                <div id="mediaFilterTabs" class="chart-tabs" style="margin-bottom:.5rem">
-                    <button type="button" class="active" data-filter="all" onclick="setMediaFilter('all')">全部</button>
-                    <button type="button" data-filter="video" onclick="setMediaFilter('video')">视频</button>
-                    <button type="button" data-filter="audio" onclick="setMediaFilter('audio')">音频</button>
-                </div>
-                <div id="flvChartTabs" class="chart-tabs">
-                    <button type="button" class="active" data-chart="timestamp" onclick="showChart('timestamp')">DTS</button>
-                    <button type="button" data-chart="length" onclick="showChart('length')">数据长度</button>
-                    <button type="button" data-chart="iframe" onclick="showChart('iframe')">I帧间隔</button>
-                    <button type="button" data-chart="gop" onclick="showChart('gop')">GOP大小</button>
-                    <button type="button" data-chart="bitrate" onclick="showChart('bitrate')">码率</button>
-                    <button type="button" data-chart="fps" onclick="showChart('fps')">帧率</button>
-                    <button type="button" data-chart="avsync" onclick="showChart('avsync')">AV偏差</button>
-                    <button type="button" class="success" onclick="downloadXLSX()">下载XLSX</button>
-                </div>
-                <div id="mainChart" class="chart-frame"></div>
-                <pre id="metadataBox" class="metadata-box">metadata: -</pre>
-                <div id="chartTable" class="chart-table" style="display:none">
-                    <table><thead id="tableHead"></thead><tbody id="tableBody"></tbody></table>
-                </div>
-                <div id="hlsSection" class="hls-wrap" style="display:none">
-                    <p class="hint">HLS（TS）任务按<strong>切片</strong>展示：URI、编号、时长，以及切片内音视频 PTS/DTS（90kHz）与首帧 PTS 差（AV）。</p>
-                    <p class="hint" style="margin-top:.35rem">以下为<strong>新增</strong>图表（按切片序号横轴）；与 FLV/RTMP 帧级图表独立。</p>
-                    <div id="hlsChartTabs" class="chart-tabs" style="margin-bottom:1rem">
-                        <button type="button" class="active" data-hls-chart="hls-ts" onclick="showHlsChart('hls-ts')">时间戳(PTS/DTS)</button>
-                        <button type="button" data-hls-chart="hls-avdts" onclick="showHlsChart('hls-avdts')">AV DTS差</button>
-                        <button type="button" data-hls-chart="hls-iframe" onclick="showHlsChart('hls-iframe')">I帧间隔</button>
-                    </div>
-                    <div id="hlsMainChart" class="chart-frame" style="height:380px;margin-bottom:1rem"></div>
-                    <div class="hls-table-wrap">
-                        <table>
-                            <thead>
-                                <tr>
-                                    <th>stream</th><th>#</th><th>时长(s)</th><th>大小</th>
-                                    <th>V-PTS</th><th>V-DTS</th><th>A-PTS</th><th>A-DTS</th>
-                                    <th>AVΔPTS</th><th>PAT/PMT/PES</th><th>切片 URI</th>
-                                </tr>
-                            </thead>
-                            <tbody id="hlsSegBody"></tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-        </div>
     </div>
 
-    <script src="/static/echarts_helpers.js"></script>
     <script>
-        let currentTaskId = null;
-        let currentTaskType = '';
-        let currentData = null;
-        let currentChartType = 'timestamp';
-        let currentHlsChartType = 'hls-ts';
-        let currentMediaFilter = 'all';
-        const stoppingTasks = new Set();
-        let chartRefreshInterval = null;
-
-        function isHlsAnalysisMode(d) {
-            if (currentTaskType === 'hls') return true;
-            if (d && Array.isArray(d.hls_segments) && d.hls_segments.length > 0) return true;
-            return false;
-        }
-
-        function setFlvChartVisible(show) {
-            const tabs = document.getElementById('flvChartTabs');
-            const chart = document.getElementById('mainChart');
-            const meta = document.getElementById('metadataBox');
-            const tbl = document.getElementById('chartTable');
-            const hls = document.getElementById('hlsSection');
-            if (tabs) tabs.style.display = show ? 'flex' : 'none';
-            if (chart) chart.style.display = show ? 'block' : 'none';
-            if (meta) meta.style.display = show ? 'block' : 'none';
-            if (tbl && !show) tbl.style.display = 'none';
-            if (hls) hls.style.display = show ? 'none' : 'block';
-        }
-
-        function fmt90kTick(v) {
-            if (v === undefined || v === null || v < 0) return '-';
-            const n = Number(v);
-            if (!isFinite(n)) return '-';
-            return n + ' (' + (n / 90000).toFixed(3) + 's)';
-        }
-
-        function fmtAvDiff90k(s) {
-            if (!s || !s.av_diff_valid) return '-';
-            const d = Number(s.av_diff_pts_90k);
-            if (!isFinite(d)) return '-';
-            return d + ' (' + (d / 90).toFixed(2) + 'ms)';
-        }
-
-        function renderHLSSegments(d) {
-            const body = document.getElementById('hlsSegBody');
-            const grid = document.getElementById('statsGrid');
-            if (!body) return;
-            const rows = (d && d.hls_segments) ? d.hls_segments : [];
-            if (grid) {
-                const streams = new Set();
-                rows.forEach(function (x) { if (x.stream_id) streams.add(x.stream_id); });
-                grid.style.display = 'grid';
-                grid.innerHTML =
-                    '<div class="stat-item"><div class="stat-value">' + rows.length + '</div><div class="stat-label">TS 切片数</div></div>' +
-                    '<div class="stat-item"><div class="stat-value">' + streams.size + '</div><div class="stat-label">Media 路数</div></div>';
-            }
-            body.innerHTML = '';
-            if (!rows.length) {
-                const tr = document.createElement('tr');
-                tr.innerHTML = '<td colspan="11" style="color:#78716c">暂无切片数据（任务刚启动或尚未拉到 .ts）。</td>';
-                body.appendChild(tr);
-                if (typeof renderHLSChart === 'function') {
-                    renderHLSChart(currentHlsChartType, [], 'hlsMainChart');
-                }
-                return;
-            }
-            rows.forEach(function (s) {
-                const tr = document.createElement('tr');
-                const sid = (s.stream_id || '-').replace(/</g, '');
-                const uri = (s.uri || '').replace(/</g, '');
-                tr.innerHTML =
-                    '<td title="' + sid + '">' + (sid.length > 28 ? sid.slice(0, 28) + '…' : sid) + '</td>' +
-                    '<td>' + String(s.seq) + '</td>' +
-                    '<td>' + (s.duration_sec != null ? Number(s.duration_sec).toFixed(3) : '-') + '</td>' +
-                    '<td>' + (s.size_bytes != null ? s.size_bytes : '-') + '</td>' +
-                    '<td>' + fmt90kTick(s.video_pts_first_90k) + ' → ' + fmt90kTick(s.video_pts_last_90k) + '</td>' +
-                    '<td>' + fmt90kTick(s.video_dts_first_90k) + ' → ' + fmt90kTick(s.video_dts_last_90k) + '</td>' +
-                    '<td>' + fmt90kTick(s.audio_pts_first_90k) + ' → ' + fmt90kTick(s.audio_pts_last_90k) + '</td>' +
-                    '<td>' + fmt90kTick(s.audio_dts_first_90k) + ' → ' + fmt90kTick(s.audio_dts_last_90k) + '</td>' +
-                    '<td>' + fmtAvDiff90k(s) + '</td>' +
-                    '<td>' + (s.pat_count || 0) + '/' + (s.pmt_count || 0) + '/' + (s.pes_count || 0) + '<br/><span style="font-size:.65rem;color:#78716c">vPES ' + (s.video_pes || 0) + ' / aPES ' + (s.audio_pes || 0) + '</span></td>' +
-                    '<td class="hls-uri">' + uri + '</td>';
-                body.appendChild(tr);
-            });
-            if (typeof renderHLSChart === 'function') {
-                renderHLSChart(currentHlsChartType, rows, 'hlsMainChart');
-            }
-        }
-
-        function showHlsChart(type) {
-            currentHlsChartType = type;
-            document.querySelectorAll('#hlsChartTabs button[data-hls-chart]').forEach(function (b) {
-                b.classList.toggle('active', b.getAttribute('data-hls-chart') === type);
-            });
-            if (currentData && isHlsAnalysisMode(currentData) && currentData.hls_segments) {
-                renderHLSChart(type, currentData.hls_segments, 'hlsMainChart');
-            }
-        }
+        'use strict';
 
         const historySources = {
             diagnostic: { title: '排障采样', path: '/api/diagnostics/runs', rows: value => value || [] },
@@ -266,12 +111,14 @@
         const historyStates = {
             queued: '排队中', pending: '待处理', running: '进行中', stopping: '正在停止',
             done: '已完成', stopped: '已停止', partial: '部分完成', passed: '通过', failed: '失败',
-            canceled: '已取消', cancelled: '已取消',
+            canceled: '已取消', cancelled: '已取消', interrupted: '服务中断',
         };
         const historyActive = new Set(['queued', 'pending', 'running', 'stopping']);
-        const historyErrors = new Set(['failed', 'partial']);
+        const historyErrors = new Set(['failed', 'partial', 'interrupted']);
         const historyDate = new Intl.DateTimeFormat('zh-CN', {dateStyle: 'short', timeStyle: 'medium'});
-        let historyRows = [], historyUnavailable = [], historyRequest = 0;
+        let historyRows = [];
+        let historyUnavailable = [];
+        let historyRequest = 0;
 
         function readableAddress(value) {
             if (!value) return '—';
@@ -283,20 +130,43 @@
                 return String(value);
             }
         }
+
+        function formatBytes(n) {
+            const v = Number(n);
+            if (!Number.isFinite(v) || v <= 0) return '';
+            if (v < 1024) return v + ' B';
+            if (v < 1024 * 1024) return (v / 1024).toFixed(1) + ' KB';
+            if (v < 1024 * 1024 * 1024) return (v / 1024 / 1024).toFixed(2) + ' MB';
+            return (v / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+        }
+
+        function resolveFormat(kind, task) {
+            if (kind === 'simulator') {
+                const scenario = String(task.preset?.scenario || '');
+                const family = scenario.split('-')[0].toLowerCase();
+                const labels = { gb: 'GB28181', rtsp: 'RTSP', whep: 'WHEP', rtmp: 'RTMP', hls: 'HLS', ts: 'UDP-TS' };
+                return labels[family] || (family ? family.toUpperCase() : 'SCENARIO');
+            }
+            const raw = String(task.protocol || task.mode || task.type || task.command || '').toUpperCase();
+            if (raw === 'RTMP' && String(task.origin || task.url || '').startsWith('rtmps://')) return 'RTMPS';
+            return raw;
+        }
+
+        function refreshProtocolOptions() {
+            const select = document.getElementById('history-protocol');
+            const current = select.value;
+            const formats = Array.from(new Set(historyRows.map(row => row.format).filter(Boolean))).sort();
+            select.replaceChildren(new Option('全部协议', 'all'), ...formats.map(f => new Option(f, f)));
+            select.value = formats.includes(current) ? current : 'all';
+        }
+
         function putHistoryCell(row, text, className) {
             const cell = row.insertCell();
             cell.textContent = text;
             if (className) cell.className = className;
             return cell;
         }
-        function historyButton(label, action, className = 'btn') {
-            const button = document.createElement('button');
-            button.type = 'button';
-            button.textContent = label;
-            button.className = className;
-            button.addEventListener('click', action);
-            return button;
-        }
+
         function historyLink(label, path) {
             const link = document.createElement('a');
             link.className = 'btn secondary';
@@ -304,33 +174,61 @@
             link.href = path;
             return link;
         }
+
+        function appendMetaTag(container, text, cls) {
+            const tag = document.createElement('span');
+            tag.className = 'meta-tag' + (cls ? ' ' + cls : '');
+            tag.textContent = text;
+            container.append(tag);
+        }
+
         function showHistory() {
             const source = document.getElementById('history-source').value;
+            const protocol = document.getElementById('history-protocol').value;
             const filter = document.getElementById('history-state').value;
             const query = document.getElementById('history-query').value.trim().toLowerCase();
+            const hasFilter = source !== 'all' || protocol !== 'all' || filter !== 'all' || Boolean(query);
+            document.getElementById('reset-filters').hidden = !hasFilter;
+
             const tbody = document.getElementById('taskBody');
             tbody.replaceChildren();
             let shown = 0;
-            for (const {kind, task, date, input, format} of historyRows) {
+
+            for (const {kind, task, date, input, format, detail} of historyRows) {
                 const state = task.status || '';
                 if (source !== 'all' && source !== kind) continue;
+                if (protocol !== 'all' && format !== protocol) continue;
                 if (filter === 'active' && !historyActive.has(state)) continue;
                 if (filter === 'finished' && historyActive.has(state)) continue;
                 if (filter === 'error' && !historyErrors.has(state)) continue;
-                if (query && !`${input} ${task.id} ${format}`.toLowerCase().includes(query)) continue;
+                if (query && !`${input} ${task.id} ${format} ${detail}`.toLowerCase().includes(query)) continue;
+
                 shown++;
                 const row = tbody.insertRow();
-                row.classList.toggle('active', kind === 'realtime' && task.id === currentTaskId);
-                putHistoryCell(row, [historySources[kind].title, format].filter(Boolean).join(' · '));
+                const srcCell = putHistoryCell(row, historySources[kind].title);
+                if (format) appendMetaTag(srcCell, format);
+                if (kind === 'diagnostic' && task.protected) appendMetaTag(srcCell, '重要证据', 'protected');
+                if (kind === 'diagnostic' && task.mode === 'replay') appendMetaTag(srcCell, '复盘');
+                if (kind === 'offline' && task.source_type === 'local') appendMetaTag(srcCell, '本机直读');
+
                 const context = putHistoryCell(row, input, 'history-input');
+                if (detail) {
+                    const sub = document.createElement('span');
+                    sub.className = 'history-sub';
+                    sub.textContent = detail;
+                    context.append(sub);
+                }
                 const id = document.createElement('code');
                 id.textContent = task.id;
                 context.append(id);
+
                 const status = document.createElement('span');
                 status.className = `pill${historyStates[state] ? ' ' + state : ''}`;
                 status.textContent = historyStates[state] || state || '未知';
                 row.insertCell().append(status);
+
                 putHistoryCell(row, Number.isFinite(date) ? historyDate.format(date) : '—');
+
                 const actions = putHistoryCell(row, '', 'actions');
                 const encodedID = encodeURIComponent(task.id);
                 if (kind === 'diagnostic') {
@@ -339,18 +237,16 @@
                     actions.append(historyLink('查看解析', '/offline?task=' + encodedID));
                 } else if (kind === 'simulator') {
                     actions.append(historyLink('查看回归', '/simulators/scenarios#run-' + encodedID));
-                } else if (state === 'running') {
-                    actions.append(historyButton('停止', () => stopTask(task.id), 'btn stop'));
-                } else {
-                    actions.append(historyButton('分析', () => analyzeTask(task.id, task.type)), historyLink('XLSX', '/api/task/' + encodedID + '/xlsx'));
                 }
             }
+
             const empty = document.getElementById('emptyState');
             empty.textContent = historyRows.length ? '没有符合筛选条件的记录。' : '暂无历史记录。';
             empty.hidden = shown > 0 || (historyRows.length === 0 && historyUnavailable.length > 0);
             const available = historyUnavailable.length ? ` · 暂时无法读取${historyUnavailable.join('、')}` : '';
             document.getElementById('history-status').textContent = `显示 ${shown} 条，共 ${historyRows.length} 条${available}`;
         }
+
         async function loadAllTasks() {
             const refresh = document.getElementById('refresh-history');
             refresh.disabled = true;
@@ -359,11 +255,20 @@
             const response = await Promise.allSettled(groups.map(async ([kind, source]) => {
                 const res = await fetch(source.path, {cache: 'no-store'});
                 if (!res.ok) throw new Error(`HTTP ${res.status}`);
-                return source.rows(await res.json()).filter(task => typeof task.id === 'string').map(task => ({
-                    kind, task, date: Date.parse(task.start_time || task.created_at || task.started_at),
-                    input: task.preset?.name || task.input_name || readableAddress(task.url || task.origin),
-                    format: (task.type || task.protocol || task.mode || task.command || '').toUpperCase(),
-                }));
+                return source.rows(await res.json()).filter(task => typeof task.id === 'string').map(task => {
+                    const detailParts = [];
+                    if (kind === 'offline' && task.input_size) detailParts.push(formatBytes(task.input_size));
+                    if (kind === 'simulator' && task.detail) detailParts.push(task.detail);
+                    if (kind === 'simulator' && Number.isFinite(task.elapsed_ms)) detailParts.push(task.elapsed_ms + ' ms');
+                    return {
+                        kind,
+                        task,
+                        date: Date.parse(task.start_time || task.created_at || task.started_at),
+                        input: task.preset?.name || task.input_name || readableAddress(task.url || task.origin),
+                        format: resolveFormat(kind, task),
+                        detail: detailParts.join(' · '),
+                    };
+                });
             }));
             if (request !== historyRequest) return;
             historyUnavailable = [];
@@ -373,281 +278,21 @@
                 return [];
             }).sort((a, b) => (b.date || 0) - (a.date || 0));
             refresh.disabled = false;
+            refreshProtocolOptions();
             showHistory();
         }
 
-        async function stopTask(id) {
-            if (stoppingTasks.has(id)) return;
-            stoppingTasks.add(id);
-            try {
-                const res = await fetch('/api/task/' + id, { method: 'DELETE' });
-                if (!res.ok) {
-                    const text = await res.text();
-                    throw new Error(text || ('HTTP ' + res.status));
-                }
-                if (currentTaskId === id) closeAnalysis();
-                await loadAllTasks();
-            } catch (e) {
-                alert('Stop failed: ' + (e && e.message ? e.message : e));
-            } finally {
-                stoppingTasks.delete(id);
-            }
-        }
-        
-        async function analyzeTask(id, type) {
-            if (typeof disposeMainChart === 'function') disposeMainChart();
-            if (typeof disposeHLSChart === 'function') disposeHLSChart();
-            currentTaskId = id;
-            currentTaskType = type || '';
-            document.getElementById('analysisSection').style.display = 'block';
-            document.getElementById('currentTaskTitle').textContent = id.substring(5,15) + '...';
-            await loadChartData();
-            if (!isHlsAnalysisMode(currentData)) {
-                showChart('timestamp');
-            }
-            loadAllTasks();
-            document.getElementById('analysisSection').scrollIntoView({ behavior: 'smooth' });
-            if (chartRefreshInterval) clearInterval(chartRefreshInterval);
-            chartRefreshInterval = setInterval(loadChartData, 5000);
-        }
-        
-        function closeAnalysis() {
-            if (typeof disposeMainChart === 'function') disposeMainChart();
-            if (typeof disposeHLSChart === 'function') disposeHLSChart();
-            document.getElementById('analysisSection').style.display = 'none';
-            if (chartRefreshInterval) clearInterval(chartRefreshInterval);
-            chartRefreshInterval = null;
-            currentTaskId = null;
-            currentTaskType = '';
-            loadAllTasks();
-        }
-        
-        async function loadChartData() {
-            if (!currentTaskId) return;
-            const res = await fetch('/api/task/' + currentTaskId + '/data');
-            const d = await res.json();
-            currentData = d;
-            if (isHlsAnalysisMode(d)) {
-                setFlvChartVisible(false);
-                renderHLSSegments(d);
-            } else {
-                setFlvChartVisible(true);
-                updateStats(d);
-                if (typeof renderClientChart === 'function' && currentData) {
-                    renderClientChart(currentChartType, currentData, 'mainChart', currentMediaFilter);
-                }
-                updateChartTable(currentChartType);
-            }
-        }
-        
-        function updateStats(d) {
-            function videoCodecName(v) {
-                const m = {
-                    '2': 'H.263',
-                    '3': 'ScreenVideo',
-                    '4': 'VP6',
-                    '5': 'VP6A',
-                    '6': 'ScreenVideo2',
-                    '7': 'H.264/AVC',
-                    '12': 'H.265/HEVC'
-                };
-                return m[String(v)] || (v ? ('Codec-' + v) : '-');
-            }
-            function audioCodecName(v) {
-                const m = {
-                    '2': 'MP3',
-                    '7': 'G.711 A-Law',
-                    '8': 'G.711 mu-Law',
-                    '10': 'AAC',
-                    '11': 'Speex',
-                    '14': 'MP3-8k'
-                };
-                return m[String(v)] || (v ? ('Codec-' + v) : '-');
-            }
-            const intervals = d.iframe_intervals.filter(v => v > 0);
-            const avgInt = intervals.length ? Math.round(intervals.reduce((a,b)=>a+b,0)/intervals.length) : 0;
-            const avgGop = d.gop_sizes.length ? Math.round(d.gop_sizes.reduce((a,b)=>a+b,0)/d.gop_sizes.length) : 0;
-            const iFrames = d.frame_types.filter(f=>f==='I').length;
-            const pFrames = d.frame_types.filter(f=>f==='P').length;
-            const bFrames = d.frame_types.filter(f=>f==='B').length;
-            const stats = d.second_stats;
-            const avgVbr = stats.length ? (stats.reduce((a,b)=>a+b.video_bitrate,0)/stats.length).toFixed(1) : 0;
-            const avgAbr = stats.length ? (stats.reduce((a,b)=>a+b.audio_bitrate,0)/stats.length).toFixed(1) : 0;
-            const avgVfps = stats.length ? Math.round(stats.reduce((a,b)=>a+b.video_fps,0)/stats.length) : 0;
-            const avgAfps = stats.length ? Math.round(stats.reduce((a,b)=>a+b.audio_fps,0)/stats.length) : 0;
-            const codecFps = d.video_frame_rate && d.video_frame_rate > 0 ? d.video_frame_rate.toFixed(3) : '-';
-            const videoCodec = videoCodecName(d.video_codec);
-            const audioCodec = audioCodecName(d.audio_codec);
-            const resolution = (d.video_width > 0 && d.video_height > 0) ? (d.video_width + 'x' + d.video_height) : '-';
-            const sampleRate = d.sample_rate > 0 ? d.sample_rate : '-';
-            const channels = d.channels > 0 ? d.channels : '-';
-            
-            document.getElementById('statsGrid').innerHTML =
-                '<div class="stat-item"><div class="stat-value">'+d.frame_types.length+'</div><div class="stat-label">总帧数</div></div>'+
-                '<div class="stat-item"><div class="stat-value">'+iFrames+'/'+pFrames+'/'+bFrames+'</div><div class="stat-label">I/P/B帧</div></div>'+
-                '<div class="stat-item"><div class="stat-value">'+avgInt+'</div><div class="stat-label">I帧间隔</div></div>'+
-                '<div class="stat-item"><div class="stat-value">'+avgGop+'</div><div class="stat-label">GOP大小</div></div>'+
-                '<div class="stat-item"><div class="stat-value">'+avgVbr+'</div><div class="stat-label">视频码率</div></div>'+
-                '<div class="stat-item"><div class="stat-value">'+avgAbr+'</div><div class="stat-label">音频码率</div></div>'+
-                '<div class="stat-item"><div class="stat-value">'+avgVfps+'</div><div class="stat-label">视频FPS</div></div>'+
-                '<div class="stat-item"><div class="stat-value">'+avgAfps+'</div><div class="stat-label">音频FPS</div></div>'+
-                '<div class="stat-item"><div class="stat-value">'+codecFps+'</div><div class="stat-label">编码帧率</div></div>'+
-                '<div class="stat-item"><div class="stat-value">'+videoCodec+'</div><div class="stat-label">视频编码</div></div>'+
-                '<div class="stat-item"><div class="stat-value">'+audioCodec+'</div><div class="stat-label">音频编码</div></div>'+
-                '<div class="stat-item"><div class="stat-value">'+resolution+'</div><div class="stat-label">分辨率</div></div>'+
-                '<div class="stat-item"><div class="stat-value">'+sampleRate+'</div><div class="stat-label">采样率</div></div>'+
-                '<div class="stat-item"><div class="stat-value">'+channels+'</div><div class="stat-label">声道数</div></div>'+
-                '<div class="stat-item"><div class="stat-value">'+stats.length+'</div><div class="stat-label">时长(s)</div></div>';
-
-            const metadataBox = document.getElementById('metadataBox');
-            if (metadataBox) {
-                if (d.metadata_json) {
-                    try {
-                        metadataBox.textContent = JSON.stringify(JSON.parse(d.metadata_json), null, 2);
-                    } catch (_) {
-                        metadataBox.textContent = d.metadata_json;
-                    }
-                } else {
-                    metadataBox.textContent = 'metadata: -';
-                }
-            }
-        }
-        
-        function setMediaFilter(filter) {
-            currentMediaFilter = filter;
-            document.querySelectorAll('#mediaFilterTabs button[data-filter]').forEach(function(b) {
-                b.classList.toggle('active', b.getAttribute('data-filter') === filter);
-            });
-            if (currentData && !isHlsAnalysisMode(currentData)) {
-                if (typeof renderClientChart === 'function') renderClientChart(currentChartType, currentData, 'mainChart', currentMediaFilter);
-                updateChartTable(currentChartType);
-            }
-        }
-
-        function showChart(type) {
-            if (isHlsAnalysisMode(currentData)) return;
-            currentChartType = type;
-            document.querySelectorAll('#flvChartTabs button[data-chart]').forEach(function(b) {
-                b.classList.toggle('active', b.getAttribute('data-chart') === type);
-            });
-            if (currentData && typeof renderClientChart === 'function') {
-                renderClientChart(type, currentData, 'mainChart', currentMediaFilter);
-            }
-            updateChartTable(type);
-        }
-        
-        function updateChartTable(type) {
-            if (!currentData || isHlsAnalysisMode(currentData)) return;
-            const d = currentData;
-            const filter = currentMediaFilter || 'all';
-            const tableDiv = document.getElementById('chartTable');
-            const thead = document.getElementById('tableHead');
-            const tbody = document.getElementById('tableBody');
-            let headers = '';
-            let rows = '';
-            const stats = d.second_stats || [];
-            const maxRows = Number.MAX_SAFE_INTEGER;
-            const displayStats = stats;
-            const formatTime = (sec) => {
-                const dd = new Date(Number(sec) * 1000);
-                if (Number.isNaN(dd.getTime())) return '-';
-                const pad = (n) => String(n).padStart(2, '0');
-                return dd.getFullYear() + '-' + pad(dd.getMonth() + 1) + '-' + pad(dd.getDate()) + ' ' +
-                    pad(dd.getHours()) + ':' + pad(dd.getMinutes()) + ':' + pad(dd.getSeconds());
-            };
-            const startSecond = displayStats.length > 0 ? Number(displayStats[0].second) : 0;
-            switch(type) {
-                case 'timestamp': {
-                    tableDiv.style.display='block';
-                    const vts=d.video_dts||[], vpts=d.video_pts||[], ats=d.audio_dts||[], vcts=d.video_cts||[];
-                    let h='<tr><th>时间戳</th>';
-                    if(filter==='all'||filter==='video') h+='<th class="video">视频DTS</th><th class="video">视频PTS</th><th class="video">视频CTS</th>';
-                    if(filter==='all'||filter==='audio') h+='<th class="audio">音频DTS</th>';
-                    h+='</tr>';
-                    headers=h;
-                    const allTsSet=new Set([]);
-                    if(filter==='all'||filter==='video') { vts.forEach(v=>allTsSet.add(v)); vpts.forEach(v=>allTsSet.add(v)); }
-                    if(filter==='all'||filter==='audio') { ats.forEach(v=>allTsSet.add(v)); }
-                    const allTs=Array.from(allTsSet).filter(v=>v!==null&&v!==undefined&&v!=='').sort((a,b)=>Number(a)-Number(b)).slice(0,maxRows);
-                    const hasNum=(arr,x)=>arr.some(v=>Number(v)===Number(x));
-                    for(let i=0;i<allTs.length;i++){
-                        const t=allTs[i];
-                        let r='<tr><td>'+t+'</td>';
-                        if(filter==='all'||filter==='video'){
-                            const ctsIdx=vts.indexOf(Number(t));
-                            r+='<td>'+(hasNum(vts,t)?t:'-')+'</td><td>'+(hasNum(vpts,t)?t:'-')+'</td><td>'+(ctsIdx>=0&&vcts[ctsIdx]!=null?vcts[ctsIdx]:'-')+'</td>';
-                        }
-                        if(filter==='all'||filter==='audio') r+='<td>'+(hasNum(ats,t)?t:'-')+'</td>';
-                        r+='</tr>';
-                        rows+=r;
-                    }
-                    break;
-                }
-                case 'length':
-                    tableDiv.style.display='block';
-                    headers='<tr><th>#</th>'+(filter==='all'||filter==='video'?'<th class="video">视频长度</th>':'')+(filter==='all'||filter==='audio'?'<th class="audio">音频长度</th>':'')+'</tr>';
-                    const vls=d.video_lens||[], als=d.audio_lens||[];
-                    const lsLen=Math.min((filter==='all'?Math.max(vls.length,als.length):(filter==='video'?vls.length:als.length)),maxRows);
-                    for(let i=0;i<lsLen;i++){
-                        rows+='<tr><td>'+(i+1)+'</td>';
-                        if(filter==='all'||filter==='video') rows+='<td>'+(vls[i]||'-')+'</td>';
-                        if(filter==='all'||filter==='audio') rows+='<td>'+(als[i]||'-')+'</td>';
-                        rows+='</tr>';
-                    }
-                    break;
-                case 'iframe':
-                    tableDiv.style.display='block';
-                    if(filter==='audio'){headers='<tr><th>#</th><th>I帧间隔</th></tr>';rows='<tr><td colspan="2">音频无 I 帧间隔数据</td></tr>';break;}
-                    headers='<tr><th>#</th><th class="video">I帧间隔</th></tr>';
-                    const iframes=(d.iframe_intervals||[]).filter(v=>v>0).slice(0,maxRows);
-                    for(let i=0;i<iframes.length;i++){rows+='<tr><td>'+(i+1)+'</td><td>'+iframes[i]+'</td></tr>';}
-                    break;
-                case 'gop':
-                    tableDiv.style.display='block';
-                    if(filter==='audio'){headers='<tr><th>#</th><th>GOP大小</th></tr>';rows='<tr><td colspan="2">音频无 GOP 数据</td></tr>';break;}
-                    headers='<tr><th>#</th><th class="video">GOP大小</th></tr>';
-                    const gops=(d.gop_sizes||[]).slice(0,maxRows);
-                    for(let i=0;i<gops.length;i++){rows+='<tr><td>'+(i+1)+'</td><td>'+gops[i]+'</td></tr>';}
-                    break;
-                case 'bitrate':
-                    tableDiv.style.display='block';
-                    headers='<tr><th>时间</th>'+(filter==='all'||filter==='video'?'<th class="video">视频码率</th>':'')+(filter==='all'||filter==='audio'?'<th class="audio">音频码率</th>':'')+'</tr>';
-                    for(let i=0;i<displayStats.length;i++){const s=displayStats[i];const rel=Number(s.second)-startSecond;rows+='<tr><td>T+'+rel+'s<br/>'+formatTime(s.second)+'</td>'+(filter==='all'||filter==='video'?'<td>'+s.video_bitrate.toFixed(1)+'</td>':'')+(filter==='all'||filter==='audio'?'<td>'+s.audio_bitrate.toFixed(1)+'</td>':'')+'</tr>';}
-                    break;
-                case 'fps':
-                    tableDiv.style.display='block';
-                    headers='<tr><th>时间</th>'+(filter==='all'||filter==='video'?'<th class="video">视频FPS</th>':'')+(filter==='all'||filter==='audio'?'<th class="audio">音频FPS</th>':'')+'</tr>';
-                    for(let i=0;i<displayStats.length;i++){const s=displayStats[i];const rel=Number(s.second)-startSecond;rows+='<tr><td>T+'+rel+'s<br/>'+formatTime(s.second)+'</td>'+(filter==='all'||filter==='video'?'<td>'+s.video_fps+'</td>':'')+(filter==='all'||filter==='audio'?'<td>'+s.audio_fps+'</td>':'')+'</tr>';}
-                    break;
-                case 'avsync':
-                    tableDiv.style.display='block';
-                    if(filter!=='all'){headers='<tr><th>视频DTS</th><th>最近音频DTS</th><th>偏差</th></tr>';rows='<tr><td colspan="3">AV 同步需在“全部”模式下查看</td></tr>';break;}
-                    headers='<tr><th>视频DTS</th><th class="audio">最近音频DTS</th><th>偏差</th></tr>';
-                    const avVts=(d.video_dts||[]).map(Number).filter(v=>!Number.isNaN(v));
-                    const avAts=(d.audio_dts||[]).map(Number).filter(v=>!Number.isNaN(v));
-                    if(avVts.length===0||avAts.length===0){rows='<tr><td colspan="3">暂无可计算的 AV 时间戳数据</td></tr>';break;}
-                    let ai=0;
-                    for(let i=0;i<Math.min(avVts.length,maxRows);i++){const ts=avVts[i];while(ai+1<avAts.length&&Math.abs(avAts[ai+1]-ts)<=Math.abs(avAts[ai]-ts))ai++;const nearest=avAts[ai];const diff=ts-nearest;rows+='<tr><td>'+ts+'</td><td>'+nearest+'</td><td>'+diff+'</td></tr>';}
-                    break;
-                default:
-                    tableDiv.style.display='none';
-                    return;
-            }
-            thead.innerHTML = headers;
-            tbody.innerHTML = rows;
-        }
-        
-        function downloadXLSX() {
-            if (currentTaskId) window.location.href = '/api/task/' + currentTaskId + '/xlsx';
-        }
-        
-        function downloadXLSXById(id) {
-            window.location.href = '/api/task/' + id + '/xlsx';
-        }
-        
         const filters = document.getElementById('history-filters');
         filters.addEventListener('submit', event => event.preventDefault());
         filters.addEventListener('input', showHistory);
+        filters.addEventListener('change', showHistory);
+        document.getElementById('reset-filters').addEventListener('click', () => {
+            document.getElementById('history-source').value = 'all';
+            document.getElementById('history-protocol').value = 'all';
+            document.getElementById('history-state').value = 'all';
+            document.getElementById('history-query').value = '';
+            showHistory();
+        });
         document.getElementById('refresh-history').addEventListener('click', loadAllTasks);
         loadAllTasks();
     </script>
