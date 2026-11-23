@@ -2557,9 +2557,9 @@ node('protocol').addEventListener('change', () => {
     const httpAccess = ['http-flv', 'hls', 'http-ts', 'whep'].includes(protocol);
     node('http-access-options').hidden = !httpAccess && !['rtmp', 'rtsps'].includes(protocol);
     node('whep-options').hidden = protocol !== 'whep';
-    node('reconnect-options').hidden = !['http-flv', 'rtmp', 'rtsp', 'rtsps'].includes(protocol);
+    node('reconnect-options').hidden = !['http-flv', 'http-ts', 'rtmp', 'rtsp', 'rtsps', 'whep'].includes(protocol);
     node('hls-variant-option').hidden = protocol !== 'hls';
-    node('rolling-options').hidden = !['http-flv', 'rtmp', 'hls', 'rtsp', 'rtsps'].includes(protocol);
+    node('rolling-options').hidden = !['http-flv', 'http-ts', 'rtmp', 'hls', 'rtsp', 'rtsps', 'whep'].includes(protocol);
     for (const id of ['http-headers', 'http-proxy-url']) {
         node(id).hidden = !httpAccess;
         document.querySelector(`label[for="${id}"]`).hidden = !httpAccess;
@@ -2804,7 +2804,7 @@ bindForm('sample', async () => {
     const protocol = node('protocol').value;
     const run = await api('/runs', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ protocol, transport: protocols[protocol]?.nativeRTSP ? node('rtsp-transport').value : undefined, ice_transport_policy: protocol === 'whep' ? node('whep-ice-policy').value : undefined, url, seconds, playback, auto_investigate: autoInvestigate, reconnect_attempts: ['http-flv', 'rtmp', 'rtsp', 'rtsps'].includes(protocol) ? node('reconnect-attempts').valueAsNumber : 0, reconnect_delay_ms: ['http-flv', 'rtmp', 'rtsp', 'rtsps'].includes(protocol) ? node('reconnect-delay').valueAsNumber : 0, hls_variant: protocol === 'hls' ? node('hls-variant').valueAsNumber : undefined, segment_seconds: ['http-flv', 'rtmp', 'hls', 'rtsp', 'rtsps'].includes(protocol) ? node('segment-seconds').valueAsNumber : 0, rolling_segments: ['http-flv', 'rtmp', 'hls', 'rtsp', 'rtsps'].includes(protocol) ? node('rolling-segments').valueAsNumber : 0, profile: node('analysis-profile').value, custom_thresholds: node('analysis-profile').value === 'custom' ? { first_frame_warn_ms: node('threshold-first-frame').valueAsNumber, video_gap_warn_ms: node('threshold-video-gap').valueAsNumber, dts_gap_warn_ms: node('threshold-dts-gap').valueAsNumber, gop_warn_ms: node('threshold-gop').valueAsNumber } : undefined, ...captureAccessOptions(protocol) }),
+        body: JSON.stringify({ protocol, transport: protocols[protocol]?.nativeRTSP ? node('rtsp-transport').value : undefined, ice_transport_policy: protocol === 'whep' ? node('whep-ice-policy').value : undefined, url, seconds, playback, auto_investigate: autoInvestigate, reconnect_attempts: ['http-flv', 'http-ts', 'rtmp', 'rtsp', 'rtsps', 'whep'].includes(protocol) ? node('reconnect-attempts').valueAsNumber : 0, reconnect_delay_ms: ['http-flv', 'http-ts', 'rtmp', 'rtsp', 'rtsps', 'whep'].includes(protocol) ? node('reconnect-delay').valueAsNumber : 0, hls_variant: protocol === 'hls' ? node('hls-variant').valueAsNumber : undefined, segment_seconds: ['http-flv', 'http-ts', 'rtmp', 'hls', 'rtsp', 'rtsps', 'whep'].includes(protocol) ? node('segment-seconds').valueAsNumber : 0, rolling_segments: ['http-flv', 'http-ts', 'rtmp', 'hls', 'rtsp', 'rtsps', 'whep'].includes(protocol) ? node('rolling-segments').valueAsNumber : 0, profile: node('analysis-profile').value, custom_thresholds: node('analysis-profile').value === 'custom' ? { first_frame_warn_ms: node('threshold-first-frame').valueAsNumber, video_gap_warn_ms: node('threshold-video-gap').valueAsNumber, dts_gap_warn_ms: node('threshold-dts-gap').valueAsNumber, gop_warn_ms: node('threshold-gop').valueAsNumber } : undefined, ...captureAccessOptions(protocol) }),
     });
     stopPlayback(activePlayer);
     startPlayback(run, startedAt, startedAtPerformanceMS, seconds, hlsRecovery, hlsABR, hlsLowLatency);

@@ -53,6 +53,10 @@
           <div class="sim-field-group">
             <label for="target-url">目标推流地址</label>
             <input id="target-url" type="url" placeholder="rtmp://127.0.0.1:1935/live/test" required>
+            <div class="sim-controls" style="margin-top:8px">
+              <button id="btn-fill-rtmp" type="button" class="secondary">填入本机 RTMP 模拟源</button>
+              <button id="btn-fill-rtsp" type="button" class="secondary">填入本机 RTSP 模拟源</button>
+            </div>
             <p id="target-hint" class="field-hint">支持 rtmp:// 或 rtmps:// 地址，可直接推向本机 RTMP 模拟器或任意流媒体服务器</p>
           </div>
 

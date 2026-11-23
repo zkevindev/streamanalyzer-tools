@@ -12,13 +12,15 @@ const route = "/api/simulators/whep"
 const maxSessions = 4
 
 var (
-	ErrMode        = errors.New("WHEP 模拟场景无效")
-	ErrActive      = errors.New("WHEP 模拟源已经启动")
-	ErrClosed      = errors.New("WHEP 模拟源已关闭")
-	ErrMissing     = errors.New("WHEP 流或会话不存在")
-	ErrLimit       = errors.New("WHEP 模拟源的播放会话已满")
-	ErrOffer       = errors.New("SDP 需包含一条可接收 H.264 的视频轨")
-	ErrNegotiation = errors.New("本机 WHEP 协商失败")
+	ErrMode         = errors.New("WHEP 模拟场景无效")
+	ErrActive       = errors.New("WHEP 模拟源已经启动")
+	ErrClosed       = errors.New("WHEP 模拟源已关闭")
+	ErrMissing      = errors.New("WHEP 流或会话不存在")
+	ErrLimit        = errors.New("WHEP 模拟源的播放会话已满")
+	ErrOffer        = errors.New("SDP 需包含一条可接收 H.264 的视频轨")
+	ErrNegotiation  = errors.New("本机 WHEP 协商失败")
+	ErrUnauthorized = errors.New("WHEP 信令鉴权失败（模拟 401）")
+	ErrSDPReject    = errors.New("WHEP 拒绝当前 SDP Offer（模拟 406）")
 )
 
 type Status struct {
@@ -38,7 +40,7 @@ type Manager struct {
 
 func (m *Manager) Start(mode string) (Status, error) {
 	switch mode {
-	case "normal", "ice_timeout", "no_media", "media_stop":
+	case "normal", "ice_timeout", "no_media", "media_stop", "rtp_drop", "auth_401", "not_found_404", "sdp_reject_406":
 	default:
 		return Status{}, ErrMode
 	}
@@ -74,6 +76,17 @@ func (m *Manager) Offer(ctx context.Context, sourceID, offer string) (answer, re
 	if m.id == "" || m.id != sourceID {
 		m.mu.Unlock()
 		return "", "", ErrMissing
+	}
+	switch m.mode {
+	case "auth_401":
+		m.mu.Unlock()
+		return "", "", ErrUnauthorized
+	case "not_found_404":
+		m.mu.Unlock()
+		return "", "", ErrMissing
+	case "sdp_reject_406":
+		m.mu.Unlock()
+		return "", "", ErrSDPReject
 	}
 	if len(m.sessions) >= maxSessions {
 		m.mu.Unlock()

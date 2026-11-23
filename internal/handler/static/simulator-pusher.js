@@ -10,6 +10,8 @@
     sourceKind: document.getElementById('source-kind'),
     targetURL: document.getElementById('target-url'),
     targetHint: document.getElementById('target-hint'),
+    btnFillRTMP: document.getElementById('btn-fill-rtmp'),
+    btnFillRTSP: document.getElementById('btn-fill-rtsp'),
     rtspOpts: document.getElementById('rtsp-opts'),
     rtspTransport: document.getElementById('rtsp-transport'),
     whipOpts: document.getElementById('whip-opts'),
@@ -284,6 +286,33 @@
   els.loopEnabled.addEventListener('change', () => {
     els.loopCount.disabled = !els.loopEnabled.checked;
   });
+
+  async function fillLocalSimulator(kind) {
+    showNotice('');
+    const endpoint = kind === 'rtsp' ? '/api/simulators/rtsp' : '/api/simulators/rtmp';
+    try {
+      const resp = await fetch(endpoint, { cache: 'no-store' });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || !data.active || !data.url) {
+        showNotice(kind === 'rtsp'
+          ? '本机 RTSP 模拟源未启动，请先前往 RTSP 模拟器启动后再填入。'
+          : '本机 RTMP 模拟源未启动，请先前往 RTMP 模拟器（推荐 publish_relay 中继模式）启动后再填入。');
+        return;
+      }
+      els.protocol.value = kind;
+      syncFormVisibility();
+      els.targetURL.value = data.url;
+      if (kind === 'rtsp') els.rtspTransport.value = 'tcp';
+      els.targetURL.focus();
+      if (kind === 'rtmp' && data.fault !== 'publish_relay' && data.fault !== 'publish_failover') {
+        showNotice(`已填入本机 RTMP 地址（${data.url}）。注意：当前模拟源模式为 ${data.fault || 'normal'}，如需接收推流并转播请切换为 publish_relay。`);
+      }
+    } catch (err) {
+      showNotice(`读取本机 ${kind.toUpperCase()} 模拟源失败：${err.message || err}`);
+    }
+  }
+  els.btnFillRTMP?.addEventListener('click', () => fillLocalSimulator('rtmp'));
+  els.btnFillRTSP?.addEventListener('click', () => fillLocalSimulator('rtsp'));
 
   function collectBaseConfig() {
     return {

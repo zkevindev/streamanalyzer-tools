@@ -24,9 +24,13 @@
           <label for="mode">场景</label>
           <select id="mode" disabled>
             <option value="normal">正常播放</option>
+            <option value="rtp_drop">周期性 RTP 丢包（每 6 包丢 1）</option>
             <option value="ice_timeout">SDP 成功，ICE 探测超时</option>
             <option value="no_media">ICE 和 DTLS 成功，始终无 RTP</option>
             <option value="media_stop">正常出画后停止 RTP</option>
+            <option value="auth_401">HTTP 信令鉴权失败（401 Unauthorized）</option>
+            <option value="not_found_404">HTTP 流不存在（404 Not Found）</option>
+            <option value="sdp_reject_406">SDP 协商被拒（406 Not Acceptable）</option>
           </select>
           <div class="sim-controls">
             <button id="start" disabled>启动视频源</button>

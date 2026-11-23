@@ -3,7 +3,7 @@
 const api = '/api/simulators/whep';
 const el = id => document.getElementById(id);
 const video = el('video');
-const modeLabels = {normal:'正常播放', ice_timeout:'ICE 探测超时', no_media:'连接后无 RTP', media_stop:'出画后 RTP 停止'};
+const modeLabels = {normal:'正常播放', rtp_drop:'RTP 周期丢包', ice_timeout:'ICE 探测超时', no_media:'连接后无 RTP', media_stop:'出画后 RTP 停止', auth_401:'信令 401 鉴权失败', not_found_404:'信令 404 流不存在', sdp_reject_406:'信令 406 SDP 被拒'};
 let source;
 let report;
 let running;
@@ -157,6 +157,13 @@ async function play(source, signal, record) {
     record.http_status = response.status;
     record.http_ms = Math.round(performance.now() - httpStart);
     event('HTTP', String(response.status));
+    const expectedHTTP = {auth_401: 401, not_found_404: 404, sdp_reject_406: 406}[source.mode];
+    if (expectedHTTP) {
+      record.observed_ms = elapsed();
+      record.passed = response.status === expectedHTTP;
+      record.result = record.passed ? `已复现信令 HTTP ${expectedHTTP}` : `预期 HTTP ${expectedHTTP}，实际 ${response.status}`;
+      return;
+    }
     if (response.status !== 201 || !response.headers.get('Content-Type')?.startsWith('application/sdp')) {
       throw new Error('WHEP 未返回 HTTP 201 和 SDP Answer。');
     }
@@ -196,6 +203,9 @@ async function play(source, signal, record) {
     if (source.mode === 'normal') {
       record.passed = connected && rendered;
       record.result = record.passed ? '已呈现画面' : '未完整观测到播放';
+    } else if (source.mode === 'rtp_drop') {
+      record.passed = connected && record.rtp_packets > 0 && (record.source.rtp_packets_dropped || 0) > 0;
+      record.result = record.passed ? `已复现 RTP 丢包（源端丢弃 ${record.source.rtp_packets_dropped} 包）` : '未观测到预期 RTP 丢包';
     } else if (source.mode === 'ice_timeout') {
       record.passed = record.ice_connected_ms == null && !record.rtp_packets && record.source.ice_packets_dropped > 0;
       record.result = record.passed ? '已复现 ICE 探测超时' : '未复现 ICE 探测超时';
