@@ -57,7 +57,11 @@
               <button id="btn-fill-rtmp" type="button" class="secondary">填入本机 RTMP 模拟源</button>
               <button id="btn-fill-rtsp" type="button" class="secondary">填入本机 RTSP 模拟源</button>
             </div>
-            <p id="target-hint" class="field-hint">支持 rtmp:// 或 rtmps:// 地址，可直接推向本机 RTMP 模拟器或任意流媒体服务器</p>
+            <div id="local-sim-action" class="sim-controls" style="margin-top:8px" hidden>
+              <span id="local-sim-action-text" class="field-hint" style="margin:0"></span>
+              <button id="btn-switch-relay" type="button" class="secondary"></button>
+            </div>
+            <p id="target-hint" class="field-hint">支持 rtmp:// 或 rtmps:// 地址，可直接推向本机 RTMP 模拟器（publish_relay 模式）或任意流媒体服务器</p>
           </div>
 
           <div id="rtsp-opts" class="sim-field-group" hidden>

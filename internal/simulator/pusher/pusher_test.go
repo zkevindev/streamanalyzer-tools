@@ -465,3 +465,32 @@ func TestProxyWHIPOfferAndDelete(t *testing.T) {
 		t.Fatalf("expected DELETE request to reach upstream WHIP server")
 	}
 }
+
+func TestFriendlyFFmpegError(t *testing.T) {
+	gotRTMP := friendlyFFmpegError(ProtocolRTMP, "Error opening output files: Operation not permitted", []string{
+		"17:50:00 [rtmp @ 0x1] Server error: Publish failed.",
+		"17:50:00 Error opening output files: Operation not permitted",
+	})
+	if !strings.Contains(gotRTMP, "publish_relay") {
+		t.Fatalf("expected RTMP publish_relay guidance, got %q", gotRTMP)
+	}
+
+	gotRTSP403 := friendlyFFmpegError(ProtocolRTSP, "Error opening output files: Server returned 403 Forbidden", []string{
+		"17:50:00 [rtsp @ 0x1] method ANNOUNCE failed: 403 Forbidden",
+	})
+	if !strings.Contains(gotRTSP403, "publish_relay") {
+		t.Fatalf("expected RTSP 403 publish_relay guidance, got %q", gotRTSP403)
+	}
+
+	gotRTSP409 := friendlyFFmpegError(ProtocolRTSP, "409 Conflict", []string{
+		"17:50:00 [rtsp @ 0x1] method ANNOUNCE failed: 409 Conflict",
+	})
+	if !strings.Contains(gotRTSP409, "占用") {
+		t.Fatalf("expected RTSP 409 occupied guidance, got %q", gotRTSP409)
+	}
+
+	raw := friendlyFFmpegError(ProtocolRTMP, "Connection refused", []string{"Connection refused"})
+	if raw != "Connection refused" {
+		t.Fatalf("expected unmatched error to remain intact, got %q", raw)
+	}
+}
