@@ -183,10 +183,35 @@ func (t *pushTask) runFFmpeg(ctx context.Context, ffmpegPath string) {
 		if reason == "" {
 			reason = waitErr.Error()
 		}
+		reason = friendlyFFmpegError(t.cfg.Protocol, reason, t.snapshotLogs())
 		t.finish(StatusFailed, reason)
 		return
 	}
 	t.finish(StatusStopped, "")
+}
+
+func (t *pushTask) snapshotLogs() []string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	cp := make([]string, len(t.logs))
+	copy(cp, t.logs)
+	return cp
+}
+
+func friendlyFFmpegError(protocol Protocol, rawReason string, logs []string) string {
+	joined := strings.ToLower(strings.Join(logs, "\n") + "\n" + rawReason)
+	switch {
+	case strings.Contains(joined, "publish failed"):
+		return "服务端拒绝 RTMP 推流（Publish failed）：若推送至本机 RTMP 模拟器，请切换为 publish_relay / publish_failover 模式并确认 /live/test 未被其他推流占用"
+	case protocol == ProtocolRTSP && strings.Contains(joined, "403 forbidden"):
+		return "服务端拒绝 RTSP 推流（403 Forbidden）：若推送至本机 RTSP 模拟器，请切换为 publish_relay 推流转发模式"
+	case protocol == ProtocolRTSP && strings.Contains(joined, "409 conflict"):
+		return "服务端返回 409 Conflict：当前 RTSP 流路径已有其他推流端占用"
+	case strings.Contains(joined, "401 unauthorized"):
+		return "服务端要求认证（401 Unauthorized），请检查推流地址中的用户名密码或鉴权配置"
+	default:
+		return rawReason
+	}
 }
 
 func (t *pushTask) parseFFmpegProgress(r io.Reader) {

@@ -12,6 +12,9 @@
     targetHint: document.getElementById('target-hint'),
     btnFillRTMP: document.getElementById('btn-fill-rtmp'),
     btnFillRTSP: document.getElementById('btn-fill-rtsp'),
+    localSimAction: document.getElementById('local-sim-action'),
+    localSimActionText: document.getElementById('local-sim-action-text'),
+    btnSwitchRelay: document.getElementById('btn-switch-relay'),
     rtspOpts: document.getElementById('rtsp-opts'),
     rtspTransport: document.getElementById('rtsp-transport'),
     whipOpts: document.getElementById('whip-opts'),
@@ -287,32 +290,121 @@
     els.loopCount.disabled = !els.loopEnabled.checked;
   });
 
+  let pendingRelaySwitch = null;
+
+  function hideLocalSimAction() {
+    pendingRelaySwitch = null;
+    if (els.localSimAction) els.localSimAction.hidden = true;
+  }
+
+  function showLocalSimAction(kind, active, text, btnText) {
+    pendingRelaySwitch = { kind, active };
+    if (!els.localSimAction) return;
+    els.localSimActionText.textContent = text;
+    els.btnSwitchRelay.textContent = btnText;
+    els.btnSwitchRelay.disabled = false;
+    els.localSimAction.hidden = false;
+  }
+
+  function canSimulatorAcceptPublish(kind, data) {
+    if (!data || !data.active) return false;
+    if (kind === 'rtsp') return data.fault === 'publish_relay';
+    return data.fault === 'publish_relay' || data.fault === 'publish_failover';
+  }
+
+  function applySimulatorURL(kind, data) {
+    els.protocol.value = kind;
+    syncFormVisibility();
+    let url = data.url || '';
+    let extraNote = '';
+    if (kind === 'rtmp' && data.ingest?.publishing) {
+      if (data.fault === 'publish_failover' && data.ingest?.failover?.backup_url) {
+        url = data.ingest.failover.backup_url;
+        extraNote = `主路已有推流，已自动填入备路地址（${url}）。`;
+      } else {
+        extraNote = '提示：当前本机 RTMP 模拟源 /live/test 已有活跃推流，重复推入同名流会被服务端拒绝。';
+      }
+    } else if (kind === 'rtsp' && data.publishing) {
+      extraNote = '提示：当前本机 RTSP 模拟源 /live/test 已有活跃推流，重复推入同名流会返回 409 Conflict。';
+    }
+    els.targetURL.value = url;
+    if (kind === 'rtsp') els.rtspTransport.value = 'tcp';
+    els.targetURL.focus();
+    hideLocalSimAction();
+    if (extraNote) showNotice(extraNote);
+  }
+
+  async function switchLocalSimulatorToRelay(kind, currentlyActive) {
+    const endpoint = kind === 'rtsp' ? '/api/simulators/rtsp' : '/api/simulators/rtmp';
+    const label = kind.toUpperCase();
+    showNotice('');
+    if (els.btnSwitchRelay) {
+      els.btnSwitchRelay.disabled = true;
+      els.btnSwitchRelay.textContent = currentlyActive ? `正在切换 ${label} 模拟源…` : `正在启动 ${label} 模拟源…`;
+    }
+    try {
+      if (currentlyActive) {
+        const stopResp = await fetch(`${endpoint}/stop`, { method: 'POST' });
+        if (!stopResp.ok) {
+          const errData = await stopResp.json().catch(() => ({}));
+          throw new Error(errData.error || `停止原 ${label} 模拟源失败 (HTTP ${stopResp.status})`);
+        }
+      }
+      const startResp = await fetch(`${endpoint}/start`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fault: 'publish_relay', port: 0 }),
+      });
+      const started = await startResp.json().catch(() => ({}));
+      if (!startResp.ok || !started.active || !started.url) {
+        throw new Error(started.error || `启动 ${label} 推流转发模式失败 (HTTP ${startResp.status})`);
+      }
+      applySimulatorURL(kind, started);
+    } catch (err) {
+      showNotice(`切换本机 ${label} 模拟源失败：${err.message || err}`);
+      if (els.btnSwitchRelay) els.btnSwitchRelay.disabled = false;
+    }
+  }
+
   async function fillLocalSimulator(kind) {
     showNotice('');
+    hideLocalSimAction();
     const endpoint = kind === 'rtsp' ? '/api/simulators/rtsp' : '/api/simulators/rtmp';
+    const label = kind.toUpperCase();
     try {
       const resp = await fetch(endpoint, { cache: 'no-store' });
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok || !data.active || !data.url) {
-        showNotice(kind === 'rtsp'
-          ? '本机 RTSP 模拟源未启动，请先前往 RTSP 模拟器启动后再填入。'
-          : '本机 RTMP 模拟源未启动，请先前往 RTMP 模拟器（推荐 publish_relay 中继模式）启动后再填入。');
+        showLocalSimAction(
+          kind,
+          false,
+          `本机 ${label} 模拟源未启动（推流需使用 publish_relay 推流转发模式）。`,
+          `一键启动本机 ${label} 推流转发并填入`
+        );
         return;
       }
-      els.protocol.value = kind;
-      syncFormVisibility();
-      els.targetURL.value = data.url;
-      if (kind === 'rtsp') els.rtspTransport.value = 'tcp';
-      els.targetURL.focus();
-      if (kind === 'rtmp' && data.fault !== 'publish_relay' && data.fault !== 'publish_failover') {
-        showNotice(`已填入本机 RTMP 地址（${data.url}）。注意：当前模拟源模式为 ${data.fault || 'normal'}，如需接收推流并转播请切换为 publish_relay。`);
+      if (!canSimulatorAcceptPublish(kind, data)) {
+        const modeName = data.fault || 'normal';
+        showLocalSimAction(
+          kind,
+          true,
+          `当前本机 ${label} 模拟源处于只读拉流模式（${modeName}），不接收外部推流。`,
+          `一键切换为 ${label} 推流转发（publish_relay）并填入`
+        );
+        return;
       }
+      applySimulatorURL(kind, data);
     } catch (err) {
-      showNotice(`读取本机 ${kind.toUpperCase()} 模拟源失败：${err.message || err}`);
+      showNotice(`读取本机 ${label} 模拟源失败：${err.message || err}`);
     }
   }
   els.btnFillRTMP?.addEventListener('click', () => fillLocalSimulator('rtmp'));
   els.btnFillRTSP?.addEventListener('click', () => fillLocalSimulator('rtsp'));
+  els.btnSwitchRelay?.addEventListener('click', () => {
+    if (pendingRelaySwitch) {
+      switchLocalSimulatorToRelay(pendingRelaySwitch.kind, pendingRelaySwitch.active);
+    }
+  });
 
   function collectBaseConfig() {
     return {
