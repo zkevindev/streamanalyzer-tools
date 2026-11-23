@@ -4,7 +4,6 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>离线文件解析 · Stream Analyzer</title>
-  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
   <link rel="stylesheet" href="/static/workbench-theme.css">
   <style>
     *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
@@ -161,10 +160,15 @@
     /* Chart Hierarchy: Primary Bitrate Chart spans full width, secondary charts sit 2-up below */
     .chart-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
     #boxBitrate{grid-column:1 / -1}
-    #boxBitrate .chart{height:288px}
+    #boxBitrate .chart{height:260px}
     .chart-box{border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px;background:var(--surface)}
     .chart-title{font-size:13px;font-weight:500;color:var(--text-secondary);margin:0 4px 8px}
-    .chart{height:240px}
+    .chart{height:220px;display:flex;flex-direction:column}
+    .svg-legend{display:flex;gap:14px;flex-wrap:wrap;align-items:center;font-size:11px;color:var(--text-secondary);margin:0 4px 4px;font-family:var(--font-data)}
+    .svg-legend-item{display:inline-flex;align-items:center;gap:5px}
+    .svg-legend-swatch{width:12px;height:2px;border-radius:1px;display:inline-block}
+    .svg-chart{width:100%;flex:1;min-height:0;display:block;overflow:visible}
+    .svg-chart text{font-family:var(--font-data);font-size:10px;fill:var(--muted)}
     .meta-box{margin-top:8px;border:1px solid var(--code-border);border-radius:var(--radius-sm);background:var(--code-bg);color:var(--code-text);padding:14px;font-family:var(--font-data);max-height:320px;overflow:auto;font-size:12px;white-space:pre-wrap;word-break:break-all}
     .kv{display:grid;grid-template-columns:152px 1fr;gap:6px;font-size:13px}
     .kv>div{padding:8px 12px;border:1px solid var(--border);border-radius:var(--radius-xs)}
@@ -254,7 +258,7 @@
             <option value="ps">ps（MPEG-PS / GB28181 .ps/.mpg）</option>
             <option value="webm">webm（WebM / MKV，含 AV1/VP8/VP9/Opus）</option>
             <option value="annexb">annexb（H.264 / H.265 裸码流）</option>
-            <option value="pcap">pcap / pcapng（RTMP / RTSP / RTP / HTTP-FLV / TS 抓包）</option>
+            <option value="pcap">pcap / pcapng（RTMP / RTSP / SIP·GB28181 / RTP / HTTP-FLV / TS 抓包）</option>
             <option value="raw">raw（RTMP 单方向裸流）</option>
           </select>
         </div>
@@ -577,7 +581,7 @@
         </div>
 
         <div class="section" id="pcapExtSection" style="display:none">
-          <div class="section-title" style="margin-bottom:.35rem">扩展协议媒体流（RTSP / RTP / RTCP / HTTP-FLV / MPEG-TS）</div>
+          <div class="section-title" style="margin-bottom:.35rem">扩展协议媒体与信令流（RTSP / SIP·GB28181 / RTP / RTCP / HTTP-FLV / MPEG-TS）</div>
           <div class="table-wrap">
             <table class="small">
               <thead>
@@ -800,7 +804,7 @@
         ps: '提示：MPEG-PS（.ps/.mpg，常用于 GB28181/安防录像）解析 Pack Header、PSM、90kHz 音视频 PES，自动将 G.711(PCMA/PCMU) 转为可试听 WAV。',
         webm: '提示：WebM / Matroska（.webm/.mkv）纯 Go EBML 解析，支持 AV1（解析 Sequence Header OBU）/ VP8 / VP9 / H.264 / H.265 / Opus / AAC。',
         annexb: '提示：Annex B 模式直接解析 .h264 / .h265 裸码流，提取 SPS 参数、统计 NALU 分布并按帧聚合。',
-        pcap: '提示：PCAP 自动提取 RTMP 双向流，并同步扫描 RTSP-over-TCP（提取信令/SDP 与 $ 交织 RTP/RTCP）、UDP RTP/RTCP（按 SSRC 统计丢包/乱序/Jitter 并解包 H.264/H.265/PS/TS/G.711）、UDP TS、HTTP-FLV 与 HTTP TS。',
+        pcap: '提示：PCAP 自动提取 RTMP 双向流，并同步扫描 RTSP-over-TCP（信令/SDP 与交织 RTP/RTCP）、UDP/TCP SIP·GB28181（呼叫信令/SDP/XML）、UDP RTP/RTCP（按 SSRC 统计丢包/乱序/Jitter 并解包 H.264/H.265/PS/TS/G.711）、UDP TS、HTTP-FLV 与 HTTP TS。',
         raw: '提示：RAW 模式解析单方向 RTMP chunk 裸流；完整握手跳过 3073 字节，无握手可设为 0。'
       };
       hintEl.textContent = hints[mode] || hints.auto;
@@ -1119,11 +1123,9 @@
     }
 
     function destroyOfflineCharts(){
-      Object.keys(charts).forEach(k => {
-        if(charts[k]){
-          try{ charts[k].dispose(); }catch(_){}
-          charts[k] = null;
-        }
+      ['chartBitrate','chartFrameSize','chartVideoDelta','chartIInterval','chartAVSync'].forEach(id => {
+        const el = document.getElementById(id);
+        if(el) el.innerHTML = '';
       });
       charts = {};
     }
@@ -1380,7 +1382,6 @@
 
     function getOfflineChartTheme(){
       const dark = document.documentElement.dataset.theme === 'dark';
-      const monoFont = 'ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace';
       return {
         dark,
         accent: dark ? '#38a8be' : '#0b6e82',
@@ -1388,25 +1389,228 @@
         danger: dark ? '#fb7185' : '#c82348',
         success: dark ? '#34d399' : '#1f8a4c',
         neutral: dark ? '#a2adba' : '#4a525d',
-        legend: dark ? '#a2adba' : '#4a525d',
-        tooltip: {
-          backgroundColor: dark ? '#181c22' : '#ffffff',
-          borderColor: dark ? 'rgba(255,255,255,0.16)' : '#d8dde3',
-          textStyle: { color: dark ? '#e6ebf1' : '#111418', fontSize: 12 }
-        },
-        axisStyle: {
-          axisLabel: { color: dark ? '#788494' : '#6c7582', fontFamily: monoFont, fontSize: 11 },
-          nameTextStyle: { color: dark ? '#788494' : '#6c7582', fontSize: 11 },
-          axisLine: { lineStyle: { color: dark ? 'rgba(255,255,255,0.16)' : '#d8dde3' } },
-          splitLine: { lineStyle: { color: dark ? 'rgba(255,255,255,0.08)' : '#eceff3' } }
-        }
+        grid: dark ? 'rgba(255,255,255,0.08)' : '#eceff3',
+        axis: dark ? 'rgba(255,255,255,0.18)' : '#d8dde3',
       };
+    }
+
+    function svgTag(tag, attrs, text){
+      const el = document.createElementNS('http://www.w3.org/2000/svg', tag);
+      for(const k in attrs) el.setAttribute(k, String(attrs[k]));
+      if(text != null) el.textContent = String(text);
+      return el;
+    }
+
+    function fmtAxisNum(v){
+      const a = Math.abs(v);
+      if(a >= 1e6) return (v / 1e6).toFixed(1) + 'M';
+      if(a >= 1e4) return (v / 1e3).toFixed(0) + 'k';
+      if(a >= 100) return String(Math.round(v));
+      return Number(v.toFixed(1)).toString();
+    }
+
+    function renderSVGLineChart(containerId, cfg){
+      const host = document.getElementById(containerId);
+      if(!host) return;
+      host.innerHTML = '';
+      const theme = getOfflineChartTheme();
+      const series = (cfg.series || []).filter(s => Array.isArray(s.values) && s.values.length > 0);
+      if(!series.length) return;
+      const labels = cfg.labels || [];
+      const count = Math.max(labels.length, ...series.map(s => s.values.length));
+      if(count === 0) return;
+
+      if(series.length > 1){
+        const leg = document.createElement('div');
+        leg.className = 'svg-legend';
+        series.forEach(s => {
+          const item = document.createElement('span');
+          item.className = 'svg-legend-item';
+          const sw = document.createElement('span');
+          sw.className = 'svg-legend-swatch';
+          sw.style.background = s.color;
+          if(s.dashed) sw.style.borderTop = '2px dashed ' + s.color;
+          item.append(sw, document.createTextNode(s.name || ''));
+          leg.appendChild(item);
+        });
+        host.appendChild(leg);
+      }
+
+      const W = 640, H = 200, L = 54, R = 16, T = 14, B = 24;
+      const plotW = W - L - R, plotH = H - T - B;
+      let minV = cfg.minZero === false ? Infinity : 0;
+      let maxV = cfg.minZero === false ? -Infinity : 0;
+      series.forEach(s => s.values.forEach(v => {
+        const n = Number(v);
+        if(!isFinite(n)) return;
+        if(n < minV) minV = n;
+        if(n > maxV) maxV = n;
+      }));
+      if(!isFinite(minV) || !isFinite(maxV)){ minV = 0; maxV = 1; }
+      if(minV === maxV){ maxV = minV + (Math.abs(minV) * 0.2 || 10); }
+      const pad = (maxV - minV) * 0.08;
+      if(cfg.minZero === false) minV -= pad;
+      maxV += pad;
+      const spanY = Math.max(1e-6, maxV - minV);
+      const xAt = i => count <= 1 ? (L + plotW / 2) : (L + (plotW * i) / (count - 1));
+      const yAt = v => T + plotH - ((v - minV) / spanY) * plotH;
+
+      const svg = svgTag('svg', { class: 'svg-chart', viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'none', role: 'img' });
+      for(let g = 0; g <= 3; g++){
+        const val = minV + (spanY * g) / 3;
+        const y = yAt(val);
+        svg.appendChild(svgTag('line', { x1: L, y1: y.toFixed(1), x2: W - R, y2: y.toFixed(1), stroke: g === 0 ? theme.axis : theme.grid, 'stroke-width': 1 }));
+        svg.appendChild(svgTag('text', { x: L - 6, y: (y + 3.5).toFixed(1), 'text-anchor': 'end' }, fmtAxisNum(val)));
+      }
+      if(minV < 0 && maxV > 0){
+        const y0 = yAt(0);
+        svg.appendChild(svgTag('line', { x1: L, y1: y0.toFixed(1), x2: W - R, y2: y0.toFixed(1), stroke: theme.axis, 'stroke-dasharray': '4 3', 'stroke-width': 1 }));
+      }
+      if(cfg.yUnit){
+        svg.appendChild(svgTag('text', { x: L - 6, y: T - 3, 'text-anchor': 'end' }, cfg.yUnit));
+      }
+
+      series.forEach(s => {
+        const pts = [];
+        for(let i = 0; i < s.values.length; i++){
+          const n = Number(s.values[i]);
+          if(!isFinite(n)) continue;
+          pts.push([xAt(i), yAt(n), i, n]);
+        }
+        if(!pts.length) return;
+        if(s.area && pts.length > 1){
+          const baseY = yAt(Math.max(minV, 0));
+          const poly = `${pts[0][0].toFixed(1)},${baseY.toFixed(1)} ` + pts.map(p => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ') + ` ${pts[pts.length - 1][0].toFixed(1)},${baseY.toFixed(1)}`;
+          svg.appendChild(svgTag('polygon', { points: poly, fill: s.color, 'fill-opacity': theme.dark ? '0.16' : '0.10' }));
+        }
+        if(pts.length > 1){
+          const attrs = { fill: 'none', stroke: s.color, 'stroke-width': '1.8', points: pts.map(p => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(' ') };
+          if(s.dashed) attrs['stroke-dasharray'] = '5 3';
+          svg.appendChild(svgTag('polyline', attrs));
+        }
+        const step = Math.max(1, Math.ceil(pts.length / 80));
+        for(let k = 0; k < pts.length; k += step){
+          const [px, py, idx, val] = pts[k];
+          const dot = svgTag('circle', { cx: px.toFixed(1), cy: py.toFixed(1), r: pts.length < 36 ? 2.8 : 4, fill: pts.length < 36 ? s.color : 'transparent' });
+          const lbl = labels[idx] != null ? labels[idx] : ('#' + (idx + 1));
+          dot.appendChild(svgTag('title', `${s.name ? s.name + ' · ' : ''}${lbl}: ${fmtAxisNum(val)}${cfg.yUnit ? ' ' + cfg.yUnit : ''}`));
+          svg.appendChild(dot);
+        }
+      });
+
+      const tickIdx = count <= 1 ? [0] : [0, Math.floor((count - 1) / 2), count - 1];
+      tickIdx.forEach((idx, pos) => {
+        const anchor = pos === 0 ? 'start' : (pos === tickIdx.length - 1 ? 'end' : 'middle');
+        svg.appendChild(svgTag('text', { x: xAt(idx).toFixed(1), y: H - 6, 'text-anchor': anchor }, labels[idx] != null ? labels[idx] : String(idx + 1)));
+      });
+      host.appendChild(svg);
+    }
+
+    function renderSVGBarChart(containerId, items, yUnit){
+      const host = document.getElementById(containerId);
+      if(!host || !items.length) return;
+      host.innerHTML = '';
+      const theme = getOfflineChartTheme();
+      let sampled = items;
+      if(items.length > 260){
+        const step = Math.ceil(items.length / 260);
+        sampled = items.filter((it, i) => it.key || i % step === 0 || i === items.length - 1);
+      }
+      const W = 640, H = 200, L = 54, R = 16, T = 14, B = 24;
+      const plotW = W - L - R, plotH = H - T - B;
+      const maxV = Math.max(1, ...sampled.map(it => Number(it.value || 0))) * 1.08;
+      const yAt = v => T + plotH - (v / maxV) * plotH;
+      const svg = svgTag('svg', { class: 'svg-chart', viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'none', role: 'img' });
+      for(let g = 0; g <= 3; g++){
+        const val = (maxV * g) / 3;
+        const y = yAt(val);
+        svg.appendChild(svgTag('line', { x1: L, y1: y.toFixed(1), x2: W - R, y2: y.toFixed(1), stroke: g === 0 ? theme.axis : theme.grid, 'stroke-width': 1 }));
+        svg.appendChild(svgTag('text', { x: L - 6, y: (y + 3.5).toFixed(1), 'text-anchor': 'end' }, fmtAxisNum(val)));
+      }
+      if(yUnit) svg.appendChild(svgTag('text', { x: L - 6, y: T - 3, 'text-anchor': 'end' }, yUnit));
+      const bw = Math.max(1.5, Math.min(10, (plotW / sampled.length) * 0.78));
+      sampled.forEach((it, i) => {
+        const v = Math.max(0, Number(it.value || 0));
+        const x = L + (plotW * i) / sampled.length;
+        const y = yAt(v);
+        const h = Math.max(1, T + plotH - y);
+        const rect = svgTag('rect', { x: x.toFixed(1), y: y.toFixed(1), width: bw.toFixed(1), height: h.toFixed(1), fill: it.key ? theme.danger : theme.accent, rx: 1 });
+        rect.appendChild(svgTag('title', it.tip || ''));
+        svg.appendChild(rect);
+      });
+      const first = sampled[0], mid = sampled[Math.floor(sampled.length / 2)], last = sampled[sampled.length - 1];
+      svg.appendChild(svgTag('text', { x: L, y: H - 6, 'text-anchor': 'start' }, first.label));
+      if(sampled.length > 2) svg.appendChild(svgTag('text', { x: L + plotW / 2, y: H - 6, 'text-anchor': 'middle' }, mid.label));
+      if(sampled.length > 1) svg.appendChild(svgTag('text', { x: W - R, y: H - 6, 'text-anchor': 'end' }, last.label));
+      host.appendChild(svg);
+    }
+
+    function renderSVGXYCompareChart(containerId, cfg){
+      const host = document.getElementById(containerId);
+      if(!host) return;
+      host.innerHTML = '';
+      const theme = getOfflineChartTheme();
+      const series = (cfg.series || []).filter(s => Array.isArray(s.points) && s.points.length > 0);
+      if(!series.length) return;
+
+      const leg = document.createElement('div');
+      leg.className = 'svg-legend';
+      series.forEach(s => {
+        const item = document.createElement('span');
+        item.className = 'svg-legend-item';
+        const sw = document.createElement('span');
+        sw.className = 'svg-legend-swatch';
+        sw.style.background = s.dashed ? 'transparent' : s.color;
+        if(s.dashed) sw.style.borderTop = '2px dashed ' + s.color;
+        item.append(sw, document.createTextNode(s.name || ''));
+        leg.appendChild(item);
+      });
+      host.appendChild(leg);
+
+      const W = 640, H = 200, L = 54, R = 16, T = 14, B = 24;
+      const plotW = W - L - R, plotH = H - T - B;
+      let maxX = 1, maxY = 1;
+      series.forEach(s => s.points.forEach(([x, y]) => {
+        if(isFinite(x) && x > maxX) maxX = x;
+        if(isFinite(y) && y > maxY) maxY = y;
+      }));
+      maxY *= 1.08;
+      const xAt = x => L + (plotW * Math.max(0, x)) / maxX;
+      const yAt = y => T + plotH - (Math.max(0, y) / maxY) * plotH;
+
+      const svg = svgTag('svg', { class: 'svg-chart', viewBox: `0 0 ${W} ${H}`, preserveAspectRatio: 'none', role: 'img' });
+      for(let g = 0; g <= 3; g++){
+        const val = (maxY * g) / 3;
+        const y = yAt(val);
+        svg.appendChild(svgTag('line', { x1: L, y1: y.toFixed(1), x2: W - R, y2: y.toFixed(1), stroke: g === 0 ? theme.axis : theme.grid, 'stroke-width': 1 }));
+        svg.appendChild(svgTag('text', { x: L - 6, y: (y + 3.5).toFixed(1), 'text-anchor': 'end' }, fmtAxisNum(val)));
+      }
+      if(cfg.yUnit) svg.appendChild(svgTag('text', { x: L - 6, y: T - 3, 'text-anchor': 'end' }, cfg.yUnit));
+      series.forEach(s => {
+        const pts = s.points.filter(p => isFinite(p[0]) && isFinite(p[1]));
+        if(pts.length > 1){
+          const attrs = { fill: 'none', stroke: s.color, 'stroke-width': '1.8', points: pts.map(p => `${xAt(p[0]).toFixed(1)},${yAt(p[1]).toFixed(1)}`).join(' ') };
+          if(s.dashed) attrs['stroke-dasharray'] = '5 3';
+          svg.appendChild(svgTag('polyline', attrs));
+        }
+        const step = Math.max(1, Math.ceil(pts.length / 60));
+        for(let i = 0; i < pts.length; i += step){
+          const [tx, ty] = pts[i];
+          const dot = svgTag('circle', { cx: xAt(tx).toFixed(1), cy: yAt(ty).toFixed(1), r: 4, fill: 'transparent' });
+          dot.appendChild(svgTag('title', `${s.name} @ ${tx}s: ${fmtAxisNum(ty)}${cfg.yUnit ? ' ' + cfg.yUnit : ''}`));
+          svg.appendChild(dot);
+        }
+      });
+      svg.appendChild(svgTag('text', { x: L, y: H - 6, 'text-anchor': 'start' }, '0s'));
+      svg.appendChild(svgTag('text', { x: L + plotW / 2, y: H - 6, 'text-anchor': 'middle' }, (maxX / 2).toFixed(1) + 's'));
+      svg.appendChild(svgTag('text', { x: W - R, y: H - 6, 'text-anchor': 'end' }, maxX.toFixed(1) + 's'));
+      host.appendChild(svg);
     }
 
     function renderCharts(flow){
       const section = document.getElementById('offlineChartSection');
       destroyOfflineCharts();
-      if(!section || typeof echarts === 'undefined' || !flow || !flow.profile){
+      if(!section || !flow || !flow.profile){
         if(section) section.style.display = 'none';
         return;
       }
@@ -1438,87 +1642,46 @@
       section.style.display = '';
 
       const theme = getOfflineChartTheme();
-      const baseGrid = { left: 54, right: 18, top: 28, bottom: 28 };
-      const axisStyle = theme.axisStyle;
-      const tipBase = Object.assign({ trigger: 'axis' }, theme.tooltip);
-      try{
-        if(bitrate.length > 0){
-          const c = echarts.init(document.getElementById('chartBitrate'));
-          charts.bitrate = c;
-          c.setOption({
-            color: [theme.accent, theme.secondary],
-            tooltip: tipBase,
-            legend: { top: 0, textStyle: { fontSize: 11, color: theme.legend } },
-            grid: baseGrid,
-            xAxis: Object.assign({ type: 'category', data: bitrate.map(pt => pt.sec + 's') }, axisStyle),
-            yAxis: Object.assign({ type: 'value', name: 'kbps' }, axisStyle),
-            series: [
-              { name: '视频', type: 'line', smooth: true, showSymbol: bitrate.length < 40, data: bitrate.map(pt => pt.video_kbps), areaStyle: { opacity: theme.dark ? 0.16 : 0.1 } },
-              { name: '音频', type: 'line', smooth: true, showSymbol: bitrate.length < 40, data: bitrate.map(pt => pt.audio_kbps) }
-            ]
-          });
-        }
-        if(frameSizes.length > 0){
-          const c = echarts.init(document.getElementById('chartFrameSize'));
-          charts.frameSize = c;
-          c.setOption({
-            tooltip: Object.assign({
-              formatter: params => {
-                const it = params && params[0] && params[0].data;
-                if(!it) return '';
-                return '帧 #' + it.index + ' (' + (it.key ? '关键帧 I' : '非关键帧') + ')<br/>DTS: ' + it.dts + ' ms<br/>大小: ' + fmtBytes(it.value);
-              }
-            }, tipBase),
-            grid: baseGrid,
-            xAxis: Object.assign({ type: 'category', data: frameSizes.map(pt => '#' + pt.index) }, axisStyle),
-            yAxis: Object.assign({ type: 'value', name: 'B' }, axisStyle),
-            series: [{
-              type: 'bar',
-              barMaxWidth: 10,
-              data: frameSizes.map(pt => ({
-                value: pt.bytes,
-                index: pt.index,
-                dts: pt.dts,
-                key: !!pt.key,
-                itemStyle: { color: pt.key ? theme.danger : theme.accent }
-              }))
-            }]
-          });
-        }
-        if(deltas.length > 0){
-          const c = echarts.init(document.getElementById('chartVideoDelta'));
-          charts.videoDelta = c;
-          c.setOption({
-            tooltip: tipBase,
-            grid: baseGrid,
-            xAxis: Object.assign({ type: 'category', data: deltas.map((_, i) => i + 1) }, axisStyle),
-            yAxis: Object.assign({ type: 'value', name: 'ms' }, axisStyle),
-            series: [{ type: 'line', showSymbol: deltas.length < 40, data: deltas, itemStyle: { color: theme.accent } }]
-          });
-        }
-        if(gops.length > 0){
-          const c = echarts.init(document.getElementById('chartIInterval'));
-          charts.gop = c;
-          c.setOption({
-            tooltip: tipBase,
-            grid: baseGrid,
-            xAxis: Object.assign({ type: 'category', data: gops.map((_, i) => '#' + (i + 1)) }, axisStyle),
-            yAxis: Object.assign({ type: 'value', name: 'ms' }, axisStyle),
-            series: [{ type: 'line', smooth: true, data: gops, itemStyle: { color: theme.neutral } }]
-          });
-        }
-        if(avSync.length > 0){
-          const c = echarts.init(document.getElementById('chartAVSync'));
-          charts.avSync = c;
-          c.setOption({
-            tooltip: tipBase,
-            grid: baseGrid,
-            xAxis: Object.assign({ type: 'category', data: avSync.map(pt => pt.sec + 's') }, axisStyle),
-            yAxis: Object.assign({ type: 'value', name: 'ms' }, axisStyle),
-            series: [{ type: 'line', smooth: true, data: avSync.map(pt => pt.diff_ms), itemStyle: { color: theme.success } }]
-          });
-        }
-      }catch(_){}
+      if(bitrate.length > 0){
+        renderSVGLineChart('chartBitrate', {
+          labels: bitrate.map(pt => pt.sec + 's'),
+          yUnit: 'kbps',
+          series: [
+            { name: '视频', color: theme.accent, area: true, values: bitrate.map(pt => pt.video_kbps) },
+            { name: '音频', color: theme.secondary, values: bitrate.map(pt => pt.audio_kbps) }
+          ]
+        });
+      }
+      if(frameSizes.length > 0){
+        renderSVGBarChart('chartFrameSize', frameSizes.map(pt => ({
+          label: '#' + pt.index,
+          value: pt.bytes,
+          key: !!pt.key,
+          tip: '帧 #' + pt.index + ' (' + (pt.key ? '关键帧 I' : '非关键帧') + ') · DTS: ' + pt.dts + ' ms · 大小: ' + fmtBytes(pt.bytes)
+        })), 'B');
+      }
+      if(deltas.length > 0){
+        renderSVGLineChart('chartVideoDelta', {
+          labels: deltas.map((_, i) => '#' + (i + 1)),
+          yUnit: 'ms',
+          series: [{ name: 'ΔDTS', color: theme.accent, values: deltas }]
+        });
+      }
+      if(gops.length > 0){
+        renderSVGLineChart('chartIInterval', {
+          labels: gops.map((_, i) => '#' + (i + 1)),
+          yUnit: 'ms',
+          series: [{ name: 'GOP', color: theme.neutral, values: gops }]
+        });
+      }
+      if(avSync.length > 0){
+        renderSVGLineChart('chartAVSync', {
+          labels: avSync.map(pt => pt.sec + 's'),
+          yUnit: 'ms',
+          minZero: false,
+          series: [{ name: '音画偏移', color: theme.success, values: avSync.map(pt => pt.diff_ms) }]
+        });
+      }
     }
 
     function renderTSStats(flows){
@@ -2278,8 +2441,9 @@
     }
 
     function destroyCompareCharts(){
-      Object.keys(compareCharts).forEach(k => {
-        if(compareCharts[k]){ try{ compareCharts[k].dispose(); }catch(_){} }
+      ['chartCmpBitrate','chartCmpFrameSize'].forEach(id => {
+        const el = document.getElementById(id);
+        if(el) el.innerHTML = '';
       });
       compareCharts = {};
     }
@@ -2351,10 +2515,7 @@
       }
 
       destroyCompareCharts();
-      if(typeof echarts === 'undefined') return;
       const theme = getOfflineChartTheme();
-      const axisStyle = theme.axisStyle;
-      const tipBase = Object.assign({ trigger: 'axis' }, theme.tooltip);
       const pA = cmp.side_a && cmp.side_a.profile;
       const pB = cmp.side_b && cmp.side_b.profile;
 
@@ -2364,17 +2525,11 @@
       if(boxBr){
         if(brA.length || brB.length){
           boxBr.style.display = '';
-          const ch = echarts.init(document.getElementById('chartCmpBitrate'));
-          compareCharts.bitrate = ch;
-          ch.setOption({
-            tooltip: tipBase,
-            legend: { top: 0, textStyle: { fontSize: 11, color: theme.legend } },
-            grid: { left: 52, right: 20, top: 32, bottom: 28 },
-            xAxis: Object.assign({ type: 'value', name: 's' }, axisStyle),
-            yAxis: Object.assign({ type: 'value', name: 'kbps' }, axisStyle),
+          renderSVGXYCompareChart('chartCmpBitrate', {
+            yUnit: 'kbps',
             series: [
-              { name: 'A: ' + labelA, type: 'line', showSymbol: false, smooth: true, itemStyle: { color: theme.accent }, lineStyle: { width: 2, color: theme.accent }, data: brA.map(pt => [Number((pt.t_ms / 1000).toFixed(2)), Number((pt.total_kbps || 0).toFixed(1))]) },
-              { name: 'B: ' + labelB, type: 'line', showSymbol: false, smooth: true, itemStyle: { color: theme.danger }, lineStyle: { width: 2, color: theme.danger, type: 'dashed' }, data: brB.map(pt => [Number((pt.t_ms / 1000).toFixed(2)), Number((pt.total_kbps || 0).toFixed(1))]) }
+              { name: 'A: ' + labelA, color: theme.accent, points: brA.map(pt => [Number(((pt.t_ms != null ? pt.t_ms : (pt.sec || 0) * 1000) / 1000).toFixed(2)), Number((pt.total_kbps != null ? pt.total_kbps : ((pt.video_kbps || 0) + (pt.audio_kbps || 0))).toFixed(1))]) },
+              { name: 'B: ' + labelB, color: theme.danger, dashed: true, points: brB.map(pt => [Number(((pt.t_ms != null ? pt.t_ms : (pt.sec || 0) * 1000) / 1000).toFixed(2)), Number((pt.total_kbps != null ? pt.total_kbps : ((pt.video_kbps || 0) + (pt.audio_kbps || 0))).toFixed(1))]) }
             ]
           });
         }else{
@@ -2388,17 +2543,11 @@
       if(boxFs){
         if(fsA.length || fsB.length){
           boxFs.style.display = '';
-          const ch = echarts.init(document.getElementById('chartCmpFrameSize'));
-          compareCharts.frameSize = ch;
-          ch.setOption({
-            tooltip: tipBase,
-            legend: { top: 0, textStyle: { fontSize: 11, color: theme.legend } },
-            grid: { left: 56, right: 20, top: 32, bottom: 28 },
-            xAxis: Object.assign({ type: 'value', name: 's' }, axisStyle),
-            yAxis: Object.assign({ type: 'value', name: 'B' }, axisStyle),
+          renderSVGXYCompareChart('chartCmpFrameSize', {
+            yUnit: 'B',
             series: [
-              { name: 'A: ' + labelA, type: 'line', showSymbol: false, itemStyle: { color: theme.accent }, lineStyle: { width: 1.5, color: theme.accent }, data: fsA.map(pt => [Number((pt.t_ms / 1000).toFixed(2)), pt.size || 0]) },
-              { name: 'B: ' + labelB, type: 'line', showSymbol: false, itemStyle: { color: theme.success }, lineStyle: { width: 1.5, color: theme.success }, data: fsB.map(pt => [Number((pt.t_ms / 1000).toFixed(2)), pt.size || 0]) }
+              { name: 'A: ' + labelA, color: theme.accent, points: fsA.map(pt => [Number(((pt.t_ms != null ? pt.t_ms : (pt.dts || 0)) / 1000).toFixed(2)), pt.size != null ? pt.size : (pt.bytes || 0)]) },
+              { name: 'B: ' + labelB, color: theme.success, dashed: true, points: fsB.map(pt => [Number(((pt.t_ms != null ? pt.t_ms : (pt.dts || 0)) / 1000).toFixed(2)), pt.size != null ? pt.size : (pt.bytes || 0)]) }
             ]
           });
         }else{
@@ -2428,20 +2577,22 @@
       const summary = document.getElementById('rtspSignalingSummary');
       if(!section || !box) return;
       const extras = (flow && Array.isArray(flow.artifact_paths)) ? flow.artifact_paths : [];
-      const sigAbs = extras.find(p => String(p).endsWith('rtsp_signaling.txt'));
+      const sigAbs = extras.find(p => String(p).endsWith('rtsp_signaling.txt') || String(p).endsWith('sip_signaling.txt'));
       const rel = sigAbs ? toRel(taskId, sigAbs) : '';
       if(!taskId || !rel){
         section.style.display = 'none';
         box.textContent = '';
         return;
       }
+      const fname = rel.split('/').pop();
+      const isSIP = fname === 'sip_signaling.txt';
       section.style.display = '';
       if(summary){
-        summary.textContent = 'RTSP 信令与 SDP 预览 · flow' + String(flow.flow_id || 0).padStart(3, '0') + ' (' + rel.split('/').pop() + ')';
+        summary.textContent = (isSIP ? 'SIP / GB28181 信令与 SDP 预览' : 'RTSP 信令与 SDP 预览') + ' · flow' + String(flow.flow_id || 0).padStart(3, '0') + ' (' + fname + ')';
       }
       const key = taskId + '/' + rel;
       if(loadedRTSPSignalingKey === key && box.textContent) return;
-      if(hint) hint.textContent = '加载 RTSP 信令与 SDP 中…';
+      if(hint) hint.textContent = isSIP ? '加载 SIP / GB28181 信令中…' : '加载 RTSP 信令与 SDP 中…';
       box.textContent = '';
       try{
         const resp = await fetch('/api/offline/tasks/' + encodeURIComponent(taskId) + '/files/' + rel);
@@ -2452,7 +2603,7 @@
         const text = await resp.text();
         const lines = text.split('\n');
         const preview = lines.slice(0, 500).join('\n');
-        box.textContent = lines.length > 500 ? (preview + '\n\n... 共 ' + lines.length + ' 行，完整内容请下载 rtsp_signaling.txt 查看') : preview;
+        box.textContent = lines.length > 500 ? (preview + '\n\n... 共 ' + lines.length + ' 行，完整内容请下载 ' + fname + ' 查看') : preview;
         if(hint) hint.textContent = '共 ' + lines.length + ' 行' + (lines.length > 500 ? '（仅预览前 500 行）' : '');
         loadedRTSPSignalingKey = key;
       }catch(e){

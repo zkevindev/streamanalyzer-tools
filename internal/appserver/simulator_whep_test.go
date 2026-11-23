@@ -164,3 +164,114 @@ func TestWHEPSimulatorNegotiatesAndSeparatesFailureStages(t *testing.T) {
 		})
 	}
 }
+
+func TestWHEPSimulatorSignalingFaultsAndRTPDrop(t *testing.T) {
+	app := testDiagnosticServer(t, t.TempDir())
+	const api = "/api/simulators/whep"
+
+	signalingCases := []struct {
+		mode   string
+		status int
+	}{
+		{mode: "auth_401", status: http.StatusUnauthorized},
+		{mode: "not_found_404", status: http.StatusNotFound},
+		{mode: "sdp_reject_406", status: http.StatusNotAcceptable},
+	}
+	for _, tc := range signalingCases {
+		t.Run(tc.mode, func(t *testing.T) {
+			source := decodeDiagnostic[whep.Status](t, diagnosticRequest(t, app, "POST", api+"/start", 201, []byte(`{"mode":"`+tc.mode+`"}`)))
+			t.Cleanup(func() { app.simulators.whep.Stop() })
+			req, err := http.NewRequestWithContext(t.Context(), "POST", app.URL()+source.Endpoint, strings.NewReader("v=0\r\n"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			req.Header.Set("Content-Type", "application/sdp")
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer resp.Body.Close()
+			if resp.StatusCode != tc.status {
+				t.Fatalf("mode %s returned HTTP %d, want %d", tc.mode, resp.StatusCode, tc.status)
+			}
+			if tc.mode == "auth_401" && !strings.Contains(resp.Header.Get("WWW-Authenticate"), "Bearer") {
+				t.Fatalf("auth_401 missing WWW-Authenticate Bearer header: %q", resp.Header.Get("WWW-Authenticate"))
+			}
+			after := decodeDiagnostic[whep.Status](t, diagnosticRequest(t, app, "GET", api, 200, nil))
+			if after.Sessions != 0 {
+				t.Fatalf("signaling fault should not create session: %+v", after)
+			}
+		})
+	}
+
+	t.Run("rtp_drop", func(t *testing.T) {
+		source := decodeDiagnostic[whep.Status](t, diagnosticRequest(t, app, "POST", api+"/start", 201, []byte(`{"mode":"rtp_drop"}`)))
+		t.Cleanup(func() { app.simulators.whep.Stop() })
+		ctx, cancel := context.WithTimeout(t.Context(), 7*time.Second)
+		defer cancel()
+
+		var settings webrtc.SettingEngine
+		settings.SetIncludeLoopbackCandidate(true)
+		settings.SetIPFilter(net.IP.IsLoopback)
+		settings.SetNetworkTypes([]webrtc.NetworkType{webrtc.NetworkTypeUDP4})
+		receiver, err := webrtc.NewAPI(webrtc.WithSettingEngine(settings)).NewPeerConnection(webrtc.Configuration{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer receiver.Close()
+		if _, err := receiver.AddTransceiverFromKind(webrtc.RTPCodecTypeVideo,
+			webrtc.RTPTransceiverInit{Direction: webrtc.RTPTransceiverDirectionRecvonly}); err != nil {
+			t.Fatal(err)
+		}
+		receiver.OnTrack(func(track *webrtc.TrackRemote, _ *webrtc.RTPReceiver) {
+			for {
+				if _, _, err := track.ReadRTP(); err != nil {
+					return
+				}
+			}
+		})
+		offer, err := receiver.CreateOffer(nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		gathered := webrtc.GatheringCompletePromise(receiver)
+		if err := receiver.SetLocalDescription(offer); err != nil {
+			t.Fatal(err)
+		}
+		select {
+		case <-gathered:
+		case <-ctx.Done():
+			t.Fatal("local receiver did not gather candidates")
+		}
+		req, err := http.NewRequestWithContext(ctx, "POST", app.URL()+source.Endpoint, strings.NewReader(receiver.LocalDescription().SDP))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/sdp")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		answerBytes, err := io.ReadAll(resp.Body)
+		if err != nil || resp.StatusCode != http.StatusCreated {
+			t.Fatalf("rtp_drop offer returned %d: %v", resp.StatusCode, err)
+		}
+		path := resp.Header.Get("Location")
+		if err := receiver.SetRemoteDescription(webrtc.SessionDescription{Type: webrtc.SDPTypeAnswer, SDP: string(answerBytes)}); err != nil {
+			t.Fatal(err)
+		}
+		var status whep.SessionStatus
+		for ctx.Err() == nil {
+			status = decodeDiagnostic[whep.SessionStatus](t, diagnosticRequest(t, app, "GET", path, 200, nil))
+			if status.RTPPackets > 0 && status.RTPPacketsDropped > 0 {
+				break
+			}
+			time.Sleep(25 * time.Millisecond)
+		}
+		if status.RTPPackets == 0 || status.RTPPacketsDropped == 0 {
+			t.Fatalf("expected both sent and dropped RTP packets in rtp_drop mode, got %+v", status)
+		}
+		diagnosticRequest(t, app, "DELETE", path, 204, nil)
+	})
+}

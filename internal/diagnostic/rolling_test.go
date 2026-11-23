@@ -77,3 +77,21 @@ func TestRollingValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestRollingValidationAllowsWHEPAndHTTPTS(t *testing.T) {
+	for _, proto := range []string{ProtocolHTTPFLV, ProtocolHTTPTS, ProtocolRTMP, ProtocolHLS, ProtocolRTSP, ProtocolRTSPS, ProtocolWHEP} {
+		req := SampleRequest{Protocol: proto, SegmentSeconds: 5}
+		if err := validateRolling(&req); err != nil {
+			t.Fatalf("validateRolling rejected supported protocol %s: %v", proto, err)
+		}
+		if req.RollingSegments != 3 || req.Seconds != 5 {
+			t.Fatalf("validateRolling did not normalize defaults for %s: %+v", proto, req)
+		}
+	}
+	for _, proto := range []string{ProtocolUDPTS, ProtocolRTPTS} {
+		req := SampleRequest{Protocol: proto, SegmentSeconds: 5}
+		if err := validateRolling(&req); err == nil {
+			t.Fatalf("validateRolling unexpectedly accepted %s", proto)
+		}
+	}
+}
