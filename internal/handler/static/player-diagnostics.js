@@ -782,14 +782,21 @@
                 });
             }
             player.on(Hls.Events.LEVEL_SWITCHED, (_event, data) => {
-                const level = player.levels[data.level];
+                const index = data.level;
+                const level = player.levels[index];
                 if (!level || !Number.isFinite(level.bitrate)) return;
-                this.event('level_switch', {
-                    level: data.level,
-                    bandwidth: Math.round(level.bitrate),
-                    width: Number.isFinite(level.width) ? Math.round(level.width) : undefined,
-                    height: Number.isFinite(level.height) ? Math.round(level.height) : undefined,
-                });
+                // A direct media playlist has no declared variant bitrate.
+                const bandwidth = Math.round(level.bitrate);
+                if (Number.isInteger(index) && index >= 0 && index <= 64 && Number.isSafeInteger(bandwidth) && bandwidth > 0) {
+                    const width = Math.round(level.width);
+                    const height = Math.round(level.height);
+                    this.event('level_switch', {
+                        level: index,
+                        bandwidth,
+                        width: width > 0 && width <= 8192 ? width : undefined,
+                        height: height > 0 && height <= 8192 ? height : undefined,
+                    });
+                }
                 if (abr) this.options.onQualityPlaying?.(level);
             });
             if (this.options.onHLSBuffered) {
@@ -813,9 +820,10 @@
 
         reloadHLS() {
             if (!this.active || !this.hlsPlayer) return;
+            const url = mediaURL(this.grant.url, 'hls');
             this.releaseMedia();
             this.canPlay = false;
-            this.attachHLS(this.source);
+            this.attachHLS(url);
         }
 
         hlsLatencyMS() {
