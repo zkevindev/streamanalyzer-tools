@@ -32,6 +32,8 @@ type ThroughputReport struct {
 	Boundary           string             `json:"boundary"`
 }
 
+const legacyThroughputBoundary = "网络吞吐按已保存事件的到达字节估算；媒体码率按音视频标签、RTMP 消息、HLS 分片或 TS 包字节统计，均包含容器/协议开销，不是纯编码 payload 码率。"
+
 type throughputEvent struct {
 	kind, rendition string
 	size            int64
@@ -203,7 +205,17 @@ func validateStoredThroughput(dir string, stored, replayed Report) (*ThroughputR
 		return nil, nil
 	}
 	expected, err := buildThroughput(dir, replayed)
-	if err != nil || expected == nil || !reflect.DeepEqual(stored.Throughput, expected) {
+	if err != nil || expected == nil {
+		return nil, fmt.Errorf("%w: 吞吐与码率报告和时间线不一致", ErrInvalid)
+	}
+	// Accept the earlier wording for protocols that already emitted throughput/1.
+	if stored.Throughput.Boundary == legacyThroughputBoundary {
+		switch replayed.Manifest.Protocol {
+		case ProtocolHTTPFLV, ProtocolRTMP, ProtocolHLS, ProtocolHTTPTS, ProtocolUDPTS, ProtocolRTPTS:
+			expected.Boundary = legacyThroughputBoundary
+		}
+	}
+	if !reflect.DeepEqual(stored.Throughput, expected) {
 		return nil, fmt.Errorf("%w: 吞吐与码率报告和时间线不一致", ErrInvalid)
 	}
 	return stored.Throughput, nil

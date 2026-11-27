@@ -10,12 +10,14 @@
   <script src="/static/simulator-gb-platform.js" defer></script>
   <script src="/static/workbench-navigation.js" defer></script>
 </head>
-<body>
-  <a class="skip" href="#main">跳转到主要内容</a>
+<body class="simulator-page simulator-gb-platform-page">
   <!-- workbench-header -->
   <main id="main" tabindex="-1">
     <!-- simulator-protocols -->
-    <div class="page-heading"><div><h1>GB28181 平台侧收流</h1><a href="/simulators">返回 GB28181 设备模拟器</a></div></div>
+    <div class="page-heading">
+      <div><h1>GB28181 平台侧收流</h1><p class="muted">启动本机 SIP 平台，接入国标设备并发起点播。</p></div>
+      <a class="button secondary" href="/simulators">返回 GB28181 设备模拟器</a>
+    </div>
     <p id="notice" class="error" role="alert" hidden></p>
     <div class="simulator-grid">
       <section class="panel">
@@ -40,9 +42,10 @@
             <div><dt>监听地址</dt><dd id="address">—</dd></div>
             <div><dt>已注册设备</dt><dd id="peer">—</dd></div>
           </dl>
-          <label for="preview-device">点播与报告所选设备</label>
-          <select id="preview-device" disabled></select>
-          <form id="preview-form">
+          <form id="preview-form" aria-labelledby="preview-config-title">
+            <h3 id="preview-config-title">点播配置</h3>
+            <label for="preview-device">点播与报告所选设备</label>
+            <select id="preview-device" disabled></select>
             <fieldset id="preview-config" disabled>
               <div class="sim-fields">
                 <div><label for="channel">通道编号</label><input id="channel" name="channel_id" pattern="[0-9]{20}" value="34020000001320000002" required></div>
@@ -66,6 +69,7 @@
       <section class="panel">
         <div class="panel-heading"><h2>点播结果</h2><span id="result" class="status" role="status">等待点播</span></div>
         <div class="panel-body">
+          <p class="muted platform-empty">点播后可查看 RTP 接收、关键帧和会话时序。</p>
           <p id="recovery-result" class="field-hint" hidden></p>
           <p id="recording-summary" class="field-hint" hidden></p>
           <ul id="recording-list" hidden></ul>

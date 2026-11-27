@@ -915,12 +915,15 @@ async function runWHEPScenario(mode, entry) {
       return detail.report;
     }, 12000, 'WHEP 采样观测超时。');
     const w = report.whep || {};
+    const observation = report.manifest?.observation || {};
     const tracks = w.tracks || [];
     const videoTrack = tracks.find(t => t.kind === 'video') || tracks[0];
     entry.evidence = {mode, url, http_status: w.http_status, ice_state: w.ice_state, dtls_state: w.dtls_state, tracks: tracks.length, packets: videoTrack?.packets || 0, missing: videoTrack?.missing_sequence_packets || 0};
     if (mode === 'auth_401') {
-      entry.passed = w.http_status === 401 && report.manifest?.observation?.end_reason === 'whep_signaling_error';
-      entry.detail = entry.passed ? '信令返回 HTTP 401 并定位至 whep_signaling_error' : `预期 HTTP 401，实际 ${w.http_status || '无响应'}`;
+      entry.passed = w.http_status === 401 && observation.end_reason === 'http_error' && observation.failure_stage === 'whep_signaling';
+      entry.detail = entry.passed
+        ? '信令返回 HTTP 401，已定位到 WHEP 信令鉴权失败'
+        : `预期 WHEP 信令返回 HTTP 401，观测到状态 ${w.http_status || '无响应'}，失败阶段 ${observation.failure_stage || '未知'}`;
     } else if (mode === 'rtp_drop') {
       entry.passed = Boolean(videoTrack && videoTrack.packets > 0 && (videoTrack.missing_sequence_packets > 0 || videoTrack.sequence_gaps > 0));
       entry.detail = entry.passed ? `收包 ${videoTrack.packets} · 检测到缺口丢包 ${videoTrack.missing_sequence_packets || 0} 包` : '未在 WHEP 轨道中观测到预期 RTP 丢包';

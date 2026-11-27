@@ -26,6 +26,11 @@
         if (reviewModes) reviewModes.hidden = !review;
         if (durationHint) durationHint.hidden = review;
         node('diagnostics-title').textContent = review ? '离线复盘' : '流媒体排障';
+        node('review-description').hidden = !review;
+        document.title = (onvif ? 'ONVIF 设备探测' : review ? '离线复盘' : '流媒体排障') + ' · Stream Analyzer';
+        if (node('report').hidden && node('stop').hidden) {
+            node('result-heading').textContent = review ? '复盘报告' : '采样结果';
+        }
         for (const [href, link] of linkByPath) {
             if (!link) continue;
             if (href === path) link.setAttribute('aria-current', 'page');

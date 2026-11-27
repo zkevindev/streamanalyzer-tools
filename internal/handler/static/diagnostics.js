@@ -25,7 +25,7 @@ const protocols = {
     'http-ts': { label: 'HTTP MPEG-TS', example: 'https://live.example.com/app/stream.ts', dump: '原始 TS', mpegTS: true },
     'udp-ts': { label: 'UDP MPEG-TS', example: 'udp://127.0.0.1:5000', dump: '原始 UDP 载荷', mpegTS: true, receive: true },
     'rtp-ts': { label: 'RTP MPEG-TS', example: 'rtp://127.0.0.1:5000', dump: '原始 RTP 数据报', mpegTS: true, receive: true },
-    dash: { label: 'MPEG-DASH', example: '/live/manifest.mpd', dump: '原始 DASH ZIP' },
+    dash: { label: 'MPEG-DASH', example: 'https://live.example.com/app/manifest.mpd', dump: '原始 DASH ZIP' },
 };
 const stageLabels = {
     dns: 'DNS 解析', connect: 'TCP 建连', tls: 'TLS 握手', request_send: '发送请求',
@@ -2586,6 +2586,16 @@ function bindForm(id, submit) {
 
 function updateAutomaticOption() { const playback = node('analyze-playback'); node('auto-investigate').disabled = playback.disabled || !playback.checked; }
 node('analyze-playback').addEventListener('change', updateAutomaticOption);
+const reconnectProtocols = new Set(['http-flv', 'http-ts', 'rtmp', 'rtsp', 'rtsps', 'whep', 'dash']);
+const rollingProtocols = new Set([...reconnectProtocols, 'hls']);
+const segmentSecondsInput = node('segment-seconds');
+const rollingSegmentsInput = node('rolling-segments');
+function updateRollingOptions() {
+    rollingSegmentsInput.disabled = !(segmentSecondsInput.valueAsNumber > 0);
+}
+segmentSecondsInput.addEventListener('input', updateRollingOptions);
+updateRollingOptions();
+
 node('analysis-profile').addEventListener('change', () => { node('custom-thresholds').hidden = node('analysis-profile').value !== 'custom'; });
 node('protocol').addEventListener('change', () => {
     const protocol = node('protocol').value;
@@ -2607,9 +2617,12 @@ node('protocol').addEventListener('change', () => {
     const httpAccess = ['http-flv', 'hls', 'http-ts', 'whep', 'dash'].includes(protocol);
     node('http-access-options').hidden = !httpAccess && !['rtmp', 'rtsps'].includes(protocol);
     node('whep-options').hidden = protocol !== 'whep';
-    node('reconnect-options').hidden = !['http-flv', 'http-ts', 'rtmp', 'rtsp', 'rtsps', 'whep', 'dash'].includes(protocol);
+    const supportsReconnect = reconnectProtocols.has(protocol);
+    const supportsRolling = rollingProtocols.has(protocol);
+    node('reconnect-options').hidden = !supportsReconnect;
     node('hls-variant-option').hidden = protocol !== 'hls';
-    node('rolling-options').hidden = !['http-flv', 'http-ts', 'rtmp', 'hls', 'rtsp', 'rtsps', 'whep', 'dash'].includes(protocol);
+    node('rolling-options').hidden = !supportsRolling;
+    node('session-options').hidden = !supportsReconnect && !supportsRolling;
     for (const id of ['http-headers', 'http-proxy-url']) {
         node(id).hidden = !httpAccess;
         document.querySelector(`label[for="${id}"]`).hidden = !httpAccess;
@@ -2618,8 +2631,7 @@ node('protocol').addEventListener('change', () => {
     updateAutomaticOption();
 });
 node('rtsp-transport').addEventListener('change', updateRTSPTransport);
-updateRTSPTransport();
-updateAutomaticOption();
+node('protocol').dispatchEvent(new Event('change'));
 const launchOptions = new URLSearchParams(location.search);
 const simulatedHLS = launchOptions.get('hls_simulator');
 let simulatorURL = '';
@@ -2852,9 +2864,31 @@ bindForm('sample', async () => {
     const hlsABR = localSimulator && launchOptions.get('hls_abr') === '1';
     const hlsLowLatency = localSimulator && launchOptions.get('hls_ll') === '1';
     const protocol = node('protocol').value;
+    const supportsReconnect = reconnectProtocols.has(protocol);
+    const segmentSeconds = rollingProtocols.has(protocol) ? segmentSecondsInput.valueAsNumber || 0 : 0;
+    const profile = node('analysis-profile').value;
     const run = await api('/runs', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ protocol, transport: protocols[protocol]?.nativeRTSP ? node('rtsp-transport').value : undefined, ice_transport_policy: protocol === 'whep' ? node('whep-ice-policy').value : undefined, url, seconds, playback, auto_investigate: autoInvestigate, reconnect_attempts: ['http-flv', 'http-ts', 'rtmp', 'rtsp', 'rtsps', 'whep', 'dash'].includes(protocol) ? node('reconnect-attempts').valueAsNumber : 0, reconnect_delay_ms: ['http-flv', 'http-ts', 'rtmp', 'rtsp', 'rtsps', 'whep', 'dash'].includes(protocol) ? node('reconnect-delay').valueAsNumber : 0, hls_variant: protocol === 'hls' ? node('hls-variant').valueAsNumber : undefined, segment_seconds: ['http-flv', 'http-ts', 'rtmp', 'hls', 'rtsp', 'rtsps', 'whep', 'dash'].includes(protocol) ? node('segment-seconds').valueAsNumber : 0, rolling_segments: ['http-flv', 'http-ts', 'rtmp', 'hls', 'rtsp', 'rtsps', 'whep', 'dash'].includes(protocol) ? node('rolling-segments').valueAsNumber : 0, profile: node('analysis-profile').value, custom_thresholds: node('analysis-profile').value === 'custom' ? { first_frame_warn_ms: node('threshold-first-frame').valueAsNumber, video_gap_warn_ms: node('threshold-video-gap').valueAsNumber, dts_gap_warn_ms: node('threshold-dts-gap').valueAsNumber, gop_warn_ms: node('threshold-gop').valueAsNumber } : undefined, ...captureAccessOptions(protocol) }),
+        body: JSON.stringify({
+            protocol,
+            transport: protocols[protocol]?.nativeRTSP ? node('rtsp-transport').value : undefined,
+            ice_transport_policy: protocol === 'whep' ? node('whep-ice-policy').value : undefined,
+            url, seconds, playback,
+            auto_investigate: autoInvestigate,
+            reconnect_attempts: supportsReconnect ? node('reconnect-attempts').valueAsNumber : 0,
+            reconnect_delay_ms: supportsReconnect ? node('reconnect-delay').valueAsNumber : 0,
+            hls_variant: protocol === 'hls' ? node('hls-variant').valueAsNumber : undefined,
+            segment_seconds: segmentSeconds,
+            rolling_segments: segmentSeconds > 0 ? rollingSegmentsInput.valueAsNumber : 0,
+            profile,
+            custom_thresholds: profile === 'custom' ? {
+                first_frame_warn_ms: node('threshold-first-frame').valueAsNumber,
+                video_gap_warn_ms: node('threshold-video-gap').valueAsNumber,
+                dts_gap_warn_ms: node('threshold-dts-gap').valueAsNumber,
+                gop_warn_ms: node('threshold-gop').valueAsNumber,
+            } : undefined,
+            ...captureAccessOptions(protocol),
+        }),
     });
     stopPlayback(activePlayer);
     startPlayback(run, startedAt, startedAtPerformanceMS, seconds, hlsRecovery, hlsABR, hlsLowLatency);

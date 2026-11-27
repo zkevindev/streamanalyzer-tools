@@ -28,7 +28,7 @@
         .pill.stopped::before,.pill.failed::before{background:var(--danger-dot)}
         .meta-tag{display:inline-block;margin-left:6px;padding:1px 6px;border-radius:var(--radius-xs);font-size:11px;font-weight:500;border:1px solid var(--border);background:var(--surface-inset);color:var(--text-secondary);font-family:var(--font-data);vertical-align:middle}
         .meta-tag.protected{border-color:var(--accent-border);background:var(--accent-light);color:var(--accent-hover)}
-        .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:36px;background:var(--primary);color:#fff;text-decoration:none;padding:6px 14px;border-radius:var(--radius-sm);font-size:13px;font-weight:500;border:1px solid var(--primary);cursor:pointer;transition:background-color var(--dur-fast) var(--ease),border-color var(--dur-fast) var(--ease),color var(--dur-fast) var(--ease)}
+        .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:36px;background:var(--primary);color:var(--primary-ink);text-decoration:none;padding:6px 14px;border-radius:var(--radius-sm);font-size:13px;font-weight:500;border:1px solid var(--primary);cursor:pointer;transition:background-color var(--dur-fast) var(--ease),border-color var(--dur-fast) var(--ease),color var(--dur-fast) var(--ease)}
         .btn:hover{background:var(--primary-hover);border-color:var(--primary-hover)}
         .btn:active{transform:scale(.99)}
         .btn.secondary{background:var(--surface);color:var(--text);border-color:var(--border-strong);box-shadow:var(--shadow)}
@@ -36,12 +36,20 @@
         .actions{display:flex;gap:6px;flex-wrap:wrap}
         .actions button,.actions .btn{min-height:28px;padding:4px 10px;font-size:12px}
         .empty{text-align:center;padding:40px 16px;color:var(--muted);font-size:13px}
-        .history-filters{display:flex;flex-wrap:wrap;align-items:end;gap:12px;margin-bottom:12px}
+        .history-list{padding:0;overflow:hidden}
+        .history-list .table-wrap{border:0;border-radius:0}
+        .history-list th,.history-list td{padding:12px 18px}
+        .history-filters{display:flex;flex-wrap:wrap;align-items:end;gap:12px;padding:1.2rem 1.25rem;background:var(--surface-inset);border-bottom:1px solid var(--border)}
+        .history-filters > div{min-width:min(100%, 9rem)}
+        .history-search-field{position:relative;display:block;color:var(--muted)}
+        .history-search-field svg{width:1.14rem;height:1.14rem;position:absolute;inset-inline-start:.65rem;top:50%;transform:translateY(-50%);pointer-events:none}
+        .history-filters .history-search-field input{padding-inline-start:2.15rem}
         .history-filters label{display:block;margin-bottom:6px;font-size:13px;font-weight:500;color:var(--text-secondary)}
         .history-filters input,.history-filters select{min-height:36px;width:100%;min-width:0;padding:6px 12px;border:1px solid var(--border-strong);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);font:inherit;font-size:14px;transition:border-color var(--dur-fast) var(--ease),box-shadow var(--dur-fast) var(--ease)}
         .history-filters input:focus,.history-filters select:focus{outline:none;border-color:var(--accent);box-shadow:var(--ring)}
         .history-filters .history-search{flex:1 1 224px}
-        .history-status{margin:8px 0 12px;color:var(--muted);font:400 13px/1.4 var(--font-data);font-variant-numeric:tabular-nums;overflow-wrap:anywhere}
+        .history-status{margin:0;padding:.7rem 1.25rem;color:var(--muted);font:400 13px/1.4 var(--font-data);font-variant-numeric:tabular-nums;overflow-wrap:anywhere;border-bottom:1px solid var(--border)}
+        @media(max-width:35rem){.history-filters > div{flex:1 1 8rem;min-width:0}.history-filters .history-search{flex-basis:100%}.history-list th,.history-list td{padding-inline:.85rem}}
         td.history-input{min-width:208px;max-width:420px;white-space:normal;overflow-wrap:anywhere}
         td.history-input code{display:block;margin-top:4px;color:var(--muted);font-family:var(--font-data);font-size:12px}
         .history-sub{display:block;margin-top:4px;color:var(--muted);font-size:12px;font-family:var(--font-data)}
@@ -49,13 +57,23 @@
     </style>
     <script src="/static/workbench-navigation.js" defer></script>
 </head>
-<body class="workbench-tool-page">
+<body class="workbench-tool-page history-page">
   <!-- workbench-header -->
-    <div class="container">
-        <h1 class="workbench-page-title">任务记录</h1>
+    <main id="main" class="container" tabindex="-1">
+        <header class="workbench-heading">
+            <h1 class="workbench-page-title">任务记录</h1>
+            <p class="workbench-page-description">按来源、协议、状态、地址或文件检索任务并查看结果。</p>
+        </header>
 
-        <div class="card">
+        <section class="card history-list" aria-label="任务列表">
             <form id="history-filters" class="history-filters" aria-label="筛选任务记录">
+                <div class="history-search">
+                    <label for="history-query">搜索记录</label>
+                    <span class="history-search-field">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="5.5"/><path d="m15 15 4 4"/></svg>
+                        <input type="search" id="history-query" placeholder="地址、文件名、协议或任务 ID">
+                    </span>
+                </div>
                 <div>
                     <label for="history-source">任务来源</label>
                     <select id="history-source">
@@ -80,10 +98,6 @@
                         <option value="error">失败或部分完成</option>
                     </select>
                 </div>
-                <div class="history-search">
-                    <label for="history-query">搜索记录</label>
-                    <input type="search" id="history-query" placeholder="地址、文件名、协议或任务 ID">
-                </div>
                 <button type="button" class="btn secondary" id="reset-filters" hidden>重置筛选</button>
                 <button type="button" class="btn secondary" id="refresh-history">刷新</button>
             </form>
@@ -97,8 +111,8 @@
                 </table>
             </div>
             <p id="emptyState" class="empty" hidden></p>
-        </div>
-    </div>
+        </section>
+    </main>
 
     <script>
         'use strict';

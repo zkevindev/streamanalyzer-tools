@@ -9,23 +9,28 @@
     *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
     body{background:var(--bg);color:var(--text);min-height:100dvh;font-size:14px;line-height:1.55}
     .container{max-width:1440px;margin:0 auto}
-    .page-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:16px;gap:16px;flex-wrap:wrap}
-    .page-title{display:flex;align-items:center;gap:12px}
-    h1{font-size:22px;font-weight:600;letter-spacing:-.02em;line-height:1.25}
-    .page-desc{color:var(--text-secondary);font-size:13px;margin-top:4px}
     .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px;box-shadow:var(--shadow);margin-bottom:16px}
-    .dropzone{border:1px dashed var(--border-strong);border-radius:var(--radius-sm);background:var(--surface-inset);padding:20px;text-align:center;cursor:pointer;transition:border-color var(--dur-fast) var(--ease),background-color var(--dur-fast) var(--ease);margin-bottom:16px}
-    .dropzone:hover,.dropzone.dragover{border-color:var(--accent);background:var(--accent-light)}
+    .card-title{font-size:1.04rem;font-weight:680;color:var(--text)}
+    .offline-upload > .card-title{margin-bottom:.95rem}
+    .upload-grid{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);align-items:start;gap:1rem}
+    .upload-source{min-width:0}
+    .upload-settings{display:grid;gap:.65rem;padding:.4rem .35rem;min-width:0}
+    .upload-settings .hint{margin:0}
+    .upload-actions{grid-column:1 / -1;display:flex;align-items:center;justify-content:space-between;gap:.65rem;padding-top:.85rem;border-top:1px solid var(--border)}
+    .upload-actions #runHint{min-width:0;overflow-wrap:anywhere}
+    .dropzone{display:grid;justify-items:center;align-content:center;gap:.3rem;min-height:10rem;border:1px dashed var(--accent-border);border-radius:var(--radius-sm);background:var(--accent-light);padding:1.1rem;text-align:center;cursor:pointer;transition:border-color var(--dur-fast) var(--ease),background-color var(--dur-fast) var(--ease)}
+    .dropzone svg{width:1.65rem;height:1.65rem;margin-bottom:.15rem;color:var(--accent)}
+    .dropzone:hover,.dropzone.dragover{border-color:var(--accent);background:var(--surface-hover)}
+    .dropzone:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
     .dropzone-title{font-size:14px;font-weight:500;color:var(--text)}
     .dropzone-sub{font-size:12px;color:var(--muted);margin-top:4px}
-    .dropzone-file{margin-top:8px;font-size:13px;color:var(--accent-hover);font-weight:500;font-family:var(--font-data)}
-    .form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(176px,1fr));gap:12px;align-items:flex-end}
+    .dropzone-file{margin-top:8px;font-size:13px;color:var(--accent-hover);font-weight:500;font-family:var(--font-data);max-width:100%;overflow-wrap:anywhere}
     .form-group{display:flex;flex-direction:column;gap:6px}
     label{font-size:13px;font-weight:500;color:var(--text-secondary)}
     input[type="text"],input[type="number"],select{min-height:36px;padding:6px 12px;border:1px solid var(--border-strong);border-radius:var(--radius-sm);font-size:14px;color:var(--text);background:var(--surface);transition:border-color var(--dur-fast) var(--ease),box-shadow var(--dur-fast) var(--ease);width:100%}
     input:focus,select:focus{outline:none;border-color:var(--accent);box-shadow:var(--ring)}
-    .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:36px;background:var(--accent);color:#fff;text-decoration:none;padding:6px 14px;border-radius:var(--radius-sm);font-size:13px;font-weight:500;border:1px solid var(--accent);cursor:pointer;transition:background-color var(--dur-fast) var(--ease),border-color var(--dur-fast) var(--ease),color var(--dur-fast) var(--ease);white-space:nowrap}
-    .btn:hover{background:var(--accent-hover);border-color:var(--accent-hover)}
+    .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;min-height:36px;background:var(--primary);color:var(--primary-ink);text-decoration:none;padding:6px 14px;border-radius:var(--radius-sm);font-size:13px;font-weight:500;border:1px solid var(--primary);cursor:pointer;transition:background-color var(--dur-fast) var(--ease),border-color var(--dur-fast) var(--ease),color var(--dur-fast) var(--ease);white-space:nowrap}
+    .btn:hover{background:var(--primary-hover);border-color:var(--primary-hover)}
     .btn:active{transform:scale(.99)}
     .btn:disabled{opacity:.48;cursor:not-allowed;transform:none}
     .btn.secondary{background:var(--surface);color:var(--text);border-color:var(--border-strong);box-shadow:var(--shadow)}
@@ -59,11 +64,11 @@
     .pill.warn::before{background:var(--warn-dot)}
     .pill.bframe{border-color:var(--accent-border);background:var(--accent-light);color:var(--accent-hover)}
     .pill.info{border-color:var(--border-strong);background:var(--surface-inset);color:var(--text);font-family:var(--font-data)}
-    .source-tabs{display:inline-flex;background:var(--surface-inset);border:1px solid var(--border);border-radius:var(--radius-sm);padding:4px;gap:4px;margin-bottom:16px}
+    .source-tabs{display:inline-flex;flex-wrap:wrap;background:var(--surface-inset);border:1px solid var(--border);border-radius:var(--radius-sm);padding:4px;gap:4px;margin-bottom:16px}
     .source-tabs button{min-height:28px;padding:4px 12px;font-size:13px;font-weight:500;border:1px solid transparent;border-radius:var(--radius-xs);background:transparent;color:var(--text-secondary);cursor:pointer;transition:background-color var(--dur-fast) var(--ease),color var(--dur-fast) var(--ease),border-color var(--dur-fast) var(--ease)}
     .source-tabs button:hover{color:var(--text)}
-    .source-tabs button.active{background:var(--surface);color:var(--text);border-color:var(--border);box-shadow:var(--shadow)}
-    .local-input-box{border:1px solid var(--border-strong);border-radius:var(--radius-sm);background:var(--surface-inset);padding:16px;margin-bottom:16px}
+    .source-tabs button.active{background:var(--accent-light);color:var(--accent-hover);border-color:var(--accent-border)}
+    .local-input-box{border:1px solid var(--border-strong);border-radius:var(--radius-sm);background:var(--surface-inset);padding:16px}
     .local-input-box input{font-family:var(--font-data)}
     .progress-banner{border:1px solid var(--accent-border);background:var(--accent-light);border-radius:var(--radius-sm);padding:12px 16px;margin-bottom:16px;display:flex;flex-direction:column;gap:8px}
     .progress-banner-head{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;font-size:13px;font-weight:500;color:var(--accent-hover)}
@@ -206,85 +211,86 @@
     .audio-preview{margin-top:6px;height:28px;max-width:240px;display:block}
     .proto-badge{display:inline-block;padding:2px 6px;border-radius:var(--radius-xs);font:500 11px/1.4 var(--font-data);background:var(--surface-inset);border:1px solid var(--border-strong);color:var(--text)}
     @media(max-width:860px){.chart-grid,.ff-grid,.compare-selectors{grid-template-columns:1fr}}
-    @media(max-width:640px){.form-grid{grid-template-columns:1fr}.page-header{flex-direction:column}.kv{grid-template-columns:120px 1fr}}
+    @media(max-width:64rem){.upload-grid{grid-template-columns:minmax(0,1fr)}}
+    @media(max-width:640px){.kv{grid-template-columns:120px minmax(0,1fr)}}
   </style>
   <script src="/static/workbench-navigation.js" defer></script>
 </head>
-<body class="workbench-tool-page">
+<body class="workbench-tool-page offline-page">
   <!-- workbench-header -->
-  <div class="container">
+  <main id="main" class="container" tabindex="-1">
     <!-- diagnostic-tools -->
+    <header class="workbench-heading">
+      <h1 class="workbench-page-title">离线文件解析</h1>
+      <p class="workbench-page-description">从媒体文件或抓包中读取码流结构、媒体时序和编码信息，生成体检结果并下载解析产物。</p>
+    </header>
     <!-- review-modes -->
-    <div class="page-header">
-      <div class="page-title">
-        <div>
-          <h1>离线文件解析</h1>
-          <p class="page-desc">拖入或直读 FLV / MP4 / fMP4 / MPEG-TS / MPEG-PS / WebM / MPEG-DASH (.mpd) / Annex B / PCAP，自动识别封装、提取 ES 裸流并生成媒体体检与时序图表</p>
-        </div>
-      </div>
-    </div>
 
-    <div class="card">
+    <section class="card offline-upload" aria-labelledby="upload-heading">
+      <h2 id="upload-heading" class="card-title">解析媒体文件</h2>
       <div class="source-tabs" role="tablist" aria-label="输入方式">
         <button type="button" id="tabUpload" class="active" role="tab" aria-selected="true" onclick="setInputTab('upload')">上传文件</button>
         <button type="button" id="tabLocal" role="tab" aria-selected="false" onclick="setInputTab('local')">本机路径直读（零拷贝大文件）</button>
       </div>
 
-      <div id="uploadInputPane">
-        <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="选择或拖拽媒体文件">
-          <input id="file" type="file" style="display:none" />
-          <div class="dropzone-title">点击选择文件，或将媒体 / 抓包文件拖拽至此</div>
-          <div class="dropzone-sub">支持 .flv / .mp4 / .m4s / .ts / .m2ts / .mpd / .h264 / .h265 / .pcap / .pcapng / .raw</div>
-          <div id="selectedFileLabel" class="dropzone-file" style="display:none"></div>
-        </div>
-      </div>
+      <form id="offline-upload" class="upload-grid" novalidate>
+        <div class="upload-source">
+          <div id="uploadInputPane">
+            <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="选择或拖拽媒体文件">
+              <input id="file" type="file" style="display:none" />
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V3m-4 4 4-4 4 4M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/></svg>
+              <div class="dropzone-title">点击选择文件，或将媒体 / 抓包文件拖拽至此</div>
+              <div class="dropzone-sub">支持 FLV、MP4、MPEG-TS、MPEG-PS、WebM、DASH、Annex B、PCAP 和 RTMP Raw</div>
+              <div id="selectedFileLabel" class="dropzone-file" style="display:none"></div>
+            </div>
+          </div>
 
-      <div id="localInputPane" class="local-input-box" style="display:none">
-        <div class="form-group">
-          <label for="localPath">本机文件绝对路径（仅限本机访问，不复制原文件）</label>
-          <input id="localPath" type="text" placeholder="/Users/yourname/videos/capture.mp4" autocomplete="off" />
+          <div id="localInputPane" class="local-input-box" style="display:none">
+            <div class="form-group">
+              <label for="localPath">本机文件绝对路径（仅限本机访问，不复制原文件）</label>
+              <input id="localPath" type="text" placeholder="/Users/yourname/videos/capture.mp4" autocomplete="off" />
+            </div>
+            <p class="hint">直读磁盘原文件，适合 GB 级大文件快速解析；删除任务仅清理分析产物，绝对不会删除原始本地文件。</p>
+          </div>
         </div>
-        <p class="hint">直读磁盘原文件，适合 GB 级大文件快速解析；删除任务仅清理分析产物，绝对不会删除原始本地文件。</p>
-      </div>
 
-      <div class="form-grid">
-        <div class="form-group">
-          <label for="mode">解析模式</label>
-          <select id="mode">
-            <option value="auto" selected>自动识别（推荐）</option>
-            <option value="flv">flv（FLV / Enhanced FLV）</option>
-            <option value="mp4">mp4（MP4 / fMP4）</option>
-            <option value="ts">ts（MPEG-TS / M2TS）</option>
-            <option value="ps">ps（MPEG-PS / GB28181 .ps/.mpg）</option>
-            <option value="webm">webm（WebM / MKV，含 AV1/VP8/VP9/Opus）</option>
-            <option value="dash">dash（MPEG-DASH .mpd 清单）</option>
-            <option value="annexb">annexb（H.264 / H.265 裸码流）</option>
-            <option value="pcap">pcap / pcapng（RTMP / RTSP / SIP·GB28181 / RTP / HTTP-FLV / TS 抓包）</option>
-            <option value="raw">raw（RTMP 单方向裸流）</option>
-          </select>
+        <div class="upload-settings">
+          <div class="form-group">
+            <label for="mode">解析模式</label>
+            <select id="mode" aria-describedby="modeHint">
+              <option value="auto" selected>自动识别（推荐）</option>
+              <option value="flv">flv（FLV / Enhanced FLV）</option>
+              <option value="mp4">mp4（MP4 / fMP4）</option>
+              <option value="ts">ts（MPEG-TS / M2TS）</option>
+              <option value="ps">ps（MPEG-PS / GB28181 .ps/.mpg）</option>
+              <option value="webm">webm（WebM / MKV，含 AV1/VP8/VP9/Opus）</option>
+              <option value="dash">dash（MPEG-DASH .mpd 清单）</option>
+              <option value="annexb">annexb（H.264 / H.265 裸码流）</option>
+              <option value="pcap">pcap / pcapng（RTMP / RTSP / SIP·GB28181 / RTP / HTTP-FLV / TS 抓包）</option>
+              <option value="raw">raw（RTMP 单方向裸流）</option>
+            </select>
+          </div>
+          <div class="form-group" id="serverPortWrap" style="display:none">
+            <label for="serverPort">RTMP 端口（pcap）</label>
+            <input id="serverPort" type="number" min="1" max="65535" value="1935" />
+          </div>
+          <div class="form-group" id="skipBytesWrap" style="display:none">
+            <label for="skipBytes">握手跳过字节（skip_bytes）</label>
+            <input id="skipBytes" type="number" min="0" value="3073" />
+          </div>
+          <p class="hint" id="modeHint"></p>
         </div>
-        <div class="form-group" id="serverPortWrap" style="display:none">
-          <label for="serverPort">RTMP 端口（pcap）</label>
-          <input id="serverPort" type="number" min="1" max="65535" value="1935" />
-        </div>
-        <div class="form-group" id="skipBytesWrap" style="display:none">
-          <label for="skipBytes">握手跳过字节（skip_bytes）</label>
-          <input id="skipBytes" type="number" min="0" value="3073" />
-        </div>
-        <button id="btn" class="btn" onclick="submitTask()">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" width="16" height="16">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
-          </svg>
-          开始解析
-        </button>
-        <div id="runHint"></div>
-      </div>
-      <p class="hint tip" id="modeHint"></p>
-    </div>
 
-    <div class="card">
-      <div class="section-head" style="margin-bottom:.25rem">
-        <div class="section-title">解析任务列表</div>
+        <div class="upload-actions">
+          <p id="runHint" role="status"></p>
+          <button id="btn" class="btn" type="submit">开始解析</button>
+        </div>
+      </form>
+    </section>
+
+    <section class="card" aria-labelledby="offline-tasks-heading">
+      <div class="section-head">
+        <h2 class="card-title" id="offline-tasks-heading">解析任务</h2>
         <div class="actions">
           <button class="btn secondary sm" onclick="toggleComparePanel()">两文件 A/B 对比</button>
           <button class="btn secondary sm" onclick="loadTasks()">刷新</button>
@@ -294,14 +300,14 @@
         <table>
           <thead>
             <tr>
-              <th>文件 / 任务</th><th>模式</th><th>状态</th><th>创建时间</th><th>错误</th><th>操作</th>
+              <th scope="col">文件 / 任务</th><th scope="col">模式</th><th scope="col">状态</th><th scope="col">创建时间</th><th scope="col">错误</th><th scope="col">操作</th>
             </tr>
           </thead>
           <tbody id="tbody"></tbody>
         </table>
       </div>
       <div id="emptyState" class="empty-state" style="display:none">暂无解析任务，上传任意媒体或抓包文件开始分析</div>
-    </div>
+    </section>
 
     <!-- 两文件 A/B 对比工作区 -->
     <div id="comparePanel" class="compare-panel" style="display:none">
@@ -650,7 +656,7 @@
         </div>
       </div>
     </div>
-  </div>
+  </main>
 
   <!-- 逐帧深钻 Inspector 抽屉 -->
   <div id="inspectorDrawer" class="drawer-backdrop" role="dialog" aria-modal="true" aria-labelledby="inspectorTitle" onclick="if(event.target===this) closeInspector()">
@@ -3430,6 +3436,10 @@
       }
     });
 
+    document.getElementById('offline-upload').addEventListener('submit', event => {
+      event.preventDefault();
+      void submitTask();
+    });
     initDropzone();
     const modeEl = document.getElementById('mode');
     if(modeEl) modeEl.addEventListener('change', updateModeHint);

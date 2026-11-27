@@ -17,14 +17,16 @@
     <script src="/static/workbench-navigation.js" defer></script>
 </head>
 <body>
-<a class="skip" href="#main">跳转到主要内容</a>
 <!-- workbench-header -->
-<main id="main">
+<main id="main" tabindex="-1">
     <!-- diagnostic-tools -->
     <div id="capture-workbench">
     <div class="page-heading">
-        <h1 id="diagnostics-title">流媒体排障</h1>
-        <p id="capture-duration-hint" class="muted">采样 1–300 秒 · 单次原始流上限 128 MiB</p>
+        <div>
+            <h1 id="diagnostics-title">流媒体排障</h1>
+            <p id="capture-duration-hint" class="muted">采样 1–300 秒 · 单次原始流上限 128 MiB</p>
+            <p id="review-description" class="muted" hidden>导入证据包，校验文件并重新生成排障报告。</p>
+        </div>
         <button id="media-tools-settings" type="button" class="secondary">FFmpeg 工具设置</button>
     </div>
     <!-- review-modes -->
@@ -59,7 +61,7 @@
                         <p id="onvif-prefill-status" class="field-hint" role="status"></p>
                     </div>
                 </div>
-                <div class="sample-options">
+                <div class="capture-options">
                     <div id="rtsp-transport-options" hidden>
                         <label for="rtsp-transport">RTSP 媒体传输</label>
                         <select id="rtsp-transport" aria-describedby="url-hint">
@@ -82,21 +84,6 @@
                         <label for="seconds">时长（秒）</label>
                         <input id="seconds" type="number" min="1" max="300" value="60" required>
                     </div>
-                    <div id="reconnect-options" hidden>
-                        <label for="reconnect-attempts">异常重连次数</label>
-                        <input id="reconnect-attempts" type="number" min="0" max="3" value="0">
-                        <label for="reconnect-delay">间隔（ms）</label>
-                        <input id="reconnect-delay" type="number" min="0" max="5000" value="500">
-                    </div>
-                    <div id="rolling-options" hidden>
-                        <label for="segment-seconds">分段时长（0 不滚动）</label>
-                        <input id="segment-seconds" type="number" min="0" max="300" value="0">
-                        <label for="rolling-segments">保留最近段数</label>
-                        <input id="rolling-segments" type="number" min="1" max="12" value="3">
-                    </div>
-                    <button type="submit">采样并保存原始流</button>
-                </div>
-                <div class="sample-options">
                     <div><label for="analysis-profile">诊断场景</label><select id="analysis-profile"><option value="standard">普通直播（默认）</option><option value="low-latency">低延迟直播</option><option value="camera">摄像头 / 低帧率</option><option value="custom">自定义阈值</option></select></div>
                 </div>
                 <div id="custom-thresholds" class="sample-options" hidden>
@@ -105,13 +92,29 @@
                     <div><label for="threshold-dts-gap">DTS 间隔告警 (ms)</label><input id="threshold-dts-gap" type="number" min="100" max="60000" value="2000"></div>
                     <div><label for="threshold-gop">GOP 告警 (ms)</label><input id="threshold-gop" type="number" min="100" max="60000" value="10000"></div>
                 </div>
-                <label class="playback-option"><input id="analyze-playback" type="checkbox" aria-describedby="playback-capability-note"> 同时分析播放器体验</label>
-                <label class="playback-option automatic-option"><input id="auto-investigate" type="checkbox" checked disabled aria-describedby="auto-investigate-hint"> 采样后自动补查并汇总</label>
-                <p id="auto-investigate-hint" class="field-hint muted">启用播放器分析后，自动补查最多 3 个同期关键异常，再按模型设置生成一次整体汇总；也可关闭后手动补查。</p>
-                <p id="playback-capability-note" class="field-hint muted" hidden>RTSP 预览复用同次采样的 RTP，在本机转封装 H.264 / H.265 / AAC-LC / Opus 后播放，H.265 需要浏览器和系统解码支持。无 AAC/Opus 原码音轨时，可经本机 FFmpeg 将 G.711 PCMA/PCMU 转为 AAC；其他编码仍可采样和保存原始流，不支持的音轨会明确标记并静音。Opus 按浏览器能力使用 MP4 或 WebM 音频缓冲，保留原始编码与时序。</p>
+                <div class="capture-playback">
+                    <label class="playback-option"><input id="analyze-playback" type="checkbox" aria-describedby="playback-capability-note"> 同时分析播放器体验</label>
+                    <label class="playback-option automatic-option"><input id="auto-investigate" type="checkbox" checked disabled aria-describedby="auto-investigate-hint"> 采样后自动补查并汇总</label>
+                    <p id="auto-investigate-hint" class="field-hint muted">启用播放器分析后，自动补查最多 3 个同期关键异常，再按模型设置生成一次整体汇总；也可关闭后手动补查。</p>
+                    <p id="playback-capability-note" class="field-hint muted" hidden>RTSP 预览复用同次采样的 RTP，在本机转封装 H.264 / H.265 / AAC-LC / Opus 后播放，H.265 需要浏览器和系统解码支持。无 AAC/Opus 原码音轨时，可经本机 FFmpeg 将 G.711 PCMA/PCMU 转为 AAC；其他编码仍可采样和保存原始流，不支持的音轨会明确标记并静音。Opus 按浏览器能力使用 MP4 或 WebM 音频缓冲，保留原始编码与时序。</p>
+                </div>
+                <details id="session-options" class="report-details">
+                    <summary>重连与滚动分段</summary>
+                    <div class="session-options-fields">
+                        <div id="reconnect-options" class="session-fields">
+                            <div><label for="reconnect-attempts">异常重连次数</label><input id="reconnect-attempts" type="number" min="0" max="3" value="0"></div>
+                            <div><label for="reconnect-delay">重连间隔（ms）</label><input id="reconnect-delay" type="number" min="0" max="5000" value="500"></div>
+                        </div>
+                        <div id="rolling-options" class="session-fields">
+                            <div><label for="segment-seconds">分段时长（0 不滚动）</label><input id="segment-seconds" type="number" min="0" max="300" value="0"></div>
+                            <div><label for="rolling-segments">保留最近段数</label><input id="rolling-segments" type="number" min="1" max="12" value="3" disabled></div>
+                        </div>
+                    </div>
+                    <p class="field-hint muted">启用滚动分段前，关闭自动重连和播放器观测。</p>
+                </details>
                 <details id="http-access-options" class="report-details">
                     <summary>访问条件（请求头、代理与 CA）</summary>
-                    <p class="field-hint muted">请求头与代理由 HTTP-FLV、HLS、HTTP MPEG-TS 使用；附加 CA 还可用于 RTMPS/RTSPS。HLS 实际播放请求使用相同配置。凭据不会写入任务记录，报告中的敏感头字段仍会脱敏。</p>
+                    <p class="field-hint muted">请求头与代理由 HTTP-FLV、HLS、HTTP MPEG-TS、WHEP 和 MPEG-DASH 使用；附加 CA 还可用于 RTMPS/RTSPS。HLS 实际播放请求使用相同配置。凭据不会写入任务记录，报告中的敏感头字段仍会脱敏。</p>
                     <label for="http-headers">自定义请求头（每行一个，格式为 <code>Name: value</code>，最多 16 个）</label>
                     <textarea id="http-headers" rows="4" autocomplete="off" spellcheck="false" placeholder="Authorization: Bearer ...&#10;Cookie: session=...&#10;Referer: https://example.com/player"></textarea>
                     <label for="http-proxy-url">HTTP / HTTPS 代理地址（可选）</label>
@@ -119,6 +122,7 @@
                     <label for="http-ca-certificate">附加 PEM CA 证书（可选，与系统证书共同校验）</label>
                     <textarea id="http-ca-certificate" rows="4" autocomplete="off" spellcheck="false" placeholder="-----BEGIN CERTIFICATE-----"></textarea>
                 </details>
+                <div class="capture-submit"><button type="submit">采样并保存原始流</button></div>
             </form>
             <details id="batch-diagnostics" class="report-details panel-body">
                 <summary>多地址批量诊断与自动对比（2–4 路）</summary>
@@ -143,10 +147,15 @@
         </section>
         <section id="evidence-import-panel" class="panel" aria-labelledby="import-heading" hidden>
             <div class="panel-heading"><h2 id="import-heading">导入证据包</h2></div>
-            <form class="panel-body" id="import">
-                <label for="archive">Stream Analyzer 证据包（ZIP）</label>
-                <input id="archive" type="file" accept=".zip,application/zip" required>
-                <button type="submit" class="secondary">导入并复盘</button>
+            <form class="panel-body evidence-upload" id="import">
+                <div>
+                    <label class="evidence-upload-label" for="archive">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V3m-4 4 4-4 4 4M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/></svg>
+                        Stream Analyzer 证据包（ZIP）
+                    </label>
+                    <input id="archive" type="file" accept=".zip,application/zip" required>
+                </div>
+                <button type="submit">导入并复盘</button>
             </form>
         </section>
     </div>
@@ -249,7 +258,7 @@
                             <p id="request-timing-note" class="timing-note muted">单位为毫秒。采样偏移从采样开始计时，TTFB 从当次请求开始计时。— 表示未测得。</p>
                             <div id="request-table"></div>
                             <p id="request-timing-truncated" class="timing-note muted" hidden></p>
-                            <section id="http-headers" aria-labelledby="http-headers-title">
+                            <section id="http-headers-report" aria-labelledby="http-headers-title">
                                 <h4 id="http-headers-title">HTTP 请求与响应头</h4>
                                 <p class="timing-note muted">逐次请求展示客户端记录的头字段。敏感字段已脱敏，URL 查询参数已移除；字段大小写和顺序可能经过协议库归一化。</p>
                                 <div id="http-header-details"></div>
@@ -409,22 +418,29 @@
     </div>
     <section id="onvif-discovery" aria-labelledby="onvif-title" hidden>
       <div class="page-heading">
-        <h1 id="onvif-title" tabindex="-1">ONVIF 设备探测</h1>
+        <div>
+          <h1 id="onvif-title" tabindex="-1">ONVIF 设备探测</h1>
+          <p class="muted">搜索局域网摄像头与 NVR，读取媒体 Profile 并将 RTSP 地址带入采样。</p>
+        </div>
       </div>
-      <div class="panel onvif-discovery">
-        <div class="panel-heading"><h2>ONVIF 摄像头与 NVR</h2></div>
-        <p id="onvif-status" role="status">选择网卡后搜索设备，或使用手动服务地址。</p>
-        <div class="onvif-content">
-          <h3>搜索局域网设备</h3>
-          <form id="onvif-search" class="onvif-grid">
-            <div><label for="onvif-interface">本机网卡 / IPv4</label><select id="onvif-interface" required autofocus><option value="">正在读取网卡…</option></select></div>
-            <div><label for="onvif-seconds">搜索时长</label><select id="onvif-seconds"><option value="3">3 秒</option><option value="5">5 秒</option><option value="10">10 秒</option></select></div>
-            <div class="onvif-controls"><button id="onvif-search-button" type="submit" disabled>搜索设备</button><button id="onvif-stop" type="button" class="secondary" disabled>停止搜索</button></div>
-          </form>
-          <p class="onvif-note muted">通过 WS-Discovery 搜索所选网卡子网内的 IPv4 设备。跨网段或搜不到设备时，可手动填写服务地址。</p>
-          <div id="onvif-devices" class="scroll onvif-devices" role="region" tabindex="0" aria-label="ONVIF 发现设备" hidden></div>
-          <form id="onvif-query" class="onvif-step">
-            <h3>连接设备</h3>
+      <p id="onvif-status" role="status">选择网卡后搜索设备，或使用手动服务地址。</p>
+      <div class="onvif-workspace">
+        <section class="panel" aria-labelledby="onvif-search-title">
+          <div class="panel-heading"><h2 id="onvif-search-title">搜索局域网设备</h2></div>
+          <div class="panel-body">
+            <form id="onvif-search" class="onvif-grid">
+              <div><label for="onvif-interface">本机网卡 / IPv4</label><select id="onvif-interface" required><option value="">正在读取网卡…</option></select></div>
+              <div><label for="onvif-seconds">搜索时长</label><select id="onvif-seconds"><option value="3">3 秒</option><option value="5">5 秒</option><option value="10">10 秒</option></select></div>
+              <div class="onvif-controls"><button id="onvif-search-button" type="submit" disabled>搜索设备</button><button id="onvif-stop" type="button" class="secondary" disabled>停止搜索</button></div>
+            </form>
+            <p class="onvif-note muted">通过 WS-Discovery 搜索所选网卡子网内的 IPv4 设备。跨网段或搜不到设备时，可手动填写服务地址。</p>
+            <div id="onvif-devices" class="scroll onvif-devices" role="region" tabindex="0" aria-label="ONVIF 发现设备" hidden></div>
+          </div>
+        </section>
+        <section class="panel" aria-labelledby="onvif-connect-title">
+          <div class="panel-heading"><h2 id="onvif-connect-title">连接设备</h2></div>
+          <div class="panel-body">
+          <form id="onvif-query">
             <p id="onvif-selected" class="muted">尚未选择设备</p>
             <label class="onvif-inline"><input id="onvif-manual" type="checkbox"> 手动填写 ONVIF 服务地址</label>
             <div id="onvif-manual-fields" hidden>
@@ -449,7 +465,8 @@
             <button type="button" id="onvif-prefill">使用此流地址</button>
             <p class="onvif-note muted">将播放地址和传输方式填入采样表单，供你核对。</p>
           </section>
-        </div>
+          </div>
+        </section>
       </div>
     </section>
 </main>

@@ -10,8 +10,7 @@
   <script src="/static/simulator-onvif.js" defer></script>
   <script src="/static/workbench-navigation.js" defer></script>
 </head>
-<body>
-  <a class="skip" href="#main">跳转到主要内容</a>
+<body class="simulator-page simulator-onvif-page">
   <!-- workbench-header -->
   <main id="main" tabindex="-1">
     <!-- simulator-protocols -->
@@ -85,7 +84,7 @@
             <div><dt>SOAP 请求</dt><dd id="soap-requests">0</dd></div>
             <div><dt>RTSP PLAY 请求</dt><dd id="rtsp-plays">0</dd></div>
           </dl>
-          <dl id="endpoints" class="onvif-addresses" hidden>
+          <dl id="endpoints" class="onvif-addresses endpoint-grid" hidden>
             <div><dt>设备服务</dt><dd id="device-url"></dd></div>
             <div id="reboot-status" hidden><dt>设备重启</dt><dd id="reboot-detail"></dd></div>
             <div><dt>媒体服务</dt><dd id="media-url"></dd></div>

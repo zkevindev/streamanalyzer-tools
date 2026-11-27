@@ -13,8 +13,7 @@
   <script src="/static/simulator-scenarios.js" defer></script>
   <script src="/static/workbench-navigation.js" defer></script>
 </head>
-<body>
-  <a class="skip" href="#main">跳转到主要内容</a>
+<body class="simulator-page simulator-scenarios-page">
   <!-- workbench-header -->
   <main id="main" tabindex="-1">
     <!-- simulator-protocols -->
@@ -59,15 +58,15 @@
                   <option value="hls-part_delay">LL-HLS Part 延迟后恢复</option>
                 </select></div>
               </div>
-              <label for="preset">已保存预设</label>
-              <select id="preset"><option value="">选择预设</option></select>
+              <div class="preset-fields">
+                <div><label for="preset">已保存预设</label><select id="preset"><option value="">选择预设</option></select></div>
+                <div><label for="import-preset">导入预设 JSON</label><input id="import-preset" type="file" accept=".json,application/json"></div>
+              </div>
               <div class="sim-controls">
                 <button id="run" type="submit">运行场景</button>
                 <button id="save" type="button" class="secondary">保存预设</button>
                 <button id="export-preset" type="button" class="secondary">导出预设</button>
               </div>
-              <label for="import-preset">导入预设 JSON</label>
-              <input id="import-preset" type="file" accept=".json,application/json">
             </fieldset>
           </form>
           <p class="muted field-hint">播放场景运行时请保持页面在前台，可观察实际播放器恢复。</p>
