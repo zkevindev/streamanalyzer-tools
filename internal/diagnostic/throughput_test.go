@@ -2,6 +2,7 @@ package diagnostic
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -42,4 +43,48 @@ func TestThroughputUsesArrivalBytesAndPartialSecondDuration(t *testing.T) {
 	if _, err := validateStoredThroughput(dir, Report{Throughput: &tampered}, report); err == nil {
 		t.Fatal("accepted throughput inconsistent with the timeline")
 	}
+}
+
+func TestValidateStoredThroughputAcceptsLegacyHLSBoundary(t *testing.T) {
+	dir := t.TempDir()
+	record, err := json.Marshal(hlsRecord{Kind: hlsSegment, Result: "ok", Bytes: 3200, ArrivalMS: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, timelineName), append(record, '\n'), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	replayed := Report{Manifest: Manifest{Protocol: ProtocolHLS, Observation: Observation{ElapsedMS: 1000}}}
+	stored := Report{Throughput: &ThroughputReport{
+		Version: "throughput/1",
+		Samples: []ThroughputSample{{
+			DurationMS: 1000, NetworkBytes: 3200, MediaBytes: 3200, VideoBytes: 3200, NetworkKbps: 25.6,
+		}},
+		AverageNetworkKbps: 25.6, AverageMediaKbps: 25.6, AverageVideoKbps: 25.6,
+		MinimumNetworkKbps: 25.6, MaximumNetworkKbps: 25.6,
+		Boundary: legacyThroughputBoundary,
+	}}
+	validated, err := validateStoredThroughput(dir, stored, replayed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if validated.Boundary != legacyThroughputBoundary {
+		t.Fatalf("legacy wording changed to %q", validated.Boundary)
+	}
+
+	t.Run("tampered sample", func(t *testing.T) {
+		tampered := *stored.Throughput
+		tampered.Samples = append([]ThroughputSample(nil), tampered.Samples...)
+		tampered.Samples[0].NetworkBytes++
+		if _, err := validateStoredThroughput(dir, Report{Throughput: &tampered}, replayed); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("tampered legacy throughput should fail validation, got %v", err)
+		}
+	})
+	t.Run("unknown wording", func(t *testing.T) {
+		tampered := *stored.Throughput
+		tampered.Boundary += "另有业务开销。"
+		if _, err := validateStoredThroughput(dir, Report{Throughput: &tampered}, replayed); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("unexpected throughput wording should fail validation, got %v", err)
+		}
+	})
 }
