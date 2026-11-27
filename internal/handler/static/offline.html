@@ -10,14 +10,7 @@
     *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
     body{background:var(--bg);color:var(--text);min-height:100dvh;font-size:14.5px;line-height:1.55}
     .container{max-width:80rem;margin:0 auto}
-    .page-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:1.25rem;gap:1rem;flex-wrap:wrap}
-    .page-title{display:flex;align-items:center;gap:.8rem}
-    .page-icon{width:38px;height:38px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-sm);display:flex;align-items:center;justify-content:center;color:var(--text);box-shadow:var(--shadow);flex:none}
-    .page-icon svg{width:19px;height:19px}
-    h1{font-size:clamp(1.35rem,2.2vw,1.65rem);font-weight:720;letter-spacing:-.025em}
-    .page-desc{color:var(--muted);font-size:.85rem;margin-top:.2rem}
     .card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1.25rem;box-shadow:var(--shadow);margin-bottom:1.15rem}
-    .form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:.85rem;align-items:flex-end}
     .form-group{display:flex;flex-direction:column;gap:.35rem}
     label{font-size:.82rem;font-weight:560;color:var(--text)}
     input[type="text"],input[type="number"],select{min-height:2.45rem;padding:.45rem .72rem;border:1px solid var(--border-strong);border-radius:var(--radius-sm);font-size:.875rem;color:var(--text);background:var(--surface);transition:border-color .15s ease,box-shadow .15s ease;width:100%}
@@ -28,9 +21,8 @@
     .btn:active{transform:scale(.99)}
     .btn:disabled{opacity:.5;cursor:not-allowed;transform:none}
     .btn.secondary{background:var(--surface);color:var(--text);border-color:var(--border-strong)}
-    .btn.secondary:hover{background:var(--surface-inset);border-color:#a1a1aa}
+    .btn.secondary:hover{background:var(--surface-hover);border-color:var(--muted)}
     .hint{font-size:.78rem;color:var(--muted);margin-top:.25rem}
-    .hint.tip{background:var(--bg);padding:.62rem .85rem;border-radius:var(--radius-sm);border:1px solid var(--border);border-left:3px solid var(--accent);margin-top:.85rem}
     #runHint{min-height:1.5rem;font-size:.82rem;color:var(--muted)}
     .table-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:var(--radius-sm);margin-top:1rem}
     table{width:100%;border-collapse:collapse;font-size:.82rem;font-variant-numeric:tabular-nums}
@@ -64,7 +56,7 @@
     .chart-box{border:1px solid var(--border);border-radius:var(--radius-sm);padding:.6rem;background:var(--surface)}
     .chart-title{font-size:.82rem;color:var(--muted);margin:.2rem .5rem .5rem}
     .chart{height:260px}
-    .meta-box{margin-top:.5rem;border:1px solid var(--border);border-radius:var(--radius-sm);background:#18181b;color:#e4e4e7;padding:.85rem;font-family:var(--font-data);max-height:260px;overflow:auto;font-size:.76rem;white-space:pre-wrap;word-break:break-all}
+    .meta-box{margin-top:.5rem;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--media-bg);color:var(--media-text);padding:.85rem;font-family:var(--font-data);max-height:260px;overflow:auto;font-size:.76rem;white-space:pre-wrap;word-break:break-all}
     .kv{display:grid;grid-template-columns:160px 1fr;gap:.45rem;font-size:.82rem}
     .kv>div{padding:.5rem .75rem;border:1px solid var(--border);border-radius:var(--radius-xs)}
     .kv .k{background:var(--bg);color:var(--muted);font-weight:550}
@@ -78,73 +70,82 @@
     .media-filter button.active svg{opacity:1}
     .media-filter button[data-filter="video"].active{color:var(--accent)}
     .media-filter button[data-filter="audio"].active{color:var(--success)}
-    @media(max-width:640px){.form-grid{grid-template-columns:1fr}.page-header{flex-direction:column}.chart-grid{grid-template-columns:1fr}}
+    .card-title{margin:0 0 1rem;font-size:1.04rem;font-weight:680}
+    .upload-grid{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(0,1fr);gap:1rem}
+    .upload-file{justify-content:center;align-items:center;min-width:0;min-height:10rem;padding:1.1rem;border:1px dashed var(--accent-border);border-radius:var(--radius-sm);background:var(--accent-light);text-align:center}
+    .upload-file input{width:100%;max-width:19rem;margin-top:.35rem;background:var(--surface);overflow:hidden;text-overflow:ellipsis}
+    .upload-file input::file-selector-button{margin-right:.55rem;padding:.3rem .55rem;border:1px solid var(--border-strong);border-radius:var(--radius-xs);background:var(--surface-inset);color:var(--text);font:inherit;cursor:pointer}
+    .upload-label{display:grid;justify-items:center;gap:.5rem}
+    .upload-label svg{width:1.65rem;height:1.65rem;color:var(--accent)}
+    .upload-settings{display:grid;align-content:start;gap:.65rem;padding:.4rem .35rem}
+    .upload-actions{grid-column:1 / -1;display:flex;align-items:center;justify-content:space-between;gap:.65rem;padding-top:.85rem;border-top:1px solid var(--border)}
+    .upload-actions p{min-width:0;overflow-wrap:anywhere}
+    .offline-tasks .table-wrap{margin-top:0}
+    @media(max-width:64rem){.upload-grid{grid-template-columns:minmax(0,1fr)}}
   </style>
     <script src="/static/workbench-navigation.js" defer></script>
 </head>
-<body class="workbench-tool-page">
+<body class="workbench-tool-page offline-page">
   <!-- workbench-header -->
-  <div class="container">
+  <main id="main" class="container" tabindex="-1">
     <!-- diagnostic-tools -->
+    <header class="workbench-heading">
+      <h1 class="workbench-page-title">离线文件解析</h1>
+      <p class="workbench-page-description">从本地文件读取码流结构、媒体时序与编码信息，下载解析产物。</p>
+    </header>
     <!-- review-modes -->
-    <div class="page-header">
-      <div class="page-title">
-        <div class="page-icon">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M20.25 6.375c0 2.278-3.694 4.125-8.25 4.125S3.75 8.653 3.75 6.375m16.5 0c0-2.278-3.694-4.125-8.25-4.125S3.75 4.097 3.75 6.375m16.5 0v11.25c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125V6.375m16.5 0v3.75m-16.5-3.75v3.75m16.5 0v3.75C20.25 16.153 16.556 18 12 18s-8.25-1.847-8.25-4.125v-3.75m16.5 0c0 2.278-3.694 4.125-8.25 4.125s-8.25-1.847-8.25-4.125" />
-          </svg>
-        </div>
-        <div>
-          <h1>离线文件解析</h1>
-          <p class="page-desc">上传 raw / pcap / flv / ts / mp4 等文件，解析并生成分析产物；任务详情中仅 pcap 模式显示 RTMP 端口，codec 列为视频/音频编码（如 h264 / aac）。</p>
-        </div>
-      </div>
-    </div>
 
-    <div class="card">
-      <div class="form-grid">
-        <div class="form-group">
-          <label>模式</label>
-          <select id="mode">
-            <option value="pcap">pcap/pcapng</option>
-            <option value="raw">raw（单方向，含握手）</option>
-            <option value="ts">ts（MPEG-TS）</option>
-            <option value="flv">flv（文件）</option>
-            <option value="mp4">mp4（文件）</option>
-          </select>
+    <section class="card offline-upload" aria-labelledby="upload-heading">
+      <h2 id="upload-heading" class="card-title">解析媒体文件</h2>
+      <form id="offline-upload" class="upload-grid">
+        <div class="form-group upload-file">
+          <label for="file" class="upload-label">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.7" stroke="currentColor" aria-hidden="true">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M12 15V3m-4 4 4-4 4 4M4 15v4a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-4"/>
+            </svg>
+            选择文件
+          </label>
+          <p class="hint" id="upload-formats">支持 RAW、PCAP / PCAPNG、FLV、MPEG-TS 和 MP4。</p>
+          <input id="file" type="file" aria-describedby="upload-formats" />
         </div>
-        <div class="form-group">
-          <label>serverPort（pcap）</label>
-          <input id="serverPort" type="number" value="1935" />
+        <div class="upload-settings">
+          <div class="form-group">
+            <label for="mode">解析模式</label>
+            <select id="mode" aria-describedby="modeHint">
+              <option value="pcap">pcap / pcapng</option>
+              <option value="raw">raw（单方向，含握手）</option>
+              <option value="ts">ts（MPEG-TS）</option>
+              <option value="flv">flv（文件）</option>
+              <option value="mp4">mp4（文件）</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="serverPort">RTMP 服务端口（PCAP）</label>
+            <input id="serverPort" type="number" value="1935" />
+          </div>
+          <p class="hint" id="modeHint">请选择文件对应的解析模式。</p>
         </div>
-        <div class="form-group">
-          <label>文件</label>
-          <input id="file" type="file" />
+        <div class="upload-actions">
+          <p id="runHint" role="status"></p>
+          <button id="btn" class="btn" type="submit">开始解析</button>
         </div>
-        <button id="btn" class="btn" onclick="upload()">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" width="16" height="16">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 3m0 0 4.5 4.5M12 3v13.5" />
-          </svg>
-          开始解析
-        </button>
-        <div id="runHint"></div>
-      </div>
-      <p class="hint tip" id="modeHint">提示：支持 raw / pcap / flv / ts / mp4 等离线模式，请按文件类型选择对应模式。</p>
-    </div>
+      </form>
+    </section>
 
-    <div class="card">
+    <section class="card offline-tasks" aria-labelledby="offline-tasks-heading">
+      <h2 class="card-title" id="offline-tasks-heading">解析任务</h2>
       <div class="table-wrap">
         <table>
           <thead>
             <tr>
-              <th>ID</th><th>mode</th><th>status</th><th>created</th><th>error</th><th>操作</th>
+              <th scope="col">任务 ID</th><th scope="col">模式</th><th scope="col">状态</th><th scope="col">创建时间</th><th scope="col">错误</th><th scope="col">操作</th>
             </tr>
           </thead>
           <tbody id="tbody"></tbody>
         </table>
       </div>
       <div id="emptyState" class="empty-state" style="display:none">暂无解析任务</div>
-    </div>
+    </section>
 
     <div id="detail" class="detail">
       <div class="card">
@@ -292,7 +293,7 @@
         </div>
       </div>
     </div>
-  </div>
+  </main>
 
   <script src="/static/echarts_helpers.js"></script>
   <script>
@@ -345,6 +346,11 @@
         hintEl.textContent = '提示：支持 raw / pcap / flv / ts / mp4 等离线模式，请按文件类型选择对应模式。';
       }
     }
+    document.getElementById('offline-upload').addEventListener('submit', event => {
+      event.preventDefault();
+      upload();
+    });
+
     async function upload(){
       const f = document.getElementById('file').files[0];
       if(!f){ alert('请选择文件'); return; }

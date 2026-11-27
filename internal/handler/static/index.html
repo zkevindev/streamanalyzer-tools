@@ -11,83 +11,62 @@
 <body class="home">
   <!-- workbench-header -->
 
-  <main class="home-width home-main">
+  <main id="main" class="home-main" tabindex="-1">
     <section class="home-hero" aria-labelledby="home-title">
       <div class="home-intro">
-        <div class="home-kicker">
-          <span class="home-kicker-dot" aria-hidden="true"></span>
-          音视频流排障与协议联调工作台
-        </div>
         <h1 id="home-title">流媒体排障与协议联调</h1>
-        <p>从线上实时采样到本地证据包复盘，一站式查看码流结构、请求时序、播放器体验与协议模拟回归。</p>
-        <ul class="home-protocols" aria-label="支持协议">
-          <li>HTTP-FLV</li>
-          <li>RTMP / RTMPS</li>
-          <li>RTSP / RTSPS</li>
-          <li>HLS</li>
-          <li>MPEG-TS</li>
-          <li>GB28181</li>
-          <li>ONVIF</li>
-          <li>SIP</li>
-          <li>WHEP</li>
-        </ul>
+        <p>面向直播、点播与安防视频的流媒体诊断工具。<br>查看码流结构、请求时序和播放器体验。</p>
+        <a class="home-primary" href="/diagnostics">排障工作台<svg class="home-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h15m-6-6 6 6-6 6"/></svg></a>
       </div>
-
-      <nav class="home-workflows" aria-label="主要工具">
-        <a class="home-workflow home-workflow-primary" href="/diagnostics">
-          <div class="home-card-top">
-            <span class="home-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
-            </span>
-            <span class="home-arrow" aria-hidden="true">→</span>
-          </div>
-          <span class="home-tool-copy">
-            <strong>排障工作台</strong>
-            <span>采集真实音视频流、探测 ONVIF 设备、执行 HLS 交付与 A/B 对比并生成离线证据包</span>
-          </span>
-        </a>
-        <a class="home-workflow" href="/simulators">
-          <div class="home-card-top">
-            <span class="home-icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
-            </span>
-            <span class="home-arrow" aria-hidden="true">→</span>
-          </div>
-          <span class="home-tool-copy">
-            <strong>协议模拟器</strong>
-            <span>模拟 GB28181、ONVIF、SIP、HLS、RTMP、MPEG-TS 与 WHEP 故障源，执行自动化场景回归</span>
-          </span>
-        </a>
-      </nav>
+      <div class="home-signal" aria-hidden="true">
+        <svg viewBox="0 0 640 244" preserveAspectRatio="xMidYMid slice" fill="none" stroke-linecap="round" stroke-linejoin="round">
+          <path class="signal-grid" d="M24 0v244M80 0v244M136 0v244M192 0v244M248 0v244M304 0v244M360 0v244M416 0v244M472 0v244M528 0v244M584 0v244M0 44h640M0 96h640M0 148h640M0 200h640"/>
+          <path class="signal-video" d="M0 98.0 4 101.4 8 97.1 12 95.5 16 98.1 20 95.9 24 92.0 28 94.7 32 97.8 36 93.8 40 91.9 44 98.8 48 102.5 52 95.3 56 93.0 60 103.2 64 98.2 68 78.5 72 94.0 76 119.5 80 88.5 84 67.8 88 113.2 92 122.1 96 78.1 100 83.6 104 112.9 108 97.8 112 81.5 116 95.4 120 103.0 124 94.5 128 92.4 132 99.4 136 100.8 140 95.9 144 95.1 148 97.0 152 93.5 156 90.6 160 95.7 164 99.8 168 95.9 172 94.2 176 99.0 180 99.8 184 95.2 188 94.9 192 96.8 196 93.1 200 90.4 204 96.3 208 101.4 212 95.7 216 92.1 220 102.4 224 103.5 228 85.6 232 90.2 236 110.1 240 94.1 244 77.8 248 99.4 252 109.2 256 93.8 260 91.8 264 100.6 268 98.8 272 92.0 276 94.0 280 99.6 284 93.3 288 85.4 292 99.9 296 112.0 300 88.4 304 80.3 308 118.0 312 112.0 316 59.8 320 85.6 324 139.0 328 90.8 332 50.2 336 112.5 340 133.9 344 77.0 348 76.2 352 116.6 356 103.6 360 78.6 364 93.0 368 105.0 372 93.6 376 89.5 380 99.2 384 102.3 388 96.6 392 95.1 396 97.6 400 94.7 404 91.0 408 94.8 412 98.7 416 95.0 420 93.1 424 98.7 428 101.0 432 96.4 436 95.0 440 97.5 444 94.3 448 88.8 452 95.2 456 105.0 460 93.2 464 81.2 468 109.6 472 120.5 476 69.2 480 73.1 484 141.4 488 106.3 492 36.8 496 98.4 500 147.5 504 82.0 508 64.0 512 115.0 516 113.3 520 83.7 524 90.5 528 102.2 532 93.9 536 88.7 540 96.4 544 101.2 548 96.9 552 94.8 556 98.6 560 98.5 564 94.0 568 94.5 572 96.9 576 93.3 580 90.9 584 96.8 588 101.3 592 97.3 596 94.9 600 99.0 604 98.7 608 89.1 612 91.9 616 108.2 620 94.2 624 75.6 628 101.4 632 113.3 636 92.5 640 90.9"/>
+          <path class="signal-audio" d="M0 182.9 4 181.4 8 177.2 12 178.4 16 178.6 20 173.9 24 174.0 28 179.8 32 180.0 36 175.5 40 177.6 44 182.7 48 180.8 52 176.8 56 178.2 60 178.2 64 173.3 68 173.7 72 181.2 76 181.6 80 173.6 84 176.8 88 189.1 92 179.7 96 163.6 100 183.2 104 195.2 108 160.4 112 157.3 116 200.1 120 192.5 124 157.2 128 174.6 132 196.6 136 177.7 140 166.9 144 180.7 148 182.9 152 169.6 156 170.7 160 187.5 164 185.2 168 168.6 172 177.1 176 191.2 180 176.1 184 166.6 188 181.6 192 183.1 196 170.1 200 173.2 204 184.2 208 182.6 212 176.7 216 178.5 220 180.7 224 176.4 228 174.4 232 178.5 236 178.5 240 173.7 244 175.7 248 183.2 252 182.5 256 175.8 260 178.5 264 183.7 268 173.7 272 166.9 276 184.8 280 188.8 284 161.8 288 166.9 292 202.9 296 187.1 300 152.8 304 180.2 308 202.6 312 166.2 316 156.2 320 190.3 324 189.9 328 165.4 332 173.1 336 189.3 340 182.1 344 173.7 348 178.5 352 179.8 356 173.4 360 173.4 364 180.1 368 180.6 372 175.9 376 177.6 380 182.5 384 180.5 388 176.6 392 178.0 396 178.1 400 173.3 404 173.9 408 180.7 412 181.4 416 176.2 420 177.7 424 183.5 428 179.6 432 172.7 436 179.3 440 183.7 444 168.6 448 166.7 452 190.6 456 188.8 460 163.6 464 174.7 468 196.1 472 177.6 476 163.5 480 181.6 484 185.3 488 169.4 492 171.5 496 184.5 500 183.2 504 176.1 508 178.2 512 181.8 516 177.1 520 173.3 524 179.1 528 181.0 532 170.7 536 171.3 540 189.3 544 186.4 548 165.6 552 176.9 556 195.9 560 172.8 564 158.3 568 186.3 572 191.0 576 164.6 580 169.2 584 190.8 588 184.5 592 172.4 596 178.2 600 182.0 604 174.7 608 172.9 612 179.2 616 179.8 620 174.8 624 176.5 628 182.7 632 181.8 636 177.3 640 178.2"/>
+        </svg>
+      </div>
     </section>
 
-    <section class="home-analysis" aria-labelledby="analysis-title">
-      <h2 id="analysis-title">分析与回看</h2>
+    <ul class="home-protocols" aria-label="支持协议">
+      <li>HTTP-FLV</li>
+      <li>RTMP / RTMPS</li>
+      <li>RTSP / RTSPS</li>
+      <li>HLS</li>
+      <li>MPEG-TS</li>
+      <li>GB28181</li>
+      <li>ONVIF</li>
+      <li>SIP</li>
+      <li>WHEP</li>
+    </ul>
+
+    <nav aria-label="更多工具">
       <ul class="home-tool-list">
         <li>
+          <a href="/simulators">
+            <svg class="home-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="m10 8 5 2.5-5 2.5zM8 21h8m-4-4v4"/></svg>
+            <strong>协议模拟器</strong>
+            <span>模拟多个协议的设备或故障源，执行自动化场景回归。</span>
+            <svg class="home-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h15m-6-6 6 6-6 6"/></svg>
+          </a>
+        </li>
+        <li>
           <a href="/diagnostics/review">
-            <span class="home-tool-lead">
-              <span class="home-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8M16 17H8M10 9H8"/></svg>
-              </span>
-              <span class="home-tool-copy"><strong>离线复盘</strong><span>导入排障证据包，或解析 PCAP / FLV / TS / MP4 文件</span></span>
-            </span>
-            <span class="home-arrow" aria-hidden="true">→</span>
+            <svg class="home-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 4v16M17 4v16M3 9h4m-4 6h4M17 9h4m-4 6h4m-11-6 5 3-5 3z"/></svg>
+            <strong>离线复盘</strong>
+            <span>导入排障证据包，或解析 PCAP、FLV、TS、MP4 等媒体文件。</span>
+            <svg class="home-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h15m-6-6 6 6-6 6"/></svg>
           </a>
         </li>
         <li>
           <a href="/history">
-            <span class="home-tool-lead">
-              <span class="home-icon" aria-hidden="true">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg>
-              </span>
-              <span class="home-tool-copy"><strong>任务记录</strong><span>集中回看排障采样、实时分析、离线解析与回归结果</span></span>
-            </span>
-            <span class="home-arrow" aria-hidden="true">→</span>
+            <svg class="home-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8m-8 4h8m-8 4h5"/></svg>
+            <strong>任务记录</strong>
+            <span>检索并回看排障采样、HLS 交付、离线解析与场景回归。</span>
+            <svg class="home-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h15m-6-6 6 6-6 6"/></svg>
           </a>
         </li>
       </ul>
-    </section>
+    </nav>
   </main>
 </body>
 </html>

@@ -10,8 +10,7 @@
   <script src="/static/simulator-media.js" defer></script>
   <script src="/static/workbench-navigation.js" defer></script>
 </head>
-<body>
-  <a class="skip" href="#main">跳转到主要内容</a>
+<body class="simulator-page simulator-media-page">
   <!-- workbench-header -->
   <main id="main" tabindex="-1">
     <!-- simulator-protocols -->
@@ -26,7 +25,7 @@
               <div><label for="protocol">协议</label><select id="protocol"><option value="http-flv">HTTP-FLV</option><option value="http-ts">HTTP MPEG-TS</option><option value="udp-ts">UDP MPEG-TS</option><option value="rtp-ts">RTP MPEG-TS</option></select></div>
               <div><label for="fault">场景</label><select id="fault"></select></div>
             </div>
-            <div id="datagram-config" class="sim-fields" hidden>
+            <div id="datagram-config" class="sim-fields multicast-config" hidden>
               <div><label for="target">IPv4 目的地址</label><input id="target" value="127.0.0.1" placeholder="单播或组播地址"></div>
               <div><label for="target-port">目的端口</label><input id="target-port" type="number" min="1" max="65535" value="5000"></div>
               <div><label for="network-interface">组播网卡</label><input id="network-interface" placeholder="例如 en0"></div>

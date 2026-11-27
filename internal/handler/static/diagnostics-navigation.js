@@ -16,6 +16,7 @@
     const sampleForm = node('sample');
     const workspace = document.querySelector('.workspace');
     const hlsModeSwitch = node('hls-mode-switch');
+    const batchDiagnostics = node('batch-diagnostics');
     const hlsDeliveryPanel = node('hls-delivery-panel');
     const hlsResults = node('hls-results');
     const hlsURL = node('hls-url');
@@ -36,6 +37,7 @@
             }
         }
         if (sampleForm) sampleForm.hidden = delivery;
+        if (batchDiagnostics) batchDiagnostics.hidden = delivery;
         if (hlsDeliveryPanel) hlsDeliveryPanel.hidden = !delivery;
         if (workspace) workspace.hidden = delivery;
         if (hlsResults) {
@@ -74,6 +76,9 @@
         const reviewModes = node('review-modes');
         if (reviewModes) reviewModes.hidden = !review;
         node('diagnostics-title').textContent = review ? '离线复盘' : '流媒体排障';
+        node('review-description').hidden = !review;
+        document.title = (onvif ? 'ONVIF 设备探测' : review ? '离线复盘' : '流媒体排障') + ' · Stream Analyzer';
+        node('result-heading').textContent = review ? '复盘报告' : '采样结果';
         for (const [href, link] of linkByPath) {
             if (!link) continue;
             if (href === path) link.setAttribute('aria-current', 'page');

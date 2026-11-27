@@ -32,10 +32,10 @@
         .btn:hover{background:var(--primary-hover);border-color:var(--primary-hover)}
         .btn:active{transform:scale(.99)}
         .btn.stop{background:var(--danger);border-color:var(--danger)}.btn.stop:hover{background:#991b1b;border-color:#991b1b}
-        .btn.secondary{background:var(--surface);color:var(--text);border-color:var(--border-strong)}.btn.secondary:hover{background:var(--surface-inset);border-color:#a1a1aa}
+        .btn.secondary{background:var(--surface);color:var(--text);border-color:var(--border-strong)}.btn.secondary:hover{background:var(--surface-hover);border-color:var(--muted)}
         .btn.success{background:var(--success);border-color:var(--success)}.btn.success:hover{background:#166534;border-color:#166534}
         .actions{display:flex;gap:.4rem;flex-wrap:wrap}.actions button,.actions .btn{min-height:1.95rem;padding:.24rem .68rem;font-size:.76rem}
-        .empty{text-align:center;padding:2.75rem;color:var(--muted);font-size:.875rem}
+        .empty{text-align:center;padding:2.75rem .85rem;color:var(--muted);font-size:.875rem;border-top:1px solid var(--border)}
         .detail{margin-top:1.25rem;display:none}
         .detail-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;flex-wrap:wrap;gap:.75rem}
         .detail-title{font-size:1rem;font-weight:660}
@@ -55,7 +55,7 @@
         .chart-table th{background:var(--surface-inset);position:sticky;top:0}
         .chart-table th.video{color:var(--accent)}
         .chart-table th.audio{color:var(--success)}
-        .metadata-box{background:#18181b;color:#e4e4e7;border-radius:var(--radius-sm);padding:.95rem 1rem;font-family:var(--font-data);font-size:.76rem;max-height:180px;overflow:auto;margin-top:1rem;white-space:pre-wrap;word-break:break-all}
+        .metadata-box{background:var(--media-bg);color:var(--media-text);border-radius:var(--radius-sm);padding:.95rem 1rem;font-family:var(--font-data);font-size:.76rem;max-height:180px;overflow:auto;margin-top:1rem;white-space:pre-wrap;word-break:break-all}
         .hls-wrap{margin-top:1rem}
         .hls-wrap .hint{font-size:.82rem;color:var(--muted);margin-bottom:.75rem}
         .hls-table-wrap{overflow:auto;max-height:420px;border:1px solid var(--border);border-radius:var(--radius-sm)}
@@ -64,28 +64,38 @@
         .hls-table-wrap th{background:var(--surface-inset);position:sticky;top:0}
         .hls-uri{max-width:220px;word-break:break-all}
         @media(max-width:640px){.stats-grid{grid-template-columns:repeat(2,1fr)}}
-        .history-filters{display:flex;flex-wrap:wrap;align-items:end;gap:.75rem;margin-bottom:.75rem}
+        .history-list{padding:0;overflow:hidden}
+        .history-list .table-wrap{border:0;border-radius:0}
+        .history-list th,.history-list td{padding:.72rem 1.1rem}
+        .history-filters{display:flex;flex-wrap:wrap;align-items:end;gap:.75rem;padding:1.2rem 1.25rem;background:var(--surface-inset);border-bottom:1px solid var(--border)}
+        .history-filters > div{min-width:min(100%, 9rem)}
+        .history-search input{background:var(--surface) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2353617a' stroke-width='1.8' stroke-linecap='round'%3E%3Ccircle cx='10.5' cy='10.5' r='5.5'/%3E%3Cpath d='m15 15 4 4'/%3E%3C/svg%3E") no-repeat .62rem center / 1.14rem}
         .history-filters label{display:block;margin-bottom:.3rem;font-size:.8rem;font-weight:560;color:var(--text)}
-        .history-filters input,.history-filters select{min-height:2.45rem;width:100%;min-width:0;padding:.45rem .7rem;border:1px solid var(--border-strong);border-radius:var(--radius-sm);background:var(--surface);color:var(--text);font:inherit;font-size:.85rem}
+        .history-filters input,.history-filters select{min-height:2.45rem;width:100%;min-width:0;padding:.45rem .7rem;border:1px solid var(--border-strong);border-radius:var(--radius-sm);background-color:var(--surface);color:var(--text);font:inherit;font-size:.85rem}
+        .history-filters .history-search input{padding-inline-start:2.15rem}
         .history-filters input:focus,.history-filters select:focus{outline:none;border-color:var(--accent);box-shadow:var(--ring)}
         .history-filters .history-search{flex:1 1 14rem}
-        .history-status{margin:.4rem 0 .65rem;color:var(--muted);font-size:.84rem;overflow-wrap:anywhere}
+        .history-status{margin:0;padding:.7rem 1.25rem;color:var(--muted);font-size:.84rem;overflow-wrap:anywhere;border-bottom:1px solid var(--border)}
+        @media (max-width:35rem){.history-filters > div{flex:1 1 8rem;min-width:0}.history-filters .history-search{flex-basis:100%}.history-list th,.history-list td{padding-inline:.85rem}}
         td.history-input{min-width:13rem;max-width:25rem;white-space:normal;overflow-wrap:anywhere}
         td.history-input code{display:block;margin-top:.25rem;color:var(--muted);font-family:var(--font-data);font-size:.74rem}
         #taskBody .btn{display:inline-flex;align-items:center;text-decoration:none;white-space:nowrap}
     </style>
     <script src="/static/workbench-navigation.js" defer></script>
 </head>
-<body class="workbench-tool-page">
+<body class="workbench-tool-page history-page">
   <!-- workbench-header -->
-    <div class="container">
-        <h1 class="workbench-page-title">任务记录</h1>
+    <main id="main" class="container" tabindex="-1">
+        <header class="workbench-heading">
+            <h1 class="workbench-page-title">任务记录</h1>
+            <p class="workbench-page-description">按来源、状态、地址或文件检索任务并查看结果。</p>
+        </header>
 
-        <div class="card">
+        <section class="card history-list" aria-label="任务列表">
             <form id="history-filters" class="history-filters" aria-label="筛选任务记录">
+                <div class="history-search"><label for="history-query">搜索记录</label><input type="search" id="history-query" placeholder="地址、文件名或任务 ID"></div>
                 <div><label for="history-source">任务来源</label><select id="history-source"><option value="all">全部来源</option><option value="diagnostic">排障采样</option><option value="offline">离线解析</option><option value="hls">HLS 交付</option><option value="simulator">模拟器回归</option></select></div>
                 <div><label for="history-state">任务状态</label><select id="history-state"><option value="all">全部状态</option><option value="active">进行中</option><option value="finished">已结束</option><option value="error">失败或部分完成</option></select></div>
-                <div class="history-search"><label for="history-query">搜索记录</label><input type="search" id="history-query" placeholder="地址、文件名或任务 ID"></div>
                 <button type="button" class="btn secondary" id="refresh-history">刷新</button>
             </form>
             <p id="history-status" class="history-status" role="status">正在读取任务…</p>
@@ -96,9 +106,9 @@
                     </thead>
                     <tbody id="taskBody"></tbody>
                 </table>
+                <p id="emptyState" class="empty" hidden></p>
             </div>
-            <p id="emptyState" class="empty" hidden></p>
-        </div>
+        </section>
 
         <div id="analysisSection" class="detail">
             <div class="card">
@@ -151,7 +161,7 @@
                 </div>
             </div>
         </div>
-    </div>
+    </main>
 
     <script src="/static/echarts_helpers.js"></script>
     <script>

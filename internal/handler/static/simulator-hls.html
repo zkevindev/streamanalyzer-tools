@@ -10,8 +10,7 @@
   <script src="/static/simulator-hls.js" defer></script>
   <script src="/static/workbench-navigation.js" defer></script>
 </head>
-<body>
-  <a class="skip" href="#main">跳转到主要内容</a>
+<body class="simulator-page simulator-hls-page">
   <!-- workbench-header -->
   <main id="main" tabindex="-1">
     <!-- simulator-protocols -->
@@ -48,7 +47,7 @@
             <div><dt>播放列表地址</dt><dd id="playlist"></dd></div>
           </dl>
           <p id="live-summary" class="field-hint" hidden></p>
-          <ol id="playlist-samples" class="sim-events" hidden></ol>
+          <ol id="playlist-samples" class="sim-events playlist-samples" hidden></ol>
           <form id="part-fault-form" hidden>
                 <div class="sim-fields"><div><label for="part-delay-ms">Part 延迟（毫秒）</label>
                   <input id="part-delay-ms" type="number" min="400" max="3000" value="1800" required></div>

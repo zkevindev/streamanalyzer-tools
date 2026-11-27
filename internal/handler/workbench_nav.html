@@ -1,21 +1,32 @@
 {{define "header" -}}
+<a class="skip" href="#main">跳转到主要内容</a>
 <header class="workbench-header">
   <div class="workbench-header-inner">
-    <a class="workbench-brand" href="/"{{if eq .Page "index"}} aria-current="page"{{end}}>
-      <span class="workbench-mark" aria-hidden="true"><i></i><i></i><i></i></span>
+    <a class="workbench-brand" href="/">
+      <svg class="workbench-mark" viewBox="0 0 48 32" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 19h6l4-8 5 16 6-23 6 23 5-16 4 8h6"/></svg>
       Stream Analyzer
     </a>
     <nav class="workbench-sections" aria-label="主导航">
-      <a class="workbench-tab" href="/diagnostics"{{if eq .Page "diagnostics"}} aria-current="page"{{else if .Diagnostics}} aria-current="true"{{end}}>排障工作台</a>
-      <a class="workbench-tab" href="/simulators"{{if eq .Page "simulators"}} aria-current="page"{{else if .Simulator}} aria-current="true"{{end}}>模拟器</a>
-      <a class="workbench-tab" href="/history"{{if eq .Page "history"}} aria-current="page"{{end}}>任务记录</a>
+      <a class="workbench-tab" href="/"{{if eq .Page "index"}} aria-current="page"{{end}}>{{template "icon-home"}}首页</a>
+      <a class="workbench-tab" href="/diagnostics"{{if eq .Page "diagnostics"}} aria-current="page"{{else if .Diagnostics}} aria-current="true"{{end}}>{{template "icon-signal"}}排障工作台</a>
+      <a class="workbench-tab" href="/simulators"{{if eq .Page "simulators"}} aria-current="page"{{else if .Simulator}} aria-current="true"{{end}}>{{template "icon-simulator"}}模拟器</a>
+      <a class="workbench-tab" href="/history"{{if eq .Page "history"}} aria-current="page"{{end}}>{{template "icon-history"}}任务记录</a>
     </nav>
     {{if eq .Page "diagnostics" -}}
-    <button type="button" class="workbench-setting" id="model-settings" aria-haspopup="dialog" hidden>模型设置</button>
+    <button type="button" class="workbench-setting" id="model-settings" aria-haspopup="dialog" hidden>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d="M4 7h5m4 0h7M4 17h9m4 0h3"/><circle cx="11" cy="7" r="2"/><circle cx="15" cy="17" r="2"/></svg>
+      模型设置
+    </button>
     {{- end}}
   </div>
 </header>
+<div class="workbench-context"><span>{{if .Diagnostics}}排障工作台{{else if .Simulator}}协议模拟器{{else if eq .Page "history"}}任务记录{{else}}首页{{end}}</span></div>
 {{- end}}
+
+{{define "icon-home"}}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/></svg>{{end}}
+{{define "icon-signal"}}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 12h5l3-7 4 14 3-7h5"/></svg>{{end}}
+{{define "icon-simulator"}}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="m10 8 5 2.5-5 2.5zM8 21h8m-4-4v4"/></svg>{{end}}
+{{define "icon-history"}}<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8m-8 4h8m-8 4h5"/></svg>{{end}}
 
 {{define "diagnostic-tools" -}}
 <nav class="workbench-subnav diagnostic-tools" aria-label="排障工具">

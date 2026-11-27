@@ -10,8 +10,7 @@
   <script src="/static/simulator-sip.js" defer></script>
   <script src="/static/workbench-navigation.js" defer></script>
 </head>
-<body>
-  <a class="skip" href="#main">跳转到主要内容</a>
+<body class="simulator-page simulator-sip-page">
   <!-- workbench-header -->
   <main id="main" tabindex="-1">
     <!-- simulator-protocols -->
@@ -87,69 +86,67 @@
         <p id="registration-error" class="sim-error" hidden></p>
         </form>
       </section>
-      <div class="sim-monitor">
-        <section class="panel" aria-labelledby="call-title">
-          <div class="panel-heading">
-            <h2 id="call-title">通话</h2>
-            <span id="call-state" class="status" role="status">空闲</span>
-          </div>
-          <div class="panel-body">
-            <p id="session-timer-status" class="field-hint" hidden></p>
-            <form id="call-form" autocomplete="off">
-              <label for="sip-target">被叫</label>
-              <input id="sip-target" placeholder="分机号或 sip:用户@主机" maxlength="384" required disabled>
-              <div class="sim-controls">
-                <button id="dial" type="submit" disabled>呼出</button>
-                <button id="answer" class="secondary" type="button" disabled>接听</button>
-                <button id="hangup" class="secondary" type="button" disabled>挂断</button>
-              </div>
-            </form>
-            <p class="muted field-hint">通话时发送 440 Hz 测试音。收到的音频可试听最近 20 秒。</p>
-            <section id="call-metrics" class="sip-metrics" aria-label="RTP 音频" hidden>
-              <p id="scenario-result" class="field-hint" role="status" hidden></p>
-              <p id="prack-summary" class="field-hint" hidden></p>
-              <p id="early-summary" class="field-hint" hidden></p>
-              <p id="audio-summary" class="field-hint"></p>
-              <label for="audio-fault">单向无声</label>
-              <select id="audio-fault" aria-describedby="audio-fault-hint" disabled>
-                <option value="off">关闭</option><option value="send">暂停发送</option><option value="receive">丢弃接收</option>
-              </select>
-              <p class="muted field-hint" id="audio-fault-hint">保持通话接通，暂停一个方向的音频。</p>
-              <div class="sim-fields sip-metrics">
-                <div><h3>发送 RTP</h3><dl class="onvif-addresses" id="send-rtp"></dl></div>
-                <div><h3>接收 RTP</h3><dl class="onvif-addresses" id="receive-rtp"></dl></div>
-              </div>
-            </section>
-            <dl id="media-addresses" class="onvif-addresses" hidden>
-              <div><dt>通话对端</dt><dd id="call-peer"></dd></div>
-              <div><dt>本机实际 RTP</dt><dd id="media-local"></dd></div>
-              <div><dt>本机 SDP 声明</dt><dd id="media-advertised"></dd></div>
-              <div><dt>对端 SDP 声明</dt><dd id="media-remote"></dd></div>
-              <div><dt>对端 RTP 实际来源</dt><dd id="media-observed"></dd></div>
-              <div><dt>实际 RTP 回包目的地</dt><dd id="media-destination"></dd></div>
-              <div id="media-change" hidden><dt>最近一次 SDP 重协商</dt><dd id="media-change-detail"></dd></div>
-            </dl>
-            <div id="dtmf-panel" class="sip-metrics" hidden>
-              <label for="dtmf-digit">DTMF 按键</label>
-              <div class="sim-controls">
-                <select id="dtmf-digit" aria-label="DTMF 按键"></select>
-                <button id="send-dtmf" class="secondary" type="button" disabled>发送按键</button>
-              </div>
-              <p id="dtmf-events" class="field-hint muted"></p>
+      <section class="panel" aria-labelledby="call-title">
+        <div class="panel-heading">
+          <h2 id="call-title">通话</h2>
+          <span id="call-state" class="status" role="status">空闲</span>
+        </div>
+        <div class="panel-body">
+          <p id="session-timer-status" class="field-hint" hidden></p>
+          <form id="call-form" autocomplete="off">
+            <label for="sip-target">被叫</label>
+            <input id="sip-target" placeholder="分机号或 sip:用户@主机" maxlength="384" required disabled>
+            <div class="sim-controls">
+              <button id="dial" type="submit" disabled>呼出</button>
+              <button id="answer" class="secondary" type="button" disabled>接听</button>
+              <button id="hangup" class="secondary" type="button" disabled>挂断</button>
             </div>
-            <p id="call-error" class="sim-error" hidden></p>
-            <div class="sip-audio" id="received-audio" hidden>
-              <button id="hear-audio" class="secondary" type="button">试听接收音频</button>
-              <audio id="audio-player" controls preload="none" aria-label="收到的 SIP 音频" hidden></audio>
+          </form>
+          <p class="muted field-hint">通话时发送 440 Hz 测试音。收到的音频可试听最近 20 秒。</p>
+          <section id="call-metrics" class="sip-metrics" aria-label="RTP 音频" hidden>
+            <p id="scenario-result" class="field-hint" role="status" hidden></p>
+            <p id="prack-summary" class="field-hint" hidden></p>
+            <p id="early-summary" class="field-hint" hidden></p>
+            <p id="audio-summary" class="field-hint"></p>
+            <label for="audio-fault">单向无声</label>
+            <select id="audio-fault" aria-describedby="audio-fault-hint" disabled>
+              <option value="off">关闭</option><option value="send">暂停发送</option><option value="receive">丢弃接收</option>
+            </select>
+            <p class="muted field-hint" id="audio-fault-hint">保持通话接通，暂停一个方向的音频。</p>
+            <div class="sim-fields sip-metrics">
+              <div><h3>发送 RTP</h3><dl class="onvif-addresses" id="send-rtp"></dl></div>
+              <div><h3>接收 RTP</h3><dl class="onvif-addresses" id="receive-rtp"></dl></div>
             </div>
+          </section>
+          <dl id="media-addresses" class="onvif-addresses" hidden>
+            <div><dt>通话对端</dt><dd id="call-peer"></dd></div>
+            <div><dt>本机实际 RTP</dt><dd id="media-local"></dd></div>
+            <div><dt>本机 SDP 声明</dt><dd id="media-advertised"></dd></div>
+            <div><dt>对端 SDP 声明</dt><dd id="media-remote"></dd></div>
+            <div><dt>对端 RTP 实际来源</dt><dd id="media-observed"></dd></div>
+            <div><dt>实际 RTP 回包目的地</dt><dd id="media-destination"></dd></div>
+            <div id="media-change" hidden><dt>最近一次 SDP 重协商</dt><dd id="media-change-detail"></dd></div>
+          </dl>
+          <div id="dtmf-panel" class="sip-metrics" hidden>
+            <label for="dtmf-digit">DTMF 按键</label>
+            <div class="sim-controls">
+              <select id="dtmf-digit" aria-label="DTMF 按键"></select>
+              <button id="send-dtmf" class="secondary" type="button" disabled>发送按键</button>
+            </div>
+            <p id="dtmf-events" class="field-hint muted"></p>
           </div>
-        </section>
-        <section class="panel" aria-labelledby="sip-events-title">
-          <div class="panel-heading"><h2 id="sip-events-title">SIP 信令</h2></div>
-          <p id="no-events" class="muted panel-body">注册和通话事件会显示在这里。</p>
-          <ol id="sip-events" class="sim-events" aria-label="最近的 SIP 信令"></ol>
-        </section>
-      </div>
+          <p id="call-error" class="sim-error" hidden></p>
+          <div class="sip-audio" id="received-audio" hidden>
+            <button id="hear-audio" class="secondary" type="button">试听接收音频</button>
+            <audio id="audio-player" controls preload="none" aria-label="收到的 SIP 音频" hidden></audio>
+          </div>
+        </div>
+      </section>
+      <section class="panel sip-events-panel" aria-labelledby="sip-events-title">
+        <div class="panel-heading"><h2 id="sip-events-title">SIP 信令</h2></div>
+        <p id="no-events" class="muted panel-body">注册和通话事件会显示在这里。</p>
+        <ol id="sip-events" class="sim-events" aria-label="最近的 SIP 信令"></ol>
+      </section>
     </div>
   </main>
 </body>

@@ -67,7 +67,7 @@
 }
 .hls-tool button:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
 .hls-tool .hls-secondary { color: var(--text); background: var(--surface); border-color: var(--border-strong); }
-.hls-tool .hls-secondary:hover { background: var(--surface-inset); border-color: #a1a1aa; }
+.hls-tool .hls-secondary:hover { background: var(--surface-inset); border-color: var(--muted); }
 .hls-tool button:disabled { opacity: 0.55; cursor: not-allowed; }
 
 #hls-status { flex: 1 1 12rem; margin: 0; font-size: 0.85rem; overflow-wrap: anywhere; }
