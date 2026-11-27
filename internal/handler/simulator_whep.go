@@ -83,6 +83,11 @@ func whepError(c *gin.Context, err error) {
 	switch err {
 	case whep.ErrMode, whep.ErrOffer:
 		code = http.StatusBadRequest
+	case whep.ErrUnauthorized:
+		c.Header("WWW-Authenticate", `Bearer realm="whep-simulator"`)
+		code = http.StatusUnauthorized
+	case whep.ErrSDPReject:
+		code = http.StatusNotAcceptable
 	case whep.ErrActive:
 		code = http.StatusConflict
 	case whep.ErrMissing:

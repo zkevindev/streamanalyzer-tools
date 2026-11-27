@@ -14,7 +14,12 @@
   <!-- workbench-header -->
   <main id="main" tabindex="-1">
     <!-- simulator-protocols -->
-    <div class="page-heading"><div><h1>WHEP 模拟器</h1><p class="muted">在本机验证 WebRTC 播放，观察 SDP、ICE、DTLS 和媒体时序。</p></div></div>
+    <div class="page-heading">
+      <div>
+        <h1>WHEP 模拟器</h1>
+        <p class="muted">在本机验证 WebRTC 播放，复现信令、ICE、DTLS 与 RTP 异常。</p>
+      </div>
+    </div>
     <p id="notice" class="error" role="alert" hidden></p>
     <div class="simulator-grid">
       <section class="panel" aria-labelledby="config-title">
@@ -23,9 +28,13 @@
           <label for="mode">场景</label>
           <select id="mode" disabled>
             <option value="normal">正常播放</option>
+            <option value="rtp_drop">周期性 RTP 丢包（每 6 包丢 1）</option>
             <option value="ice_timeout">SDP 成功，ICE 探测超时</option>
             <option value="no_media">ICE 和 DTLS 成功，始终无 RTP</option>
             <option value="media_stop">正常出画后停止 RTP</option>
+            <option value="auth_401">HTTP 信令鉴权失败（401 Unauthorized）</option>
+            <option value="not_found_404">HTTP 流不存在（404 Not Found）</option>
+            <option value="sdp_reject_406">SDP 协商被拒（406 Not Acceptable）</option>
           </select>
           <div class="sim-controls">
             <button id="start" disabled>启动视频源</button>
@@ -34,6 +43,7 @@
           <dl id="endpoint-info" class="onvif-addresses" hidden>
             <div><dt>WHEP 地址</dt><dd id="endpoint"></dd></div>
             <div><dt>当前会话数</dt><dd id="sessions"></dd></div>
+            <div><dt>流诊断联动</dt><dd><a id="diagnose-link" href="/diagnostics">在流诊断工作台排查</a></dd></div>
           </dl>
         </form>
       </section>

@@ -152,6 +152,11 @@ func importedReportAssessment(dir string, report *Report, entry *zip.File) error
 		return err
 	}
 	report.HLSABR = abr
+	rtspPackets, err := validateStoredRTSPPackets(dir, stored, *report)
+	if err != nil {
+		return err
+	}
+	report.RTSPPackets = rtspPackets
 	return nil
 }
 

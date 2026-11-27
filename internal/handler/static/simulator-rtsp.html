@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>RTSP / RTSPS 模拟器 · Stream Analyzer</title>
+  <link rel="stylesheet" href="/static/workbench-theme.css">
+  <link rel="stylesheet" href="/static/diagnostics.css">
+  <link rel="stylesheet" href="/static/simulators.css">
+  <script src="/static/simulator-rtsp.js" defer></script>
+  <script src="/static/workbench-navigation.js" defer></script>
+</head>
+<body class="simulator-page">
+  <!-- workbench-header -->
+  <main id="main" tabindex="-1">
+    <!-- simulator-protocols -->
+    <div class="page-heading"><div><h1>RTSP / RTSPS 模拟器</h1><p class="muted">复现 RTSP 鉴权、重定向、证书异常、RTP 丢包与 ANNOUNCE/RECORD 推流中继</p></div></div>
+    <p id="notice" class="error" role="alert" hidden></p>
+    <div class="simulator-grid">
+      <section class="panel" aria-labelledby="config-title">
+        <div class="panel-heading"><h2 id="config-title">服务端与故障场景</h2></div>
+        <form id="form" class="panel-body" autocomplete="off">
+          <fieldset id="config" disabled>
+            <div class="sim-fields">
+              <div>
+                <label for="fault">场景</label>
+                <select id="fault">
+                  <option value="normal">正常 RTSP（H.264 + G.711）</option>
+                  <option value="tls_untrusted">RTSPS 证书不受信（自签名 TLS）</option>
+                  <option value="auth_required">401 Digest / Basic 鉴权校验</option>
+                  <option value="redirect">302 重定向到目标流地址</option>
+                  <option value="not_found">404 找不到流</option>
+                  <option value="service_unavailable">503 服务不可用</option>
+                  <option value="no_media">PLAY 成功但无 RTP 媒体</option>
+                  <option value="rtp_drop">周期性丢弃视频 RTP 包</option>
+                  <option value="publish_relay">接收 RTSP 推流并转发（ANNOUNCE / RECORD）</option>
+                </select>
+              </div>
+              <div>
+                <label for="port">本机端口（0 自动分配）</label>
+                <input id="port" type="number" min="0" max="65535" value="0" required>
+              </div>
+            </div>
+            <div id="auth-fields" class="sim-fields sim-field-group" hidden>
+              <div><label for="username">鉴权用户名</label><input id="username" maxlength="128" value="admin" placeholder="admin"></div>
+              <div><label for="password">鉴权密码</label><input id="password" type="password" maxlength="256" value="stream123" autocomplete="new-password"></div>
+            </div>
+            <div id="drop-field" class="sim-field-group" hidden>
+              <label for="drop-every">每 N 个视频 RTP 包丢弃 1 个</label>
+              <input id="drop-every" type="number" min="2" max="1000" value="10">
+            </div>
+          </fieldset>
+          <p class="muted field-hint">内置 320×180 15fps H.264 与 440 Hz G.711 A-law 测试源，同时支持 TCP 交织与 UDP 单播（RTSPS 仅 TCP）。</p>
+          <div class="sim-controls">
+            <button id="start" type="submit" disabled>启动 RTSP 源</button>
+            <button id="stop" type="button" class="secondary" disabled>停止</button>
+          </div>
+        </form>
+      </section>
+
+      <section class="panel" aria-labelledby="status-title">
+        <div class="panel-heading">
+          <h2 id="status-title">服务端状态</h2>
+          <span id="state" class="status" role="status">正在读取</span>
+        </div>
+        <div class="panel-body">
+          <dl class="metrics sim-metrics">
+            <div><dt>TCP 接入</dt><dd id="connections">0</dd></div>
+            <div><dt>DESCRIBE 请求</dt><dd id="describes">0</dd></div>
+            <div><dt>PLAY（TCP / UDP）</dt><dd id="plays">0 / 0</dd></div>
+            <div><dt>故障触发 / 丢包</dt><dd id="hits">0 / 0</dd></div>
+          </dl>
+          <dl class="onvif-addresses">
+            <div><dt>拉流地址</dt><dd id="url">—</dd></div>
+            <div id="redirect-row" hidden><dt>302 重定向目标</dt><dd id="redirect-target">—</dd></div>
+            <div id="publish-row" hidden><dt>推流中继状态</dt><dd id="publish-status">—</dd></div>
+            <div><dt>最近阶段</dt><dd id="stage">—</dd></div>
+          </dl>
+          <p id="relay-hint" class="field-hint" hidden>可使用「推流器模拟器」或 FFmpeg（<code>ffmpeg -re -i input.mp4 -c copy -f rtsp -rtsp_transport tcp ...</code>）推送到上方地址，再从同一地址拉流。</p>
+          <div class="sim-controls">
+            <a class="button" id="open" href="/diagnostics?rtsp_simulator=1" hidden>打开排障工作台</a>
+          </div>
+        </div>
+      </section>
+    </div>
+  </main>
+</body>
+</html>

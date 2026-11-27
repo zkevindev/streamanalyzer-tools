@@ -26,6 +26,8 @@ const (
 	ProtocolRTPTS   = "rtp-ts"
 	ProtocolRTSP    = "rtsp"
 	ProtocolRTSPS   = "rtsps"
+	ProtocolWHEP    = "whep"
+	ProtocolDASH    = "dash"
 )
 
 const (
@@ -36,6 +38,8 @@ const (
 	udpStreamName  = "stream.udp"
 	rtpStreamName  = "stream.rtp"
 	rtspStreamName = "stream.rtsp.zip"
+	whepStreamName = "stream.whep.zip"
+	dashStreamName = "stream.dash.zip"
 	timelineName   = "timeline.ndjson"
 	manifestName   = "manifest.json"
 	reportName     = "report.json"
@@ -53,24 +57,26 @@ var (
 )
 
 type SampleRequest struct {
-	AutoInvestigate   bool                `json:"auto_investigate,omitempty"`
-	URL               string              `json:"url"`
-	Seconds           int                 `json:"seconds"`
-	Protocol          string              `json:"protocol,omitempty"`
-	Transport         string              `json:"transport,omitempty"`
-	Playback          bool                `json:"playback,omitempty"`
-	Headers           map[string]string   `json:"headers,omitempty"`
-	ProxyURL          string              `json:"proxy_url,omitempty"`
-	CACertificate     string              `json:"ca_certificate,omitempty"`
-	ReconnectAttempts int                 `json:"reconnect_attempts,omitempty"`
-	ReconnectDelayMS  int                 `json:"reconnect_delay_ms,omitempty"`
-	HLSVariant        *int                `json:"hls_variant,omitempty"`
-	Profile           string              `json:"profile,omitempty"`
-	CustomThresholds  *AnalysisThresholds `json:"custom_thresholds,omitempty"`
-	SegmentSeconds    int                 `json:"segment_seconds,omitempty"`
-	RollingSegments   int                 `json:"rolling_segments,omitempty"`
-	SessionGroupID    string              `json:"-"`
-	SessionAttempt    int                 `json:"-"`
+	AutoInvestigate    bool                `json:"auto_investigate,omitempty"`
+	URL                string              `json:"url"`
+	Seconds            int                 `json:"seconds"`
+	Protocol           string              `json:"protocol,omitempty"`
+	Transport          string              `json:"transport,omitempty"`
+	ICETransportPolicy string              `json:"ice_transport_policy,omitempty"`
+	ICEServers         []WHEPICEServer     `json:"ice_servers,omitempty"`
+	Playback           bool                `json:"playback,omitempty"`
+	Headers            map[string]string   `json:"headers,omitempty"`
+	ProxyURL           string              `json:"proxy_url,omitempty"`
+	CACertificate      string              `json:"ca_certificate,omitempty"`
+	ReconnectAttempts  int                 `json:"reconnect_attempts,omitempty"`
+	ReconnectDelayMS   int                 `json:"reconnect_delay_ms,omitempty"`
+	HLSVariant         *int                `json:"hls_variant,omitempty"`
+	Profile            string              `json:"profile,omitempty"`
+	CustomThresholds   *AnalysisThresholds `json:"custom_thresholds,omitempty"`
+	SegmentSeconds     int                 `json:"segment_seconds,omitempty"`
+	RollingSegments    int                 `json:"rolling_segments,omitempty"`
+	SessionGroupID     string              `json:"-"`
+	SessionAttempt     int                 `json:"-"`
 }
 
 type Run struct {
@@ -216,6 +222,7 @@ type Report struct {
 	Throughput             *ThroughputReport       `json:"throughput,omitempty"`
 	RTMPControl            *RTMPControlReport      `json:"rtmp_control,omitempty"`
 	HLSABR                 *HLSABRReport           `json:"hls_abr,omitempty"`
+	RTSPPackets            *RTSPPacketReport       `json:"rtsp_packets,omitempty"`
 	modelScope             string
 	Requests               []HTTPRequestTiming  `json:"requests,omitempty"`
 	RequestsTruncated      int                  `json:"requests_truncated,omitempty"`
@@ -225,6 +232,8 @@ type Report struct {
 	HLS                    *HLSMetrics          `json:"hls,omitempty"`
 	MPEGTS                 *MPEGTSMetrics       `json:"mpegts,omitempty"`
 	RTSP                   *RTSPMetrics         `json:"rtsp,omitempty"`
+	WHEP                   *WHEPMetrics         `json:"whep,omitempty"`
+	DASH                   *DASHMetrics         `json:"dash,omitempty"`
 	Findings               []Finding            `json:"findings"`
 	Player                 *PlayerReport        `json:"player,omitempty"`
 	PlayerNetwork          *PlayerNetworkReport `json:"player_network,omitempty"`

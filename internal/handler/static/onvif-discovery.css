@@ -15,7 +15,7 @@
 .onvif-profile { grid-template-columns: minmax(0, 1fr) minmax(0, 10rem); }
 .onvif-controls { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 0.5rem; }
 .onvif-inline { display: flex; align-items: center; gap: 0.5rem; min-height: 2.35rem; margin: 0.25rem 0; font-weight: 500; cursor: pointer; }
-.onvif-inline input { flex: none; min-height: 1rem; width: 1rem; margin: 0; accent-color: var(--primary); }
+.onvif-inline input { flex: none; min-height: 1rem; width: 1rem; margin: 0; accent-color: var(--accent); }
 .onvif-devices { margin-top: 0.8rem; max-height: 21rem; border: 1px solid var(--border); border-radius: var(--radius-sm); }
 .onvif-devices th, .onvif-devices td { white-space: normal; }
 .onvif-devices th { position: sticky; top: 0; background: var(--surface-inset); }
@@ -41,5 +41,5 @@
     .onvif-workspace { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 32rem) {
-    .onvif-auth, .onvif-profile { grid-template-columns: minmax(0, 1fr); }
+    .onvif-grid, .onvif-auth, .onvif-profile { grid-template-columns: minmax(0, 1fr); }
 }

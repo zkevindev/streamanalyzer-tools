@@ -186,20 +186,26 @@ type SecondStat struct {
 type OfflineMode string
 
 const (
-	OfflineModeRaw  OfflineMode = "raw"
-	OfflineModePCAP OfflineMode = "pcap"
-	OfflineModeTS   OfflineMode = "ts"
-	OfflineModeFLV  OfflineMode = "flv"
-	OfflineModeMP4  OfflineMode = "mp4"
+	OfflineModeAuto   OfflineMode = "auto"
+	OfflineModeRaw    OfflineMode = "raw"
+	OfflineModePCAP   OfflineMode = "pcap"
+	OfflineModeTS     OfflineMode = "ts"
+	OfflineModeFLV    OfflineMode = "flv"
+	OfflineModeMP4    OfflineMode = "mp4"
+	OfflineModeAnnexB OfflineMode = "annexb"
+	OfflineModePS     OfflineMode = "ps"
+	OfflineModeWebM   OfflineMode = "webm"
+	OfflineModeDASH   OfflineMode = "dash"
 )
 
 type OfflineStatus string
 
 const (
-	OfflineStatusPending OfflineStatus = "pending"
-	OfflineStatusRunning OfflineStatus = "running"
-	OfflineStatusDone    OfflineStatus = "done"
-	OfflineStatusFailed  OfflineStatus = "failed"
+	OfflineStatusPending  OfflineStatus = "pending"
+	OfflineStatusRunning  OfflineStatus = "running"
+	OfflineStatusDone     OfflineStatus = "done"
+	OfflineStatusFailed   OfflineStatus = "failed"
+	OfflineStatusCanceled OfflineStatus = "canceled"
 )
 
 type OfflineTaskRequest struct {
@@ -216,8 +222,15 @@ type OfflineTask struct {
 	ServerPort uint16 `json:"server_port"`
 	SkipBytes  int    `json:"skip_bytes"`
 
-	InputName string `json:"input_name"`
-	InputPath string `json:"input_path"`
+	SourceType string `json:"source_type,omitempty"` // "upload" | "local"
+	InputName  string `json:"input_name"`
+	InputPath  string `json:"input_path"`
+	InputSize  int64  `json:"input_size,omitempty"`
+	DetectedBy string `json:"detected_by,omitempty"`
+
+	ProgressPct    float64 `json:"progress_pct,omitempty"`
+	ProgressStage  string  `json:"progress_stage,omitempty"`
+	BytesProcessed int64   `json:"bytes_processed,omitempty"`
 
 	SummaryPath string `json:"summary_path"`
 	Error       string `json:"error,omitempty"`
@@ -234,7 +247,8 @@ type OfflineSummary struct {
 }
 
 type OfflineFlowResult struct {
-	FlowID int `json:"flow_id"`
+	FlowID   int    `json:"flow_id"`
+	Protocol string `json:"protocol,omitempty"` // rtmp / rtp / http-flv / mpeg-ts / ps / webm
 
 	HasSYN       bool `json:"has_syn"`
 	SYNCount     int  `json:"syn_count"`
@@ -255,6 +269,8 @@ type OfflineFlowResult struct {
 	// ArtifactPaths 额外产物（如 MP4 的 mp4_report.txt），绝对路径。
 	ArtifactPaths []string `json:"artifact_paths,omitempty"`
 
+	RTPStats *OfflineRTPStats `json:"rtp_stats,omitempty"`
+
 	ProgramCount  int `json:"program_count,omitempty"`
 	PATCount      int `json:"pat_count,omitempty"`
 	PMTCount      int `json:"pmt_count,omitempty"`
@@ -267,6 +283,7 @@ type OfflineFlowResult struct {
 	AudioCodec   string               `json:"audio_codec,omitempty"`
 	Error        string               `json:"error,omitempty"`
 	FLVMetadata  string               `json:"flv_metadata_json,omitempty"`
+	Profile      *OfflineMediaProfile `json:"profile,omitempty"`
 	PIDDetails   []OfflinePIDDetail   `json:"pid_details,omitempty"`
 	FrameDetails []OfflineFrameDetail `json:"frame_details,omitempty"`
 
@@ -276,22 +293,132 @@ type OfflineFlowResult struct {
 }
 
 type OfflinePIDDetail struct {
-	PID        uint16 `json:"pid"`
-	StreamType string `json:"stream_type,omitempty"`
-	Category   string `json:"category,omitempty"`
-	PESCount   int    `json:"pes_count,omitempty"`
-	NALUCount  int    `json:"nalu_count,omitempty"`
-	Bytes      int64  `json:"bytes,omitempty"`
-	OutputPath string `json:"output_path,omitempty"`
+	PID         uint16 `json:"pid"`
+	StreamType  string `json:"stream_type,omitempty"`
+	Codec       string `json:"codec,omitempty"`
+	Category    string `json:"category,omitempty"`
+	PacketCount int    `json:"packet_count,omitempty"`
+	PESCount    int    `json:"pes_count,omitempty"`
+	NALUCount   int    `json:"nalu_count,omitempty"`
+	CCErrors    int    `json:"cc_errors,omitempty"`
+	PCRCount    int    `json:"pcr_count,omitempty"`
+	Bytes       int64  `json:"bytes,omitempty"`
+	OutputPath  string `json:"output_path,omitempty"`
+}
+
+type OfflineBitratePoint struct {
+	Sec       int     `json:"sec"`
+	VideoKbps float64 `json:"video_kbps"`
+	AudioKbps float64 `json:"audio_kbps"`
+}
+
+type OfflineFrameSizePoint struct {
+	Index int   `json:"index"`
+	DTS   int64 `json:"dts"`
+	Bytes int   `json:"bytes"`
+	Key   bool  `json:"key,omitempty"`
+}
+
+type OfflineAVSyncPoint struct {
+	Sec    int   `json:"sec"`
+	DiffMS int64 `json:"diff_ms"` // audio DTS - video DTS
+}
+
+// OfflineMediaProfile is the structured readout for one parsed flow: codec
+// parameters, timeline health and downsampled series for charts.
+type OfflineMediaProfile struct {
+	VideoCodec string `json:"video_codec,omitempty"`
+	AudioCodec string `json:"audio_codec,omitempty"`
+
+	Width     int     `json:"width,omitempty"`
+	Height    int     `json:"height,omitempty"`
+	Profile   string  `json:"profile,omitempty"`
+	Level     int     `json:"level,omitempty"`
+	LevelName string  `json:"level_name,omitempty"`
+	FrameRate float64 `json:"frame_rate,omitempty"`
+
+	AudioSampleRate int `json:"audio_sample_rate,omitempty"`
+	AudioChannels   int `json:"audio_channels,omitempty"`
+
+	DurationMS  int64 `json:"duration_ms,omitempty"`
+	VideoFrames int   `json:"video_frames,omitempty"`
+	AudioFrames int   `json:"audio_frames,omitempty"`
+	Keyframes   int   `json:"keyframes,omitempty"`
+	BFrames     int   `json:"b_frames,omitempty"`
+	HasBFrames  bool  `json:"has_b_frames,omitempty"`
+
+	VideoBytes       int64   `json:"video_bytes,omitempty"`
+	AudioBytes       int64   `json:"audio_bytes,omitempty"`
+	VideoBitrateKbps float64 `json:"video_bitrate_kbps,omitempty"`
+	AudioBitrateKbps float64 `json:"audio_bitrate_kbps,omitempty"`
+
+	VideoDeltaMinMS int64 `json:"video_delta_min_ms,omitempty"`
+	VideoDeltaAvgMS int64 `json:"video_delta_avg_ms,omitempty"`
+	VideoDeltaMaxMS int64 `json:"video_delta_max_ms,omitempty"`
+
+	GOPMinMS       int64   `json:"gop_min_ms,omitempty"`
+	GOPAvgMS       int64   `json:"gop_avg_ms,omitempty"`
+	GOPMaxMS       int64   `json:"gop_max_ms,omitempty"`
+	GOPIntervalsMS []int64 `json:"gop_intervals_ms,omitempty"`
+
+	DTSRegressions int   `json:"dts_regressions,omitempty"`
+	LargeGaps      int   `json:"large_gaps,omitempty"`
+	MaxGapMS       int64 `json:"max_gap_ms,omitempty"`
+	AudioLargeGaps int   `json:"audio_large_gaps,omitempty"`
+
+	HasAVOffset     bool  `json:"has_av_offset,omitempty"`
+	AVStartOffsetMS int64 `json:"av_start_offset_ms,omitempty"`
+	AVDriftMaxMS    int64 `json:"av_drift_max_ms,omitempty"`
+
+	MP4FastStart  *bool `json:"mp4_fast_start,omitempty"`
+	MP4Fragmented bool  `json:"mp4_fragmented,omitempty"`
+
+	TSPacketCount int   `json:"ts_packet_count,omitempty"`
+	TSSyncErrors  int   `json:"ts_sync_errors,omitempty"`
+	TSTEIErrors   int   `json:"ts_tei_errors,omitempty"`
+	TSCCErrors    int   `json:"ts_cc_errors,omitempty"`
+	PCRCount      int   `json:"pcr_count,omitempty"`
+	PCRMaxGapMS   int64 `json:"pcr_max_gap_ms,omitempty"`
+
+	BitrateTimeline  []OfflineBitratePoint   `json:"bitrate_timeline,omitempty"`
+	VideoDeltaSeries []int64                 `json:"video_delta_series,omitempty"`
+	FrameSizeSeries  []OfflineFrameSizePoint `json:"frame_size_series,omitempty"`
+	AVSyncTimeline   []OfflineAVSyncPoint    `json:"av_sync_timeline,omitempty"`
+	NALUHistogram    map[string]int          `json:"nalu_histogram,omitempty"`
+
+	FrameTotal      int  `json:"frame_total,omitempty"`
+	FramesTruncated bool `json:"frames_truncated,omitempty"`
+
+	Peak200msKbps  float64              `json:"peak_200ms_kbps,omitempty"`
+	PeakToAvgRatio float64              `json:"peak_to_avg_ratio,omitempty"`
+	HealthChecks   []OfflineHealthCheck `json:"health_checks,omitempty"`
+
+	Warnings []string `json:"warnings,omitempty"`
+}
+
+// OfflineHealthCheck represents one structured rule result in the deep media health report.
+type OfflineHealthCheck struct {
+	Code            string `json:"code"`
+	Category        string `json:"category"` // codec / timeline / bitrate / audio / container / transport
+	Severity        string `json:"severity"` // ok / warn / error
+	Title           string `json:"title"`
+	Detail          string `json:"detail"`
+	Count           int    `json:"count,omitempty"`
+	FirstFrameIndex *int   `json:"first_frame_index,omitempty"` // 0-based index into FrameDetails
+	FirstDTSMS      int64  `json:"first_dts_ms,omitempty"`
 }
 
 type OfflineFrameDetail struct {
-	MediaType string `json:"media_type,omitempty"` // video/audio
-	DTS       int64  `json:"dts,omitempty"`
-	PTS       int64  `json:"pts,omitempty"`
-	CTS       int64  `json:"cts,omitempty"`
-	FrameLen  int    `json:"frame_len,omitempty"`
-	FrameType string `json:"frame_type,omitempty"` // I/P/B/- for audio
+	MediaType    string `json:"media_type,omitempty"` // video/audio
+	DTS          int64  `json:"dts,omitempty"`
+	PTS          int64  `json:"pts,omitempty"`
+	CTS          int64  `json:"cts,omitempty"`
+	FrameLen     int    `json:"frame_len,omitempty"`
+	FrameType    string `json:"frame_type,omitempty"`    // I/P/B/- for audio
+	StreamSource string `json:"stream_source,omitempty"` // "video" | "audio" | "input" | "pid:<n>"
+	StreamOffset int64  `json:"stream_offset,omitempty"`
+	StreamLen    int    `json:"stream_len,omitempty"`
+	NALULenSize  int    `json:"nalu_len_size,omitempty"` // 0 = Annex B / raw audio; 1..4 = AVCC/HVCC
 }
 
 // OfflinePESDetail 对应 TS 每个 PES 包一行（与 example/parse_ts 输出字段对齐）。
@@ -309,6 +436,9 @@ type OfflinePESDetail struct {
 	PayloadLen    int                `json:"payload_len"`
 	NALUCount     int                `json:"nalu_count,omitempty"`
 	NALUs         []OfflineNALUBrief `json:"nalus,omitempty"`
+	StreamOffset  int64              `json:"stream_offset,omitempty"`
+	StreamLen     int                `json:"stream_len,omitempty"`
+	FrameIndex    *int               `json:"frame_index,omitempty"`
 }
 
 type OfflineNALUBrief struct {
@@ -318,4 +448,82 @@ type OfflineNALUBrief struct {
 	TypeName string `json:"type_name,omitempty"`
 	Len      int    `json:"len,omitempty"`
 	Key      bool   `json:"key,omitempty"`
+}
+
+// OfflineRTPStats holds RFC 3550 RTP/RTCP statistics for one SSRC flow extracted from PCAP.
+type OfflineRTPStats struct {
+	SSRC           uint32  `json:"ssrc"`
+	PayloadType    uint8   `json:"payload_type"`
+	PayloadName    string  `json:"payload_name,omitempty"`
+	ClockRate      uint32  `json:"clock_rate,omitempty"`
+	Packets        int     `json:"packets"`
+	Expected       int     `json:"expected"`
+	Lost           int     `json:"lost"`
+	LossRatePct    float64 `json:"loss_rate_pct"`
+	OutOfOrder     int     `json:"out_of_order"`
+	Duplicates     int     `json:"duplicates"`
+	JitterMS       float64 `json:"jitter_ms"`
+	MaxJitterMS    float64 `json:"max_jitter_ms"`
+	Bytes          int64   `json:"bytes"`
+	FirstSeq       uint16  `json:"first_seq"`
+	LastSeq        uint16  `json:"last_seq"`
+	MarkerCount    int     `json:"marker_count"`
+	RTCPCount      int     `json:"rtcp_count,omitempty"`
+	RTCPSenderPkts uint32  `json:"rtcp_sender_packets,omitempty"`
+	RTCPFraction   float64 `json:"rtcp_fraction_lost_pct,omitempty"`
+}
+
+// OfflineTimeRange describes one detected event interval in seconds.
+type OfflineTimeRange struct {
+	StartSec    float64 `json:"start_sec"`
+	EndSec      float64 `json:"end_sec"`
+	DurationSec float64 `json:"duration_sec"`
+	Detail      string  `json:"detail,omitempty"`
+}
+
+// OfflineDecodeAudit holds FFmpeg decode/black/freeze/silence audit output.
+type OfflineDecodeAudit struct {
+	TaskID        string             `json:"task_id"`
+	FlowIndex     int                `json:"flow_index"`
+	InputPath     string             `json:"input_path"`
+	DurationMS    int64              `json:"duration_ms"`
+	DecodeErrors  int                `json:"decode_errors"`
+	ErrorSamples  []string           `json:"error_samples,omitempty"`
+	BlackFrames   []OfflineTimeRange `json:"black_frames,omitempty"`
+	FreezeFrames  []OfflineTimeRange `json:"freeze_frames,omitempty"`
+	SilenceRanges []OfflineTimeRange `json:"silence_ranges,omitempty"`
+	Warnings      []string           `json:"warnings,omitempty"`
+	GeneratedAt   time.Time          `json:"generated_at"`
+}
+
+// OfflineDiffRow is one field-level comparison entry between Task A and Task B.
+type OfflineDiffRow struct {
+	Category string `json:"category"`
+	Label    string `json:"label"`
+	ValueA   string `json:"value_a"`
+	ValueB   string `json:"value_b"`
+	Changed  bool   `json:"changed"`
+	Severity string `json:"severity,omitempty"` // "" | "warn" | "error"
+}
+
+// OfflineCompareSide summarizes one side of an A/B offline comparison.
+type OfflineCompareSide struct {
+	TaskID     string               `json:"task_id"`
+	InputName  string               `json:"input_name"`
+	InputSize  int64                `json:"input_size"`
+	Mode       OfflineMode          `json:"mode"`
+	FlowIndex  int                  `json:"flow_index"`
+	FlowLabel  string               `json:"flow_label"`
+	VideoCodec string               `json:"video_codec,omitempty"`
+	AudioCodec string               `json:"audio_codec,omitempty"`
+	Profile    *OfflineMediaProfile `json:"profile,omitempty"`
+}
+
+// OfflineCompareResult holds the full side-by-side comparison of two offline tasks.
+type OfflineCompareResult struct {
+	SideA        OfflineCompareSide `json:"side_a"`
+	SideB        OfflineCompareSide `json:"side_b"`
+	Rows         []OfflineDiffRow   `json:"rows"`
+	SummaryNotes []string           `json:"summary_notes,omitempty"`
+	ChangedCount int                `json:"changed_count"`
 }

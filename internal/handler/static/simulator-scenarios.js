@@ -4,6 +4,9 @@ const el = id => document.getElementById(id);
 const gb = '/api/simulators/gb28181';
 const platform = gb + '/platform';
 const onvif = '/api/simulators/onvif';
+const rtspSim = '/api/simulators/rtsp';
+const whepSim = '/api/simulators/whep';
+const rtmpSim = '/api/simulators/rtmp';
 const hls = '/api/simulators/hls';
 const media = '/api/simulators/media';
 const runs = '/api/diagnostics/runs';
@@ -848,6 +851,129 @@ async function runLLHLS(entry) {
   }
 }
 
+async function runRTSPSimulatorFault(fault, entry) {
+  let source;
+  let runPath;
+  try {
+    progress('启动独立 RTSP 故障源…');
+    const payload = fault === 'rtp_drop' ? {fault, drop_every: 6} : {fault};
+    source = await request(rtspSim + '/start', payload);
+    progress('启动排障采样并观测 RTSP 信令与 RTP 报文头…');
+    const run = await request(runs, {protocol: 'rtsp', transport: 'tcp', url: source.url, seconds: fault === 'rtp_drop' ? 4 : 3});
+    runPath = runs + '/' + run.id;
+    entry.diagnostic_id = run.id;
+    const report = await waitFor(async () => {
+      const detail = await request(runPath);
+      if (detail.status !== 'running' && !detail.report) throw new Error('RTSP 采样未生成报告。');
+      return detail.report;
+    }, 9000, 'RTSP 采样观测超时。');
+    const rtsp = report.rtsp || {};
+    const requests = (rtsp.requests || []).map(({method, status_code}) => ({method, status_code}));
+    entry.evidence = {fault, url: source.url, rtp_packets: rtsp.rtp_packets, requests};
+    if (fault === 'rtp_drop') {
+      const videoTrack = (rtsp.tracks || []).find(t => t.kind === 'video') || (rtsp.tracks || [])[0];
+      const gapSamples = (report.rtsp_packets?.samples || []).filter(s => s.anomaly === 'seq_gap');
+      entry.evidence.sequence_gaps = videoTrack?.sequence_gaps || 0;
+      entry.evidence.missing_packets = videoTrack?.missing_sequence_packets || 0;
+      entry.evidence.gap_sample_count = gapSamples.length;
+      entry.passed = Boolean(videoTrack && videoTrack.sequence_gaps > 0 && gapSamples.length > 0);
+      entry.detail = entry.passed
+        ? `检测到 ${videoTrack.sequence_gaps} 次序号缺口（缺失 ${videoTrack.missing_sequence_packets} 包，报文明细命中 ${gapSamples.length} 条）`
+        : '未在 RTSP 报告或报文明细中观测到预期序号缺口';
+    } else if (fault === 'not_found') {
+      const hit = requests.some(r => r.method === 'DESCRIBE' && r.status_code === 404);
+      entry.passed = hit && report.manifest?.observation?.failure_stage === 'rtsp_describe';
+      entry.detail = entry.passed ? 'DESCRIBE 返回 404 并定位至 rtsp_describe 阶段' : '未观测到预期的 DESCRIBE 404 故障';
+    } else {
+      const hit = requests.some(r => r.method === 'DESCRIBE' && r.status_code === 302);
+      entry.passed = hit;
+      entry.detail = entry.passed ? 'DESCRIBE 返回 302 重定向响应' : '未观测到预期的 DESCRIBE 302 响应';
+    }
+  } finally {
+    if (runPath) {
+      const latest = await request(runPath).catch(() => null);
+      if (latest?.status === 'running') await request(runPath + '/stop', null).catch(() => {});
+    }
+    if (source) await stopOwned(rtspSim, 'url', source.url).catch(() => {});
+  }
+}
+
+async function runWHEPScenario(mode, entry) {
+  let source;
+  let runPath;
+  try {
+    progress('启动 WHEP 模拟源…');
+    source = await request(whepSim + '/start', {mode});
+    const url = new URL(source.endpoint, location.origin).href;
+    progress('启动 WHEP 排障采样并观测信令与 RTP…');
+    const run = await request(runs, {protocol: 'whep', url, seconds: mode === 'auth_401' ? 3 : 5});
+    runPath = runs + '/' + run.id;
+    entry.diagnostic_id = run.id;
+    const report = await waitFor(async () => {
+      const detail = await request(runPath);
+      if (detail.status !== 'running' && !detail.report) throw new Error('WHEP 采样未生成报告。');
+      return detail.report;
+    }, 12000, 'WHEP 采样观测超时。');
+    const w = report.whep || {};
+    const tracks = w.tracks || [];
+    const videoTrack = tracks.find(t => t.kind === 'video') || tracks[0];
+    entry.evidence = {mode, url, http_status: w.http_status, ice_state: w.ice_state, dtls_state: w.dtls_state, tracks: tracks.length, packets: videoTrack?.packets || 0, missing: videoTrack?.missing_sequence_packets || 0};
+    if (mode === 'auth_401') {
+      entry.passed = w.http_status === 401 && report.manifest?.observation?.end_reason === 'whep_signaling_error';
+      entry.detail = entry.passed ? '信令返回 HTTP 401 并定位至 whep_signaling_error' : `预期 HTTP 401，实际 ${w.http_status || '无响应'}`;
+    } else if (mode === 'rtp_drop') {
+      entry.passed = Boolean(videoTrack && videoTrack.packets > 0 && (videoTrack.missing_sequence_packets > 0 || videoTrack.sequence_gaps > 0));
+      entry.detail = entry.passed ? `收包 ${videoTrack.packets} · 检测到缺口丢包 ${videoTrack.missing_sequence_packets || 0} 包` : '未在 WHEP 轨道中观测到预期 RTP 丢包';
+    } else {
+      entry.passed = Boolean(w.http_status === 201 && videoTrack && videoTrack.packets > 0);
+      entry.detail = entry.passed ? `HTTP 201 · ICE/DTLS 建连成功 · 收包 ${videoTrack.packets}` : '未观测到正常 WHEP 建连与 RTP 媒体';
+    }
+  } finally {
+    if (runPath) {
+      const latest = await request(runPath).catch(() => null);
+      if (latest?.status === 'running') await request(runPath + '/stop', null).catch(() => {});
+    }
+    if (source) await stopOwned(whepSim, 'endpoint', source.endpoint).catch(() => {});
+  }
+}
+
+async function runRTMPScenario(fault, entry) {
+  let source;
+  let runPath;
+  try {
+    progress('启动 RTMP 模拟源…');
+    source = await request(rtmpSim + '/start', {fault});
+    progress('启动 RTMP 排障采样…');
+    const run = await request(runs, {protocol: 'rtmp', url: source.url, seconds: fault === 'normal' ? 4 : 3});
+    runPath = runs + '/' + run.id;
+    entry.diagnostic_id = run.id;
+    const report = await waitFor(async () => {
+      const detail = await request(runPath);
+      if (detail.status !== 'running' && !detail.report) throw new Error('RTMP 采样未生成报告。');
+      return detail.report;
+    }, 10000, 'RTMP 采样观测超时。');
+    const obs = report.manifest?.observation || {};
+    const metrics = report.metrics || {};
+    entry.evidence = {fault, url: source.url, end_reason: obs.end_reason, failure_stage: obs.failure_stage, video_frames: metrics.video_frames || 0, audio_frames: metrics.audio_frames || 0};
+    if (fault === 'normal') {
+      entry.passed = Boolean(metrics.video_frames > 0);
+      entry.detail = entry.passed ? `正常拉流 · 视频 ${metrics.video_frames} 帧 / 音频 ${metrics.audio_frames || 0} 帧` : '未观测到正常 RTMP 视频帧';
+    } else if (fault === 'app_reject') {
+      entry.passed = obs.end_reason === 'rtmp_error' && obs.failure_stage === 'app_connect';
+      entry.detail = entry.passed ? '已定位 RTMP app_connect 阶段拒绝连接' : `预期 app_connect 失败，实际 ${obs.failure_stage || obs.end_reason || '未知'}`;
+    } else {
+      entry.passed = obs.end_reason === 'rtmp_error' && obs.failure_stage === 'play';
+      entry.detail = entry.passed ? '已定位 RTMP play 阶段流不存在故障' : `预期 play 失败，实际 ${obs.failure_stage || obs.end_reason || '未知'}`;
+    }
+  } finally {
+    if (runPath) {
+      const latest = await request(runPath).catch(() => null);
+      if (latest?.status === 'running') await request(runPath + '/stop', null).catch(() => {});
+    }
+    if (source) await stopOwned(rtmpSim, 'url', source.url).catch(() => {});
+  }
+}
+
 el('scenario-form').addEventListener('submit', async event => {
   event.preventDefault();
   if (busy) return;
@@ -860,9 +986,12 @@ el('scenario-form').addEventListener('submit', async event => {
   notice();
   try {
     if (family === 'gb') await runGB(expected, entry);
+    else if (family === 'whep') await runWHEPScenario(expected, entry);
+    else if (family === 'rtmp') await runRTMPScenario(expected, entry);
     else if (expected === 'source_port') await runRTSPSourcePort(entry);
     else if (expected === 'resolution') await runRTSPResolution(entry);
     else if (expected === 'fallback') await runRTSPFallback(entry);
+    else if (family === 'rtsp' && ['rtp_drop', 'not_found', 'redirect'].includes(expected)) await runRTSPSimulatorFault(expected, entry);
     else if (family === 'rtsp') await runRTSPReconnect(entry);
     else if (family === 'ts') await runTSJoin(expected, entry);
     else if (expected === 'audio_boundary') await runHLSAudioBoundary(entry);

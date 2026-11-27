@@ -2,7 +2,10 @@ package rtmpraw
 
 import (
 	"bytes"
+	"context"
+	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -19,6 +22,8 @@ const (
 type Options struct {
 	// SkipBytes drops bytes at the beginning of the raw stream (usually RTMP handshake).
 	SkipBytes int
+	// Context optionally cancels parsing mid-stream.
+	Context context.Context
 }
 
 type Output struct {
@@ -28,16 +33,31 @@ type Output struct {
 }
 
 type Result struct {
-	VideoCodec string // "h264", "h265", or ""
+	VideoCodec string // "h264", "h265", or another recognized name
+	AudioCodec string
+	Video      *codec.VideoMeta
+	Audio      *codec.AudioMeta
+	HEVC       bool
+	Warnings   []string
 }
 
 type FrameInfo struct {
-	MediaType string // video/audio
-	DTS       int64
-	PTS       int64
-	CTS       int64
-	FrameLen  int
-	FrameType string // I/P/B/- for audio
+	MediaType          string // video/audio
+	DTS                int64
+	PTS                int64
+	CTS                int64
+	FrameLen           int
+	FrameType          string // I/P/B/- for audio
+	StreamSource       string // "video" | "audio"
+	StreamOffset       int64
+	StreamLen          int
+	HasContainerParams bool
+	HasInbandParams    bool
+	ParamHash          string
+	VideoWidth         int
+	VideoHeight        int
+	AudioSampleRate    int
+	AudioChannels      int
 }
 
 type chunkStreamState struct {
@@ -55,6 +75,8 @@ type chunkStreamState struct {
 type mediaWriter struct {
 	videoOut io.Writer
 	audioOut io.Writer
+	videoPos int64
+	audioPos int64
 
 	videoCodec string
 
@@ -67,7 +89,15 @@ type mediaWriter struct {
 	h265SPSList [][]byte
 	h265PPSList [][]byte
 
+	paramHash string
+
 	aacASC []byte
+
+	audioCodec string
+	videoMeta  *codec.VideoMeta
+	audioMeta  *codec.AudioMeta
+	hevc       bool
+	warnings   []string
 
 	onFrame func(FrameInfo)
 }
@@ -93,22 +123,44 @@ func ParseRTMPRaw(r io.Reader, opt Options, out Output) (Result, error) {
 		onFrame:      out.OnFrame,
 	}
 
-	err := parseRTMPChunks(r, w)
+	err := parseRTMPChunks(opt.Context, r, w)
 	if err != nil &&
 		!errors.Is(err, io.EOF) &&
 		!errors.Is(err, io.ErrUnexpectedEOF) {
 		return Result{}, err
 	}
 
-	return Result{VideoCodec: w.videoCodec}, nil
+	return Result{
+		VideoCodec: w.videoCodec,
+		AudioCodec: w.audioCodec,
+		Video:      w.videoMeta,
+		Audio:      w.audioMeta,
+		HEVC:       w.hevc,
+		Warnings:   w.warnings,
+	}, nil
 }
 
-func parseRTMPChunks(r io.Reader, w *mediaWriter) error {
+func (w *mediaWriter) warn(msg string) {
+	if msg == "" || len(w.warnings) >= 8 {
+		return
+	}
+	for _, existing := range w.warnings {
+		if existing == msg {
+			return
+		}
+	}
+	w.warnings = append(w.warnings, msg)
+}
+
+func parseRTMPChunks(ctx context.Context, r io.Reader, w *mediaWriter) error {
 	const defaultChunkSize = 128
 	inChunkSize := uint32(defaultChunkSize)
 	states := map[int]*chunkStreamState{}
 
 	for {
+		if ctx != nil && ctx.Err() != nil {
+			return ctx.Err()
+		}
 		fmtVal, csid, err := readChunkBasicHeader(r)
 		if err != nil {
 			return err
@@ -322,6 +374,7 @@ func (w *mediaWriter) handleMessage(typeID byte, timestamp uint32, payload []byt
 func (w *mediaWriter) handleVideo(timestamp uint32, payload []byte) error {
 	var video tag.VideoData
 	if err := tag.DecodeVideoData(bytes.NewReader(payload), &video); err != nil {
+		w.warn("视频消息无法解码")
 		return nil
 	}
 
@@ -330,185 +383,448 @@ func (w *mediaWriter) handleVideo(timestamp uint32, payload []byte) error {
 		return err
 	}
 
-	switch video.CodecID {
-	case tag.CodecIDAVC:
-		switch video.AVCPacketType {
-		case tag.AVCPacketTypeSequenceHeader:
-			rec, err := codec.ParseAVCDecoderConfigurationRecord(body)
-			if err != nil {
-				return nil
-			}
-			w.videoCodec = "h264"
-			w.avccNALUSize = int(rec.LengthSizeMinusOne) + 1
-			w.avcSPSList = cloneNALs(rec.SequenceParameterSets)
-			w.avcPPSList = cloneNALs(rec.PictureParameterSets)
-			return nil
-
-		case tag.AVCPacketTypeNALU:
-			annexb, hasIDR, err := avccToAnnexB(body, w.avccNALUSize)
-			if err != nil {
-				return nil
-			}
-			if hasIDR && len(w.avcSPSList) > 0 && len(w.avcPPSList) > 0 {
-				for _, sps := range w.avcSPSList {
-					if _, err := w.videoOut.Write([]byte{0x00, 0x00, 0x00, 0x01}); err != nil {
-						return err
-					}
-					if _, err := w.videoOut.Write(sps); err != nil {
-						return err
-					}
-				}
-				for _, pps := range w.avcPPSList {
-					if _, err := w.videoOut.Write([]byte{0x00, 0x00, 0x00, 0x01}); err != nil {
-						return err
-					}
-					if _, err := w.videoOut.Write(pps); err != nil {
-						return err
-					}
-				}
-			}
-			_, err = w.videoOut.Write(annexb)
-			if err == nil && w.onFrame != nil {
-				pts := int64(timestamp) + int64(video.CompositionTime)
-				w.onFrame(FrameInfo{
-					MediaType: "video",
-					DTS:       int64(timestamp),
-					PTS:       pts,
-					CTS:       int64(video.CompositionTime),
-					FrameLen:  len(annexb),
-					FrameType: frameTypeToString(video.FrameType),
-				})
-			}
-			return err
-		default:
-			return nil
+	codecName, hevc, lengthPrefixed := classifyRTMPVideo(&video)
+	if codecName != "" && w.videoCodec == "" {
+		w.videoCodec = codecName
+		w.hevc = hevc
+	}
+	if !lengthPrefixed {
+		if codecName != "" {
+			w.warn("视频编码 " + codecName + " 已识别，当前仅导出 H.264/H.265 裸流")
 		}
-
-	case tag.CodecIDHEVC:
-		switch video.AVCPacketType {
-		case tag.AVCPacketTypeSequenceHeader:
-			rec, err := codec.ParseHEVCDecoderConfigurationRecord(body)
-			if err != nil {
-				return nil
-			}
-			w.videoCodec = "h265"
-			w.hvcNALUSize = int(rec.LengthSizeMinusOne) + 1
-			w.h265VPSList = nil
-			w.h265SPSList = nil
-			w.h265PPSList = nil
-			for _, arr := range rec.Arrays {
-				switch arr.NALUnitType {
-				case 32: // VPS_NUT
-					w.h265VPSList = append(w.h265VPSList, cloneNALs(arr.NALUnits)...)
-				case 33: // SPS_NUT
-					w.h265SPSList = append(w.h265SPSList, cloneNALs(arr.NALUnits)...)
-				case 34: // PPS_NUT
-					w.h265PPSList = append(w.h265PPSList, cloneNALs(arr.NALUnits)...)
-				}
-			}
-			return nil
-
-		case tag.AVCPacketTypeNALU:
-			annexb, err := hevcToAnnexB(body, w.hvcNALUSize)
-			if err != nil {
-				return nil
-			}
-			// FLV keyframe corresponds to an I frame; inject VPS/SPS/PPS before it.
-			if video.FrameType == tag.FrameTypeKeyFrame &&
-				len(w.h265VPSList) > 0 && len(w.h265SPSList) > 0 && len(w.h265PPSList) > 0 {
-				for _, vps := range w.h265VPSList {
-					if _, err := w.videoOut.Write([]byte{0x00, 0x00, 0x00, 0x01}); err != nil {
-						return err
-					}
-					if _, err := w.videoOut.Write(vps); err != nil {
-						return err
-					}
-				}
-				for _, sps := range w.h265SPSList {
-					if _, err := w.videoOut.Write([]byte{0x00, 0x00, 0x00, 0x01}); err != nil {
-						return err
-					}
-					if _, err := w.videoOut.Write(sps); err != nil {
-						return err
-					}
-				}
-				for _, pps := range w.h265PPSList {
-					if _, err := w.videoOut.Write([]byte{0x00, 0x00, 0x00, 0x01}); err != nil {
-						return err
-					}
-					if _, err := w.videoOut.Write(pps); err != nil {
-						return err
-					}
-				}
-			}
-			_, err = w.videoOut.Write(annexb)
-			if err == nil && w.onFrame != nil {
-				pts := int64(timestamp) + int64(video.CompositionTime)
-				w.onFrame(FrameInfo{
-					MediaType: "video",
-					DTS:       int64(timestamp),
-					PTS:       pts,
-					CTS:       int64(video.CompositionTime),
-					FrameLen:  len(annexb),
-					FrameType: frameTypeToString(video.FrameType),
-				})
-			}
-			return err
-		default:
-			return nil
-		}
-
-	default:
 		return nil
 	}
+	if videoSequence(&video) {
+		return w.takeVideoSequence(hevc, body)
+	}
+	if !videoCoded(&video) {
+		return nil
+	}
+	return w.writeCodedVideo(timestamp, &video, hevc, body)
+}
+
+func (w *mediaWriter) takeVideoSequence(hevc bool, body []byte) error {
+	if hevc {
+		rec, err := codec.ParseHEVCDecoderConfigurationRecord(body)
+		if err != nil {
+			w.warn("H.265 sequence header 无法解析")
+			return nil
+		}
+		w.videoCodec = "h265"
+		w.hevc = true
+		w.hvcNALUSize = int(rec.LengthSizeMinusOne) + 1
+		w.h265VPSList = nil
+		w.h265SPSList = nil
+		w.h265PPSList = nil
+		for _, arr := range rec.Arrays {
+			switch arr.NALUnitType {
+			case 32:
+				w.h265VPSList = append(w.h265VPSList, cloneNALs(arr.NALUnits)...)
+			case 33:
+				w.h265SPSList = append(w.h265SPSList, cloneNALs(arr.NALUnits)...)
+			case 34:
+				w.h265PPSList = append(w.h265PPSList, cloneNALs(arr.NALUnits)...)
+			}
+		}
+		if meta, err := codec.ParseHEVCDecoderConfig(body); err == nil {
+			w.videoMeta = meta
+		}
+		w.paramHash = hashNALGroups(w.h265VPSList, w.h265SPSList, w.h265PPSList)
+		return nil
+	}
+	rec, err := codec.ParseAVCDecoderConfigurationRecord(body)
+	if err != nil {
+		w.warn("H.264 sequence header 无法解析")
+		return nil
+	}
+	w.videoCodec = "h264"
+	w.hevc = false
+	w.avccNALUSize = int(rec.LengthSizeMinusOne) + 1
+	w.avcSPSList = cloneNALs(rec.SequenceParameterSets)
+	w.avcPPSList = cloneNALs(rec.PictureParameterSets)
+	if meta, err := codec.ParseAVCDecoderConfig(body); err == nil {
+		w.videoMeta = meta
+	}
+	w.paramHash = hashNALGroups(w.avcSPSList, w.avcPPSList)
+	return nil
+}
+
+func hashNALGroups(groups ...[][]byte) string {
+	h := sha256.New()
+	wrote := false
+	for _, g := range groups {
+		for _, n := range g {
+			if len(n) == 0 {
+				continue
+			}
+			_, _ = h.Write(n)
+			_, _ = h.Write([]byte{0xff})
+			wrote = true
+		}
+	}
+	if !wrote {
+		return ""
+	}
+	return hex.EncodeToString(h.Sum(nil)[:8])
+}
+
+func (w *mediaWriter) writeCodedVideo(timestamp uint32, video *tag.VideoData, hevc bool, body []byte) error {
+	if w.videoOut == nil {
+		return nil
+	}
+	var (
+		annexb           []byte
+		err              error
+		kind             string
+		hasInbandParams  bool
+		hasContainerParm bool
+	)
+	startPos := w.videoPos
+	if hevc {
+		annexb, err = hevcToAnnexB(body, w.hvcNALUSize)
+		if err != nil {
+			w.warn("H.265 帧无法转换为 Annex B")
+			return nil
+		}
+		nalus := codec.SplitAVCC(body, w.hvcNALUSize, true)
+		var hasV, hasS, hasP bool
+		for _, n := range nalus {
+			switch n.Type {
+			case 32:
+				hasV = true
+			case 33:
+				hasS = true
+			case 34:
+				hasP = true
+			}
+		}
+		hasInbandParams = hasV && hasS && hasP
+		hasContainerParm = len(w.h265VPSList) > 0 && len(w.h265SPSList) > 0 && len(w.h265PPSList) > 0
+		if video.FrameType == tag.FrameTypeKeyFrame && hasContainerParm {
+			n, err := writeAnnexBNALsCount(w.videoOut, w.h265VPSList, w.h265SPSList, w.h265PPSList)
+			if err != nil {
+				return err
+			}
+			w.videoPos += int64(n)
+		}
+		kind = codec.FrameKindFromNALUs(body, w.hvcNALUSize, true)
+	} else {
+		var hasIDR bool
+		annexb, hasIDR, err = avccToAnnexB(body, w.avccNALUSize)
+		if err != nil {
+			w.warn("H.264 帧无法转换为 Annex B")
+			return nil
+		}
+		nalus := codec.SplitAVCC(body, w.avccNALUSize, false)
+		var hasS, hasP bool
+		for _, n := range nalus {
+			switch n.Type {
+			case 7:
+				hasS = true
+			case 8:
+				hasP = true
+			}
+		}
+		hasInbandParams = hasS && hasP
+		hasContainerParm = len(w.avcSPSList) > 0 && len(w.avcPPSList) > 0
+		if hasIDR && hasContainerParm {
+			n, err := writeAnnexBNALsCount(w.videoOut, w.avcSPSList, w.avcPPSList)
+			if err != nil {
+				return err
+			}
+			w.videoPos += int64(n)
+		}
+		kind = codec.FrameKindFromNALUs(body, w.avccNALUSize, false)
+	}
+	n, err := w.videoOut.Write(annexb)
+	if err != nil {
+		return err
+	}
+	w.videoPos += int64(n)
+	if kind == "" {
+		kind = frameTypeToString(video.FrameType)
+	}
+	if w.onFrame != nil {
+		fi := FrameInfo{
+			MediaType:          "video",
+			DTS:                int64(timestamp),
+			PTS:                int64(timestamp) + int64(video.CompositionTime),
+			CTS:                int64(video.CompositionTime),
+			FrameLen:           len(annexb),
+			FrameType:          kind,
+			StreamSource:       "video",
+			StreamOffset:       startPos,
+			StreamLen:          int(w.videoPos - startPos),
+			HasContainerParams: hasContainerParm,
+			HasInbandParams:    hasInbandParams,
+			ParamHash:          w.paramHash,
+		}
+		if w.videoMeta != nil {
+			fi.VideoWidth = w.videoMeta.Width
+			fi.VideoHeight = w.videoMeta.Height
+		}
+		w.onFrame(fi)
+	}
+	return nil
+}
+
+func writeAnnexBNALsCount(w io.Writer, groups ...[][]byte) (int, error) {
+	start := []byte{0x00, 0x00, 0x00, 0x01}
+	total := 0
+	for _, group := range groups {
+		for _, nal := range group {
+			n, err := w.Write(start)
+			total += n
+			if err != nil {
+				return total, err
+			}
+			n, err = w.Write(nal)
+			total += n
+			if err != nil {
+				return total, err
+			}
+		}
+	}
+	return total, nil
+}
+
+func classifyRTMPVideo(video *tag.VideoData) (name string, hevc bool, lengthPrefixed bool) {
+	if video.IsExHeader {
+		switch video.VideoFourCC {
+		case tag.FourCCVideoAVC:
+			return "h264", false, true
+		case tag.FourCCVideoHEVC:
+			return "h265", true, true
+		default:
+			name = codec.VideoCodecName(video.VideoFourCC.String())
+			if name == "" {
+				name = video.VideoFourCC.String()
+			}
+			return name, false, false
+		}
+	}
+	switch video.CodecID {
+	case tag.CodecIDAVC:
+		return "h264", false, true
+	case tag.CodecIDHEVC:
+		return "h265", true, true
+	case tag.CodecIDJPEG:
+		return "mjpeg", false, false
+	case tag.CodecIDSorensonH263:
+		return "h263", false, false
+	case tag.CodecIDOn2VP6, tag.CodecIDOn2VP6WithAlphaChannel:
+		return "vp6", false, false
+	case tag.CodecIDScreenVideo, tag.CodecIDScreenVideoVersion2:
+		return "screenvideo", false, false
+	default:
+		if video.CodecID == 0 {
+			return "", false, false
+		}
+		return fmt.Sprintf("video:%d", video.CodecID), false, false
+	}
+}
+
+func videoSequence(video *tag.VideoData) bool {
+	if video.IsExHeader {
+		return video.VideoPacketType == tag.VideoPacketTypeSequenceStart
+	}
+	return video.AVCPacketType == tag.AVCPacketTypeSequenceHeader
+}
+
+func videoCoded(video *tag.VideoData) bool {
+	if video.IsExHeader {
+		return video.VideoPacketType == tag.VideoPacketTypeCodedFrames || video.VideoPacketType == tag.VideoPacketTypeCodedFramesX
+	}
+	return video.AVCPacketType == tag.AVCPacketTypeNALU
 }
 
 func (w *mediaWriter) handleAudio(timestamp uint32, payload []byte) error {
 	var audio tag.AudioData
 	if err := tag.DecodeAudioData(bytes.NewReader(payload), &audio); err != nil {
+		w.warn("音频消息无法解码")
 		return nil
 	}
-	if audio.SoundFormat != tag.SoundFormatAAC {
-		return nil
-	}
-
 	body, err := io.ReadAll(audio.Data)
 	if err != nil {
 		return err
 	}
+	name := classifyRTMPAudio(&audio)
+	if name == "" {
+		return nil
+	}
+	if w.audioCodec == "" {
+		w.audioCodec = name
+	} else if name != w.audioCodec {
+		w.warn("音频编码从 " + w.audioCodec + " 变为 " + name + "，后续音频未导出")
+		return nil
+	}
+	if name == "aac" {
+		return w.writeAAC(timestamp, &audio, body)
+	}
+	if name == "mp3" {
+		return w.writePassthroughAudio(timestamp, body)
+	}
+	w.warn("音频编码 " + name + " 已识别，当前仅导出 AAC ADTS 与 MP3")
+	if w.audioMeta == nil {
+		if rate, channels := legacySoundLayout(&audio); rate > 0 {
+			w.audioMeta = &codec.AudioMeta{SampleRate: rate, Channels: channels}
+		}
+	}
+	return nil
+}
+
+func (w *mediaWriter) writeAAC(timestamp uint32, audio *tag.AudioData, body []byte) error {
 	if len(body) == 0 {
 		return nil
 	}
-
-	switch audio.AACPacketType {
-	case tag.AACPacketTypeSequenceHeader:
+	if audioSequence(audio) {
 		w.aacASC = append(w.aacASC[:0], body...)
-		return nil
-	case tag.AACPacketTypeRaw:
-		if len(w.aacASC) < 2 {
-			return nil
+		if meta, err := codec.ParseAACAudioSpecificConfig(body); err == nil {
+			w.audioMeta = meta
 		}
-		adts, err := buildADTSHeader(w.aacASC, len(body))
-		if err != nil {
-			return nil
-		}
-		if _, err := w.audioOut.Write(adts); err != nil {
-			return err
-		}
-		_, err = w.audioOut.Write(body)
-		if err == nil && w.onFrame != nil {
-			w.onFrame(FrameInfo{
-				MediaType: "audio",
-				DTS:       int64(timestamp),
-				PTS:       int64(timestamp),
-				FrameLen:  len(adts) + len(body),
-				FrameType: "-",
-			})
-		}
-		return err
-	default:
 		return nil
 	}
+	if !audioCoded(audio) {
+		return nil
+	}
+	if len(w.aacASC) < 2 || w.audioOut == nil {
+		w.warn("AAC 帧缺少 sequence header，已跳过")
+		return nil
+	}
+	adts, err := buildADTSHeader(w.aacASC, len(body))
+	if err != nil {
+		w.warn("AAC ADTS 头无法生成")
+		return nil
+	}
+	startPos := w.audioPos
+	n1, err := w.audioOut.Write(adts)
+	if err != nil {
+		return err
+	}
+	w.audioPos += int64(n1)
+	n2, err := w.audioOut.Write(body)
+	if err != nil {
+		return err
+	}
+	w.audioPos += int64(n2)
+	if w.onFrame != nil {
+		fi := FrameInfo{
+			MediaType:    "audio",
+			DTS:          int64(timestamp),
+			PTS:          int64(timestamp),
+			FrameLen:     len(adts) + len(body),
+			FrameType:    "-",
+			StreamSource: "audio",
+			StreamOffset: startPos,
+			StreamLen:    n1 + n2,
+		}
+		if w.audioMeta != nil {
+			fi.AudioSampleRate = w.audioMeta.SampleRate
+			fi.AudioChannels = w.audioMeta.Channels
+		}
+		w.onFrame(fi)
+	}
+	return nil
+}
+
+func (w *mediaWriter) writePassthroughAudio(timestamp uint32, body []byte) error {
+	if len(body) == 0 || w.audioOut == nil {
+		return nil
+	}
+	startPos := w.audioPos
+	n, err := w.audioOut.Write(body)
+	if err != nil {
+		return err
+	}
+	w.audioPos += int64(n)
+	if w.onFrame != nil {
+		fi := FrameInfo{
+			MediaType:    "audio",
+			DTS:          int64(timestamp),
+			PTS:          int64(timestamp),
+			FrameLen:     len(body),
+			FrameType:    "-",
+			StreamSource: "audio",
+			StreamOffset: startPos,
+			StreamLen:    n,
+		}
+		if hdr, ok := codec.ParseAudioFrameHeader(body, "mp3"); ok {
+			fi.AudioSampleRate = hdr.SampleRate
+			fi.AudioChannels = hdr.Channels
+		} else if w.audioMeta != nil {
+			fi.AudioSampleRate = w.audioMeta.SampleRate
+			fi.AudioChannels = w.audioMeta.Channels
+		}
+		w.onFrame(fi)
+	}
+	return nil
+}
+
+func classifyRTMPAudio(audio *tag.AudioData) string {
+	if audio.IsExHeader {
+		if name := codec.AudioCodecName(audio.AudioFourCC.String()); name != "" {
+			if name == "mpeg4-audio" {
+				return "aac"
+			}
+			return name
+		}
+		if audio.AudioFourCC != 0 {
+			return audio.AudioFourCC.String()
+		}
+		return ""
+	}
+	switch audio.SoundFormat {
+	case tag.SoundFormatAAC:
+		return "aac"
+	case tag.SoundFormatMP3, tag.SoundFormatMP3_8kHz:
+		return "mp3"
+	case tag.SoundFormatSpeex:
+		return "speex"
+	case tag.SoundFormatNellymoser, tag.SoundFormatNellymoser16kHzMono, tag.SoundFormatNellymoser8kHzMono:
+		return "nellymoser"
+	case tag.SoundFormatG711ALawLogarithmicPCM:
+		return "g711-alaw"
+	case tag.SoundFormatG711muLawLogarithmicPCM:
+		return "g711-mulaw"
+	case tag.SoundFormatLinearPCMPlatformEndian, tag.SoundFormatLinearPCMLittleEndian:
+		return "pcm"
+	case tag.SoundFormatADPCM:
+		return "adpcm"
+	default:
+		return ""
+	}
+}
+
+func audioSequence(audio *tag.AudioData) bool {
+	if audio.IsExHeader {
+		return audio.AudioPacketType == tag.AudioPacketTypeSequenceStart
+	}
+	return audio.AACPacketType == tag.AACPacketTypeSequenceHeader
+}
+
+func audioCoded(audio *tag.AudioData) bool {
+	if audio.IsExHeader {
+		return audio.AudioPacketType == tag.AudioPacketTypeCodedFrames
+	}
+	return audio.AACPacketType == tag.AACPacketTypeRaw
+}
+
+func legacySoundLayout(audio *tag.AudioData) (rate int, channels int) {
+	switch audio.SoundRate {
+	case tag.SoundRate5_5kHz:
+		rate = 5512
+	case tag.SoundRate11kHz:
+		rate = 11025
+	case tag.SoundRate22kHz:
+		rate = 22050
+	case tag.SoundRate44kHz:
+		rate = 44100
+	}
+	channels = 1
+	if audio.SoundType == tag.SoundTypeStereo {
+		channels = 2
+	}
+	return rate, channels
 }
 
 func frameTypeToString(ft tag.FrameType) string {

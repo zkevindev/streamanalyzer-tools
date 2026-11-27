@@ -257,7 +257,7 @@ func readBundle(dir string, source io.Reader) (Report, error) {
 	if entries[name] == nil {
 		return Report{}, fmt.Errorf("%w: 缺少协议对应的原始流", ErrInvalid)
 	}
-	for _, other := range []string{streamName, rtmpStreamName, hlsStreamName, tsStreamName, udpStreamName, rtpStreamName, rtspStreamName} {
+	for _, other := range []string{streamName, rtmpStreamName, hlsStreamName, tsStreamName, udpStreamName, rtpStreamName, rtspStreamName, whepStreamName, dashStreamName} {
 		if other != name && entries[other] != nil {
 			return Report{}, fmt.Errorf("%w: 证据包包含其他协议的原始流", ErrInvalid)
 		}
@@ -294,6 +294,10 @@ func readBundle(dir string, source io.Reader) (Report, error) {
 		report, err = replayTS(dir, manifest)
 	case ProtocolRTSP, ProtocolRTSPS:
 		report, err = replayRTSP(dir, manifest)
+	case ProtocolWHEP:
+		report, err = replayWHEP(dir, manifest)
+	case ProtocolDASH:
+		report, err = replayDASH(dir, manifest)
 	default:
 		return Report{}, fmt.Errorf("%w: 不支持的采样协议", ErrInvalid)
 	}
@@ -380,6 +384,10 @@ func dumpName(protocol string) string {
 		return rtpStreamName
 	case ProtocolRTSP, ProtocolRTSPS:
 		return rtspStreamName
+	case ProtocolWHEP:
+		return whepStreamName
+	case ProtocolDASH:
+		return dashStreamName
 	default:
 		return ""
 	}
@@ -389,7 +397,7 @@ func bundleEntries(files []*zip.File) (map[string]*zip.File, error) {
 	limits := map[string]uint64{
 		manifestName: maxManifestBytes, timelineName: maxTimeline,
 		streamName: maxStreamBytes, rtmpStreamName: maxStreamBytes, hlsStreamName: maxStreamBytes,
-		tsStreamName: maxStreamBytes, udpStreamName: maxStreamBytes, rtpStreamName: maxStreamBytes, rtspStreamName: maxStreamBytes,
+		tsStreamName: maxStreamBytes, udpStreamName: maxStreamBytes, rtpStreamName: maxStreamBytes, rtspStreamName: maxStreamBytes, whepStreamName: maxStreamBytes, dashStreamName: maxStreamBytes,
 		reportName: 8 << 20, htmlName: 20 << 20, investigationName: maxInvestigationBytes,
 		playerName: maxPlayerBytes, playerNetworkName: maxPlayerNetworkBytes,
 		explanationName:            maxReportExplanationBytes,

@@ -77,3 +77,16 @@ func TestReconnectValidation(t *testing.T) {
 		}
 	}
 }
+
+func TestReconnectValidationAllowsWHEPAndHTTPTS(t *testing.T) {
+	for _, proto := range []string{ProtocolHTTPFLV, ProtocolHTTPTS, ProtocolRTMP, ProtocolRTSP, ProtocolRTSPS, ProtocolWHEP} {
+		if err := validateReconnect(SampleRequest{Protocol: proto, ReconnectAttempts: 2, ReconnectDelayMS: 200}); err != nil {
+			t.Fatalf("validateReconnect rejected supported protocol %s: %v", proto, err)
+		}
+	}
+	for _, proto := range []string{ProtocolHLS, ProtocolUDPTS, ProtocolRTPTS} {
+		if err := validateReconnect(SampleRequest{Protocol: proto, ReconnectAttempts: 1}); err == nil {
+			t.Fatalf("validateReconnect unexpectedly accepted %s", proto)
+		}
+	}
+}

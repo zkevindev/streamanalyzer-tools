@@ -7,14 +7,12 @@
     <link rel="stylesheet" href="/static/workbench-theme.css">
     <link rel="stylesheet" href="/static/diagnostics.css">
     <link rel="stylesheet" href="/static/onvif-discovery.css">
-    <link rel="stylesheet" href="/static/hls-stats.css">
     <script src="/static/opus-webm.js" defer></script>
     <script src="/static/mpegts.js" defer></script>
     <script src="/static/hls.min.js" defer></script>
     <script src="/static/player-diagnostics.js" defer></script>
     <script src="/static/diagnostics.js" defer></script>
     <script src="/static/diagnostics-navigation.js" defer></script>
-    <script src="/static/hls-stats.js" defer></script>
     <script src="/static/onvif-discovery.js" defer></script>
     <script src="/static/workbench-navigation.js" defer></script>
 </head>
@@ -36,10 +34,6 @@
         <section id="capture-panel" class="panel" aria-labelledby="capture-heading">
             <div class="panel-heading">
                 <h2 id="capture-heading">流媒体采样</h2>
-                <div id="hls-mode-switch" class="hls-mode-switch" role="tablist" aria-label="HLS 排障模式" hidden>
-                    <button type="button" role="tab" data-hls-mode="capture" aria-selected="true">流采样与证据包</button>
-                    <button type="button" role="tab" data-hls-mode="delivery" aria-selected="false">交付分析与 A/B 对比</button>
-                </div>
             </div>
             <form class="panel-body" id="sample">
                 <div class="sample-source">
@@ -50,6 +44,8 @@
                             <option value="rtmp">RTMP / RTMPS</option>
                             <option value="rtsp">RTSP · TCP / UDP</option>
                             <option value="rtsps">RTSPS · TLS/TCP</option>
+                            <option value="whep">WHEP (WebRTC)</option>
+                            <option value="dash">MPEG-DASH (.mpd)</option>
                             <option value="hls">HLS</option>
                             <option value="http-ts">HTTP MPEG-TS</option>
                             <option value="udp-ts">UDP MPEG-TS</option>
@@ -71,6 +67,13 @@
                         <select id="rtsp-transport" aria-describedby="url-hint">
                             <option value="tcp">TCP 交织 RTP/RTCP</option>
                             <option value="udp">UDP 单播 RTP/RTCP</option>
+                        </select>
+                    </div>
+                    <div id="whep-options" hidden>
+                        <label for="whep-ice-policy">WebRTC ICE 策略</label>
+                        <select id="whep-ice-policy" aria-describedby="url-hint">
+                            <option value="all">自动（直连优先 / all）</option>
+                            <option value="relay">强制中继（仅 TURN / relay）</option>
                         </select>
                     </div>
                     <div id="hls-variant-option" hidden>
@@ -98,11 +101,11 @@
                 <details id="session-options" class="report-details">
                     <summary>重连与滚动分段</summary>
                     <div class="session-options-fields">
-                        <div id="reconnect-options" class="session-fields" hidden>
+                        <div id="reconnect-options" class="session-fields">
                             <div><label for="reconnect-attempts">异常重连次数</label><input id="reconnect-attempts" type="number" min="0" max="3" value="0"></div>
                             <div><label for="reconnect-delay">重连间隔（ms）</label><input id="reconnect-delay" type="number" min="0" max="5000" value="500"></div>
                         </div>
-                        <div id="rolling-options" class="session-fields" hidden>
+                        <div id="rolling-options" class="session-fields">
                             <div><label for="segment-seconds">分段时长（0 不滚动）</label><input id="segment-seconds" type="number" min="0" max="300" value="0"></div>
                             <div><label for="rolling-segments">保留最近段数</label><input id="rolling-segments" type="number" min="1" max="12" value="3" disabled></div>
                         </div>
@@ -111,7 +114,7 @@
                 </details>
                 <details id="http-access-options" class="report-details">
                     <summary>访问条件（请求头、代理与 CA）</summary>
-                    <p class="field-hint muted">请求头与代理由 HTTP-FLV、HLS、HTTP MPEG-TS 使用；附加 CA 还可用于 RTMPS/RTSPS。HLS 实际播放请求使用相同配置。凭据不会写入任务记录，报告中的敏感头字段仍会脱敏。</p>
+                    <p class="field-hint muted">请求头与代理由 HTTP-FLV、HLS、HTTP MPEG-TS、WHEP 和 MPEG-DASH 使用；附加 CA 还可用于 RTMPS/RTSPS。HLS 实际播放请求使用相同配置。凭据不会写入任务记录，报告中的敏感头字段仍会脱敏。</p>
                     <label for="http-headers">自定义请求头（每行一个，格式为 <code>Name: value</code>，最多 16 个）</label>
                     <textarea id="http-headers" rows="4" autocomplete="off" spellcheck="false" placeholder="Authorization: Bearer ...&#10;Cookie: session=...&#10;Referer: https://example.com/player"></textarea>
                     <label for="http-proxy-url">HTTP / HTTPS 代理地址（可选）</label>
@@ -129,6 +132,8 @@
                     <select id="batch-protocol">
                         <option value="http-flv">HTTP-FLV</option><option value="rtmp">RTMP / RTMPS</option>
                         <option value="rtsp">RTSP · TCP</option><option value="rtsps">RTSPS · TLS/TCP</option>
+                        <option value="whep">WHEP (WebRTC)</option>
+                        <option value="dash">MPEG-DASH (.mpd)</option>
                         <option value="hls">HLS</option><option value="http-ts">HTTP MPEG-TS</option>
                         <option value="udp-ts">UDP MPEG-TS</option><option value="rtp-ts">RTP MPEG-TS</option>
                     </select>
@@ -139,51 +144,6 @@
                     <button type="submit">开始批量采样</button>
                 </form>
             </details>
-            <div id="hls-delivery-panel" class="panel-body hls-tool hls-embedded" hidden>
-                <form id="hls-form" aria-label="HLS 交付分析配置">
-                    <fieldset id="hls-fields">
-                        <div class="hls-setup">
-                            <div>
-                                <label for="hls-command">分析方式</label>
-                                <select id="hls-command" aria-describedby="hls-mode-hint">
-                                    <option value="analyze">抽样分片</option>
-                                    <option value="manifest">检查播放列表</option>
-                                    <option value="monitor">监控直播窗口</option>
-                                    <option value="compare">A/B 对比</option>
-                                </select>
-                            </div>
-                            <div>
-                                <label for="hls-url" id="hls-url-label">播放列表地址</label>
-                                <input type="url" id="hls-url" placeholder="输入 .m3u8 播放列表地址" required>
-                            </div>
-                            <div class="hls-full" id="hls-second" hidden>
-                                <label for="hls-url-b">B 路播放列表</label>
-                                <input type="url" id="hls-url-b" placeholder="输入 B 路 .m3u8 播放列表地址">
-                            </div>
-                        </div>
-                        <p id="hls-mode-hint" class="hls-muted"></p>
-                        <details class="hls-options">
-                            <summary>采样参数</summary>
-                            <div class="hls-params">
-                                <div data-segment-option><label for="hls-segments">分片数</label><input id="hls-segments" type="number" min="1" value="10" required></div>
-                                <div data-segment-option><label for="hls-variant">档位（-1 为自动）</label><input id="hls-variant" type="number" min="-1" value="-1" required></div>
-                                <div data-segment-option><label for="hls-duration">任务时限（例如 30s）</label><input id="hls-duration" value="30s" required></div>
-                                <div><label for="hls-timeout">请求超时（例如 10s）</label><input id="hls-timeout" value="10s" required></div>
-                                <div data-segment-option><label for="hls-error-threshold">错误率阈值（%）</label><input id="hls-error-threshold" type="number" min="0" max="100" step="0.1" value="0" required></div>
-                            </div>
-                            <div class="hls-checks" data-segment-option>
-                                <label><input type="checkbox" id="hls-parse">解析分片 PTS 和关键帧</label>
-                                <label><input type="checkbox" id="hls-all">采样所有档位</label>
-                            </div>
-                        </details>
-                    </fieldset>
-                    <div class="hls-actions">
-                        <button type="submit" id="hls-start">开始分析</button>
-                        <button type="button" id="hls-stop" class="hls-secondary" hidden>停止分析</button>
-                        <p id="hls-status" role="status"></p>
-                    </div>
-                </form>
-            </div>
         </section>
         <section id="evidence-import-panel" class="panel" aria-labelledby="import-heading" hidden>
             <div class="panel-heading"><h2 id="import-heading">导入证据包</h2></div>
@@ -263,6 +223,7 @@
                     <section id="throughput-report" hidden>
                         <h3 class="report-title">网络吞吐与媒体码率</h3>
                         <dl id="throughput-metrics" class="metrics"></dl>
+                        <div id="throughput-chart"></div>
                         <div id="throughput-samples"></div>
                         <p id="throughput-boundary" class="timing-note muted"></p>
                     </section>
@@ -297,7 +258,7 @@
                             <p id="request-timing-note" class="timing-note muted">单位为毫秒。采样偏移从采样开始计时，TTFB 从当次请求开始计时。— 表示未测得。</p>
                             <div id="request-table"></div>
                             <p id="request-timing-truncated" class="timing-note muted" hidden></p>
-                            <section id="http-headers" aria-labelledby="http-headers-title">
+                            <section id="http-headers-report" aria-labelledby="http-headers-title">
                                 <h4 id="http-headers-title">HTTP 请求与响应头</h4>
                                 <p class="timing-note muted">逐次请求展示客户端记录的头字段。敏感字段已脱敏，URL 查询参数已移除；字段大小写和顺序可能经过协议库归一化。</p>
                                 <div id="http-header-details"></div>
@@ -324,11 +285,31 @@
                             <p>偏移以各轨道的发送报告为基准，接收间隔偏差单独统计。</p>
                             <div id="rtsp-clock-table"></div>
                         </details>
-                        <details class="report-details">
+                        <details class="report-details" open>
                             <summary>RTP 序号与时间戳统计</summary>
                             <p id="rtsp-sequence-note" class="timing-note muted"></p>
                             <div id="rtsp-sequence-table"></div>
                         </details>
+                        <details id="rtsp-packets-section" class="report-details" open hidden>
+                            <summary id="rtsp-packets-summary">RTP 报文序号与时间戳明细</summary>
+                            <p id="rtsp-packets-note" class="timing-note muted"></p>
+                            <div id="rtsp-packet-filters" class="tool-row" role="group" aria-label="筛选 RTP 报文"></div>
+                            <div id="rtsp-packet-chart"></div>
+                            <div id="rtsp-packet-table"></div>
+                        </details>
+                    </section>
+                    <section id="whep-report" aria-labelledby="whep-title" hidden>
+                        <h3 id="whep-title" class="report-title">WHEP 信令、ICE/DTLS 与 RTP 接收</h3>
+                        <p id="whep-note" class="timing-note muted"></p>
+                        <dl id="whep-metrics" class="metrics"></dl>
+                        <div id="whep-tracks-table"></div>
+                    </section>
+                    <section id="dash-report" aria-labelledby="dash-title" hidden>
+                        <h3 id="dash-title" class="report-title">MPEG-DASH 清单与分片指标</h3>
+                        <p id="dash-note" class="timing-note muted"></p>
+                        <dl id="dash-metrics" class="metrics"></dl>
+                        <div id="dash-reps-table"></div>
+                        <div id="dash-segments-table"></div>
                     </section>
                     <section id="player-report" aria-labelledby="player-report-title" hidden>
                         <h3 id="player-report-title" class="report-title">播放器体验</h3>
@@ -342,6 +323,7 @@
                         </section>
                         <div id="player-presentation-report"></div>
                         <div id="player-scheduling-report"></div>
+                        <div id="player-webrtc-report"></div>
                         <div id="player-buffer"></div>
                         <div id="player-stalls"></div>
                         <section id="stall-investigations" aria-labelledby="stall-investigations-title" hidden>
@@ -432,13 +414,6 @@
     <section id="batch-results" class="panel" aria-labelledby="batch-results-title" hidden>
         <div class="panel-heading"><h2 id="batch-results-title">批量诊断结果</h2><button id="stop-batch" type="button" class="secondary" hidden>停止本批次</button></div>
         <div class="panel-body"><p id="batch-status" class="muted" role="status"></p><div id="batch-runs"></div><div id="batch-comparisons"></div></div>
-    </section>
-    <section id="hls-results" class="hls-tool hls-embedded-results" aria-labelledby="hls-results-title" hidden>
-        <header class="hls-results-heading">
-            <h2 id="hls-results-title">HLS 交付分析结果</h2>
-            <button type="button" id="hls-export" class="hls-secondary">保存报告 JSON</button>
-        </header>
-        <div id="hls-report"></div>
     </section>
     </div>
     <section id="onvif-discovery" aria-labelledby="onvif-title" hidden>

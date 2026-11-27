@@ -33,12 +33,12 @@
     padding: 0 1.1rem;
     border-radius: 0.65rem;
     background: var(--primary);
-    color: #fff;
+    color: var(--primary-ink);
     font-weight: 740;
     text-decoration: none;
     transition: background-color 0.16s ease;
 }
-.home-primary:hover { background: #305ce5; }
+.home-primary:hover { background: var(--primary-hover); }
 .home-primary:focus-visible { outline-color: var(--signal); }
 .home-arrow { width: 1.35rem; height: 1.35rem; flex: none; }
 .home-signal { display: flex; align-items: center; min-width: 0; padding-block: 1.45rem; }
@@ -92,6 +92,35 @@
 }
 .home-tool-list span { color: var(--muted); font-size: 0.9rem; line-height: 1.55; }
 .home-tool-list .home-arrow { color: var(--accent-hover); }
+
+.home-simulator-links { margin-top: 2rem; }
+.home-simulator-links h2 { margin: 0 0 0.85rem; font-size: 1.12rem; }
+.home-matrix {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr));
+    gap: 0.7rem;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+.home-matrix li { min-width: 0; }
+.home-matrix a {
+    box-sizing: border-box;
+    display: grid;
+    align-content: center;
+    gap: 0.3rem;
+    min-height: 4.3rem;
+    height: 100%;
+    padding: 0.65rem 0.85rem;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    background: var(--surface);
+    color: var(--text);
+    text-decoration: none;
+}
+.home-matrix a:hover { border-color: var(--accent-border); background: var(--surface-hover); }
+.home-matrix strong { font-size: 0.89rem; }
+.home-matrix span { font-size: 0.8rem; color: var(--muted); }
 
 @media (min-width: 75rem) {
     .home { --gutter: clamp(2rem, 2.6vw, 2.5rem); }

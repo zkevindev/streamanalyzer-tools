@@ -33,6 +33,10 @@ var reportPage = template.Must(template.New("report").Funcs(template.FuncMap{
 	"rtspReport":             renderRTSPHTML,
 	"rtspEvidenceRows":       renderRTSPEvidenceRows,
 	"rtspFirstPacket":        rtspFirstPacket,
+	"isWHEP":                 func(p string) bool { return p == ProtocolWHEP },
+	"whepReport":             renderWHEPHTML,
+	"isDASH":                 func(p string) bool { return p == ProtocolDASH },
+	"dashReport":             renderDASHHTML,
 	"mediaArrival":           mediaArrivalLabel,
 	"phaseDuration":          requestPhaseDuration,
 	"requestKind":            httpTimingKindLabel,
@@ -554,6 +558,8 @@ thead{color:#52657e;background:#f7f9fc}
 </article>
 {{end}}
 {{else if isRTSP .Report.Manifest.Protocol}}{{rtspReport .Report}}
+{{else if isWHEP .Report.Manifest.Protocol}}{{whepReport .Report}}
+{{else if isDASH .Report.Manifest.Protocol}}{{dashReport .Report}}
 {{else}}
 {{with .Report.Metrics}}
 <article><h2>媒体指标</h2><dl>
@@ -676,6 +682,16 @@ func stageLabel(name string, legacyRTMP bool) string {
 			return "RTMP 建连与播放协商"
 		}
 		return "RTMP 播放协商"
+	case "whep_ice_gather":
+		return "WHEP ICE 候选收集"
+	case "whep_signaling":
+		return "WHEP HTTP 信令交换"
+	case "whep_ice":
+		return "WebRTC ICE 建连"
+	case "whep_dtls":
+		return "WebRTC DTLS 握手"
+	case "whep_receive":
+		return "WebRTC RTP 媒体接收"
 	default:
 		return name
 	}
@@ -702,6 +718,12 @@ func httpTimingKindLabel(kind string) string {
 		return "初始化段"
 	case "hls_segment":
 		return "媒体分片"
+	case "dash_manifest":
+		return "MPD 清单"
+	case "dash_init":
+		return "DASH 初始化段"
+	case "dash_segment":
+		return "DASH 媒体分片"
 	default:
 		return kind
 	}
@@ -934,6 +956,10 @@ func RenderHTMLWithAssets(w io.Writer, report Report, explanation *Explanation, 
 		protocol = "RTSP"
 	case ProtocolRTSPS:
 		protocol = "RTSPS"
+	case ProtocolWHEP:
+		protocol = "WHEP (WebRTC)"
+	case ProtocolDASH:
+		protocol = "MPEG-DASH"
 	case ProtocolHTTPTS:
 		protocol, mpegTS = "HTTP MPEG-TS", true
 	case ProtocolUDPTS:

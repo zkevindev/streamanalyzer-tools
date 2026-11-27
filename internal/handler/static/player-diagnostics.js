@@ -44,7 +44,7 @@
         }
         const url = new URL(path, local);
         const socketProtocol = local.protocol === 'https:' ? 'wss:' : 'ws:';
-        const isSocket = transport !== 'hls';
+        const isSocket = transport !== 'hls' && transport !== 'whep';
         if (url.host !== local.host || url.username || url.password ||
             (url.protocol !== local.protocol && !(isSocket && url.protocol === socketProtocol))) {
             throw new Error('Invalid player URL');
@@ -123,8 +123,12 @@
             this.startedAt = new Date(options.startedAt ?? Date.now());
             const previousMS = Math.max(0, Date.now() - this.startedAt.getTime());
             this.startClock = options.startedAtPerformanceMS ?? performance.now() - previousMS;
-            this.engine = grant.transport === 'hls' ? 'hlsjs' : 'mpegtsjs';
+            this.engine = grant.transport === 'hls' ? 'hlsjs' : grant.transport === 'whep' ? 'webrtc' : 'mpegtsjs';
             this.source = grant.source;
+            this.webrtcStats = null;
+            this.webrtcStatsTimer = null;
+            this.webrtcPrevBytes = null;
+            this.webrtcPrevAt = null;
             this.events = [];
             this.samples = [];
             this.listeners = [];
@@ -523,6 +527,9 @@
                 case 'hls':
                     this.attachHLS(url);
                     break;
+                case 'whep':
+                    this.attachWHEP(url);
+                    break;
                 case 'flv':
                 case 'mpegts':
                     this.attachMPEGTS(url, transport);
@@ -533,6 +540,198 @@
             } catch {
                 this.event('error', {code: 'media_error'});
             }
+        }
+
+        attachWHEP(url) {
+            const video = this.video;
+            if (typeof RTCPeerConnection === 'undefined') {
+                this.event('unsupported', {code: 'unsupported'});
+                return;
+            }
+            this.engine = 'webrtc';
+            let pc = null;
+            const stream = new MediaStream();
+            let closed = false;
+            this.webrtcStats = {
+                ice_state: 'new',
+                connection_state: 'new',
+                stats_samples: 0,
+            };
+
+            const collectStats = async () => {
+                if (closed || !pc) return;
+                try {
+                    const report = await pc.getStats();
+                    const codecs = new Map();
+                    const localCands = new Map();
+                    const remoteCands = new Map();
+                    let selectedPair = null;
+                    let packetsRecv = 0, packetsLost = 0, bytesRecv = 0;
+                    let jitterMS = 0, jbAvgMS = 0;
+                    let framesDecoded = 0, framesDropped = 0, freezeCount = 0, freezeDurationMS = 0;
+                    let pli = 0, nack = 0, fir = 0, concealed = 0;
+                    let videoCodec = '', audioCodec = '';
+                    report.forEach((s) => {
+                        if (s.type === 'codec') codecs.set(s.id, s);
+                        else if (s.type === 'local-candidate') localCands.set(s.id, s);
+                        else if (s.type === 'remote-candidate') remoteCands.set(s.id, s);
+                        else if (s.type === 'candidate-pair' && (s.selected || s.state === 'succeeded')) {
+                            if (!selectedPair || s.selected) selectedPair = s;
+                        }
+                    });
+                    report.forEach((s) => {
+                        if (s.type !== 'inbound-rtp') return;
+                        packetsRecv += Number(s.packetsReceived || 0);
+                        packetsLost += Math.max(0, Number(s.packetsLost || 0));
+                        bytesRecv += Number(s.bytesReceived || 0);
+                        if (typeof s.jitter === 'number' && isFinite(s.jitter)) {
+                            jitterMS = Math.max(jitterMS, Math.round(s.jitter * 100000) / 100);
+                        }
+                        if (typeof s.jitterBufferDelay === 'number' && Number(s.jitterBufferEmittedCount || 0) > 0) {
+                            const avg = (s.jitterBufferDelay / s.jitterBufferEmittedCount) * 1000;
+                            if (isFinite(avg) && avg > jbAvgMS) jbAvgMS = Math.round(avg * 10) / 10;
+                        }
+                        const c = s.codecId ? codecs.get(s.codecId) : null;
+                        const mime = c?.mimeType ? String(c.mimeType).split('/').pop().toLowerCase() : '';
+                        if (s.kind === 'video') {
+                            if (mime) videoCodec = mime;
+                            framesDecoded += Number(s.framesDecoded || 0);
+                            framesDropped += Number(s.framesDropped || 0);
+                            freezeCount += Number(s.freezeCount || 0);
+                            freezeDurationMS += Math.round(Number(s.totalFreezesDuration || 0) * 1000);
+                            pli += Number(s.pliCount || 0);
+                            nack += Number(s.nackCount || 0);
+                            fir += Number(s.firCount || 0);
+                        } else if (s.kind === 'audio') {
+                            if (mime) audioCodec = mime;
+                            concealed += Number(s.concealedSamples || 0);
+                        }
+                    });
+                    let bitrateKbps = this.webrtcStats?.bitrate_kbps || 0;
+                    const now = performance.now();
+                    if (this.webrtcPrevBytes != null && this.webrtcPrevAt != null && now > this.webrtcPrevAt) {
+                        const db = Math.max(0, bytesRecv - this.webrtcPrevBytes);
+                        const dt = (now - this.webrtcPrevAt) / 1000;
+                        bitrateKbps = Math.round((db * 8 / dt / 1000) * 10) / 10;
+                    }
+                    this.webrtcPrevBytes = bytesRecv;
+                    this.webrtcPrevAt = now;
+
+                    const lc = selectedPair ? localCands.get(selectedPair.localCandidateId) : null;
+                    const rc = selectedPair ? remoteCands.get(selectedPair.remoteCandidateId) : null;
+                    const rtt = (selectedPair && typeof selectedPair.currentRoundTripTime === 'number' && isFinite(selectedPair.currentRoundTripTime))
+                        ? Math.round(selectedPair.currentRoundTripTime * 10000) / 10
+                        : undefined;
+                    this.webrtcStats = {
+                        ice_state: pc.iceConnectionState || 'new',
+                        connection_state: pc.connectionState || 'new',
+                        selected_candidate_type: lc?.candidateType || '',
+                        selected_remote_type: rc?.candidateType || '',
+                        selected_protocol: lc?.protocol || '',
+                        current_rtt_ms: rtt,
+                        video_codec: videoCodec,
+                        audio_codec: audioCodec,
+                        packets_received: packetsRecv,
+                        packets_lost: packetsLost,
+                        jitter_ms: jitterMS,
+                        jitter_buffer_avg_ms: jbAvgMS,
+                        frames_decoded: framesDecoded,
+                        frames_dropped: framesDropped,
+                        freeze_count: freezeCount,
+                        total_freezes_duration_ms: freezeDurationMS,
+                        pli_count: pli,
+                        nack_count: nack,
+                        fir_count: fir,
+                        audio_concealed_samples: concealed,
+                        bitrate_kbps: bitrateKbps,
+                        stats_samples: (this.webrtcStats?.stats_samples || 0) + 1,
+                    };
+                } catch {
+                    // PeerConnection may close mid-poll.
+                }
+            };
+
+            this.releaseMedia = () => {
+                closed = true;
+                if (this.webrtcStatsTimer) {
+                    clearInterval(this.webrtcStatsTimer);
+                    this.webrtcStatsTimer = null;
+                }
+                if (pc) { try { pc.close(); } catch {} }
+                video.pause();
+                video.srcObject = null;
+                fetch(url, {method: 'DELETE', keepalive: true}).catch(() => {});
+            };
+
+            const negotiate = async (includeAudio) => {
+                if (pc) { try { pc.close(); } catch {} }
+                pc = new RTCPeerConnection();
+                pc.ontrack = (ev) => {
+                    if (closed) return;
+                    if (ev.streams && ev.streams[0]) {
+                        video.srcObject = ev.streams[0];
+                    } else {
+                        stream.addTrack(ev.track);
+                        video.srcObject = stream;
+                    }
+                    this.canPlay = true;
+                    this.play();
+                };
+                pc.oniceconnectionstatechange = () => {
+                    if (this.webrtcStats && pc) this.webrtcStats.ice_state = pc.iceConnectionState;
+                    if (pc && pc.iceConnectionState === 'failed' && this.active) {
+                        this.event('error', {code: 'network_error'});
+                    }
+                };
+                pc.onconnectionstatechange = () => {
+                    if (this.webrtcStats && pc) this.webrtcStats.connection_state = pc.connectionState;
+                };
+                pc.addTransceiver('video', {direction: 'recvonly'});
+                if (includeAudio) pc.addTransceiver('audio', {direction: 'recvonly'});
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+                await new Promise((resolve) => {
+                    if (pc.iceGatheringState === 'complete') { resolve(); return; }
+                    const timer = setTimeout(resolve, 2500);
+                    const onState = () => {
+                        if (pc.iceGatheringState === 'complete') {
+                            clearTimeout(timer);
+                            pc.removeEventListener('icegatheringstatechange', onState);
+                            resolve();
+                        }
+                    };
+                    pc.addEventListener('icegatheringstatechange', onState);
+                });
+                if (closed) return null;
+                return fetch(url, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/sdp', 'Accept': 'application/sdp'},
+                    body: pc.localDescription?.sdp || offer.sdp,
+                });
+            };
+
+            this.webrtcStatsTimer = setInterval(collectStats, 1000);
+
+            (async () => {
+                try {
+                    let resp = await negotiate(true);
+                    if (closed || !resp) return;
+                    if (resp.status === 400) {
+                        resp = await negotiate(false);
+                        if (closed || !resp) return;
+                    }
+                    if (!resp.ok) {
+                        if (this.active) this.event('error', {code: 'network_error'});
+                        return;
+                    }
+                    const answerSDP = await resp.text();
+                    if (closed || !pc) return;
+                    await pc.setRemoteDescription({type: 'answer', sdp: answerSDP});
+                    collectStats();
+                } catch {
+                    if (this.active && !closed) this.event('error', {code: 'network_error'});
+                }
+            })();
         }
 
         attachHLS(url) {
@@ -704,6 +903,7 @@
                 samples: this.samples.slice(),
                 scheduling,
                 presentation,
+                webrtc: this.webrtcStats ? {...this.webrtcStats} : undefined,
             };
         }
 

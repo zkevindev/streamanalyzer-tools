@@ -314,7 +314,8 @@ func validCaptureStage(name string) bool {
 	switch name {
 	case "dns", "connect", "tls", "request_send", "response_first_byte", "response_headers",
 		"listen", "receive", "handshake", "app_connect", "create_stream", "play",
-		"rtsp_options", "rtsp_describe", "rtsp_setup", "rtsp_play", "rtsp_receive":
+		"rtsp_options", "rtsp_describe", "rtsp_setup", "rtsp_play", "rtsp_receive",
+		"whep_ice_gather", "whep_signaling", "whep_ice", "whep_dtls", "whep_receive":
 		return true
 	default:
 		return false
@@ -325,7 +326,8 @@ func validCaptureFailure(code string) bool {
 	switch code {
 	case "", "timeout", "canceled", "dns_error", "tls_error", "connection_refused", "network_error",
 		"http_status", "redirect_error", "body_error", "udp_bind_error", "udp_read_error", "rtmp_error",
-		"rtsp_error", "rtsp_status", "rtsp_auth_error", "rtsp_transport_error", "rtsp_parse_error":
+		"rtsp_error", "rtsp_status", "rtsp_auth_error", "rtsp_transport_error", "rtsp_parse_error",
+		"whep_signaling_error", "whep_sdp_error", "whep_ice_failed", "whep_dtls_failed", "whep_error":
 		return true
 	default:
 		return false
@@ -420,6 +422,16 @@ func captureFailureText(observation Observation) string {
 		return "RTSP 响应、SDP 或交织帧结构异常，请结合原始接收证据检查设备输出"
 	case "rtsp_error":
 		return "RTSP 协商或媒体接收失败，请检查控制请求、接收时间线及设备状态"
+	case "whep_signaling_error":
+		return "WHEP HTTP 信令请求失败，请检查 WHEP 地址、鉴权头与服务端状态"
+	case "whep_sdp_error":
+		return "WHEP Answer SDP 解析或协商失败，请检查音视频编解码及 SDP 格式"
+	case "whep_ice_failed":
+		return "WebRTC ICE 连通性检查失败，请检查 UDP 端口放行、公网 Candidate 或 TURN 中继配置"
+	case "whep_dtls_failed":
+		return "WebRTC DTLS 握手失败，请检查路径 MTU 分片、证书指纹与 SDP setup 角色"
+	case "whep_error":
+		return "WHEP 会话协商或媒体接收失败，请查看信令、ICE 与 RTP 轨道明细"
 	case "dns_error":
 		return "播放地址 DNS 解析失败，请检查域名和本机 DNS 配置"
 	case "tls_error":

@@ -68,12 +68,30 @@ func TestRollingValidation(t *testing.T) {
 	}
 	defer service.Close()
 	for _, req := range []SampleRequest{
-		{Protocol: ProtocolRTSPS, URL: "rtsps://camera.example/live", SegmentSeconds: 1},
+		{Protocol: ProtocolUDPTS, URL: "udp://127.0.0.1:5000", SegmentSeconds: 1},
 		{Protocol: ProtocolHTTPFLV, URL: "http://example.test/live.flv", SegmentSeconds: 1, RollingSegments: 13},
 		{Protocol: ProtocolHTTPFLV, URL: "http://example.test/live.flv", SegmentSeconds: 1, Playback: true},
 	} {
 		if _, err := service.Start(req); err == nil {
 			t.Fatalf("accepted invalid rolling request: %+v", req)
+		}
+	}
+}
+
+func TestRollingValidationAllowsWHEPAndHTTPTS(t *testing.T) {
+	for _, proto := range []string{ProtocolHTTPFLV, ProtocolHTTPTS, ProtocolRTMP, ProtocolHLS, ProtocolRTSP, ProtocolRTSPS, ProtocolWHEP} {
+		req := SampleRequest{Protocol: proto, SegmentSeconds: 5}
+		if err := validateRolling(&req); err != nil {
+			t.Fatalf("validateRolling rejected supported protocol %s: %v", proto, err)
+		}
+		if req.RollingSegments != 3 || req.Seconds != 5 {
+			t.Fatalf("validateRolling did not normalize defaults for %s: %+v", proto, req)
+		}
+	}
+	for _, proto := range []string{ProtocolUDPTS, ProtocolRTPTS} {
+		req := SampleRequest{Protocol: proto, SegmentSeconds: 5}
+		if err := validateRolling(&req); err == nil {
+			t.Fatalf("validateRolling unexpectedly accepted %s", proto)
 		}
 	}
 }

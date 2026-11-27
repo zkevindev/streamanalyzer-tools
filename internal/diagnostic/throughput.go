@@ -45,7 +45,7 @@ func buildThroughput(dir string, report Report) (*ThroughputReport, error) {
 		return nil, nil
 	}
 	result := &ThroughputReport{Version: "throughput/1", Samples: make([]ThroughputSample, seconds),
-		Boundary: "网络吞吐按已保存事件的到达字节估算；媒体码率按音视频标签、RTMP 消息、HLS 分片或 TS 包字节统计，均包含容器/协议开销，不是纯编码 payload 码率。"}
+		Boundary: "网络吞吐按已保存事件的到达字节估算；媒体码率按音视频标签、RTMP 消息、RTSP RTP 包、HLS 分片或 TS 包字节统计，均包含容器/协议开销，不是纯编码 payload 码率。"}
 	for index := range result.Samples {
 		result.Samples[index].Second = index
 		result.Samples[index].DurationMS = min(int64(1000), observation.ElapsedMS-int64(index*1000))
@@ -60,12 +60,12 @@ func buildThroughput(dir string, report Report) (*ThroughputReport, error) {
 		sample.NetworkBytes += event.size
 		totalNetwork += event.size
 		switch event.kind {
-		case "video", "video_aux":
+		case "video", "video_aux", "video_rtp":
 			sample.MediaBytes += event.size
 			sample.VideoBytes += event.size
 			totalMedia += event.size
 			totalVideo += event.size
-		case "audio", "audio_aux":
+		case "audio", "audio_aux", "audio_rtp":
 			sample.MediaBytes += event.size
 			sample.AudioBytes += event.size
 			totalMedia += event.size
@@ -151,6 +151,24 @@ func buildThroughput(dir string, report Report) (*ThroughputReport, error) {
 			return nil
 		})
 		if err != nil {
+			return nil, err
+		}
+	case ProtocolWHEP:
+		if err := walkWHEPThroughput(dir, func(kind string, size int64, arrivalMS int64) {
+			account(throughputEvent{kind: kind, size: size, arrivalMS: arrivalMS})
+		}); err != nil {
+			return nil, err
+		}
+	case ProtocolDASH:
+		if err := walkDASHThroughput(dir, func(kind, rendition string, size int64, arrivalMS int64) {
+			account(throughputEvent{kind: kind, rendition: rendition, size: size, arrivalMS: arrivalMS})
+		}); err != nil {
+			return nil, err
+		}
+	case ProtocolRTSP, ProtocolRTSPS:
+		if err := walkRTSPMediaEvents(dir, report.Manifest, func(event Event) {
+			account(throughputEvent{kind: event.Kind, size: int64(event.Size), arrivalMS: event.ArrivalMS})
+		}); err != nil {
 			return nil, err
 		}
 	default:

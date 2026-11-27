@@ -17,7 +17,7 @@
   <!-- workbench-header -->
   <main id="main" tabindex="-1">
     <!-- simulator-protocols -->
-    <div class="page-heading"><div><h1>场景回归</h1><p class="muted">保存 GB28181、RTSP 和 HLS 场景，对比重复运行结果。</p></div></div>
+    <div class="page-heading"><div><h1>场景回归</h1><p class="muted">保存 GB28181、RTSP、WHEP、RTMP 和 HLS 场景，对比重复运行结果</p></div></div>
     <p id="notice" class="error" role="alert" hidden></p>
     <div class="simulator-grid">
       <section class="panel">
@@ -38,6 +38,15 @@
                   <option value="rtsp-fallback">RTSP UDP 无媒体后回退 TCP</option>
                   <option value="rtsp-resolution">RTSP 同会话切换分辨率后继续呈帧</option>
                   <option value="rtsp-reconnect">RTSP 会话断开后重新出画</option>
+                  <option value="rtsp-rtp_drop">RTSP 按 N 丢 1 触发序号缺口与报文明细</option>
+                  <option value="rtsp-not_found">RTSP DESCRIBE 返回 404 故障定位</option>
+                  <option value="rtsp-redirect">RTSP DESCRIBE 返回 302 重定向</option>
+                  <option value="whep-normal">WHEP 模拟源正常建连与 RTP 采样</option>
+                  <option value="whep-auth_401">WHEP 信令 401 鉴权失败定位</option>
+                  <option value="whep-rtp_drop">WHEP RTP 丢包注入与缺口检测</option>
+                  <option value="rtmp-normal">RTMP 模拟源正常拉流与帧采样</option>
+                  <option value="rtmp-app_reject">RTMP app_connect 拒绝连接定位</option>
+                  <option value="rtmp-stream_not_found">RTMP play 流不存在定位</option>
                   <option value="hls-not_found">HLS 直播首次 404 后恢复</option>
                   <option value="hls-truncate">HLS 直播正文截断后恢复</option>
                   <option value="hls-audio_boundary">HLS 音视频跨不连续边界错位</option>

@@ -11,6 +11,8 @@ const endLabels = {
     http_status: 'HTTP 状态异常', request_error: '请求失败',
     invalid_flv: 'FLV 头部异常', truncated_tag: 'FLV 标签提前结束', body_error: '读取响应体中断',
     rtmp_error: 'RTMP 连接或读取失败', rtsp_error: 'RTSP 控制或接收失败', hls_error: 'HLS 播放列表不可用',
+    whep_signaling_error: 'WHEP 信令失败', whep_sdp_error: 'WHEP SDP 协商失败',
+    whep_ice_failed: 'WHEP ICE 连接失败', whep_dtls_failed: 'WHEP DTLS 握手失败', whep_error: 'WHEP 接收失败',
     udp_bind_error: '无法监听 UDP 地址', udp_read_error: '读取 UDP 数据报失败', timeline_limit: '达到证据时间线上限',
 };
 const protocols = {
@@ -18,22 +20,26 @@ const protocols = {
     rtmp: { label: 'RTMP', example: 'rtmp://live.example.com/app/stream', dump: '原始 RTMP' },
     rtsp: { label: 'RTSP', example: 'rtsp://camera.example/stream', dump: '原始 RTSP/RTP ZIP', nativeRTSP: true },
     rtsps: { label: 'RTSPS', example: 'rtsps://camera.example/stream', dump: '原始 RTSP/RTP ZIP', nativeRTSP: true },
+    whep: { label: 'WHEP (WebRTC)', example: 'https://webrtc.example.com/whep/stream', dump: '原始 WHEP/RTP ZIP', nativeWHEP: true },
     hls: { label: 'HLS', example: 'https://live.example.com/app/playlist.m3u8', dump: '原始 HLS ZIP' },
     'http-ts': { label: 'HTTP MPEG-TS', example: 'https://live.example.com/app/stream.ts', dump: '原始 TS', mpegTS: true },
     'udp-ts': { label: 'UDP MPEG-TS', example: 'udp://127.0.0.1:5000', dump: '原始 UDP 载荷', mpegTS: true, receive: true },
     'rtp-ts': { label: 'RTP MPEG-TS', example: 'rtp://127.0.0.1:5000', dump: '原始 RTP 数据报', mpegTS: true, receive: true },
+    dash: { label: 'MPEG-DASH', example: 'https://live.example.com/app/manifest.mpd', dump: '原始 DASH ZIP' },
 };
 const stageLabels = {
     dns: 'DNS 解析', connect: 'TCP 建连', tls: 'TLS 握手', request_send: '发送请求',
     response_first_byte: '等待响应首字节', response_headers: 'HTTP 响应头',
     listen: '建立监听', receive: '接收数据', handshake: 'RTMP 握手', app_connect: 'RTMP 应用连接',
     create_stream: 'RTMP 创建流', play: 'RTMP 播放协商',
+    whep_ice_gather: 'ICE 候选收集', whep_signaling: 'WHEP 信令交换',
+    whep_ice: 'ICE 连通性建连', whep_dtls: 'DTLS 握手', whep_receive: 'RTP/RTCP 媒体接收',
 };
 const httpStages = [
     ['dns', 'DNS'], ['connect', 'TCP'], ['tls', 'TLS'], ['request_send', '发送请求'],
     ['response_first_byte', '等待首字节'], ['response_headers', '接收响应头'],
 ];
-const requestKinds = { hls_playlist: '播放列表', hls_init: '初始化段', hls_segment: '媒体分片' };
+const requestKinds = { hls_playlist: '播放列表', hls_init: '初始化段', hls_segment: '媒体分片', dash_manifest: 'MPD 清单', dash_init: 'DASH 初始化段', dash_segment: 'DASH 媒体分片' };
 const mediaArrivalLabels = {
     segment: ['首个视频分片完成', '首个音频分片完成'],
     pes: ['首个视频 PES 起始', '首个音频 PES 起始'],
@@ -152,7 +158,8 @@ function renderRTSPReport(report) {
     node('rtsp-sequence-note').textContent = metrics?.transport === 'udp' ? '序号缺口和缺失包是接收点估计，使用有限回填窗口；源端漏发、链路丢包和迟到包都可能影响结果，需对照源端及中间网络证据。' : rtspSequenceNote;
     if (!metrics) {
         renderMetrics('rtsp-metrics', []);
-        for (const id of ['rtsp-request-table', 'rtsp-declared-tracks', 'rtsp-received-tracks', 'rtsp-sequence-table']) node(id).replaceChildren();
+        for (const id of ['rtsp-request-table', 'rtsp-declared-tracks', 'rtsp-received-tracks', 'rtsp-sequence-table', 'rtsp-packet-filters', 'rtsp-packet-table']) node(id)?.replaceChildren();
+        if (node('rtsp-packets-section')) node('rtsp-packets-section').hidden = true;
         node('rtsp-report-state').textContent = '当前报告未包含 RTSP 会话与 RTP 接收指标。';
         return;
     }
@@ -184,16 +191,162 @@ function renderRTSPReport(report) {
         `#${track.id}`, track.media_id, rtspKindLabels[track.kind] || track.kind || '未声明', track.codec || '未声明', track.payload_type,
         track.clock_rate > 0 ? `${track.clock_rate} Hz` : '未声明', track.kind === 'audio' ? (track.channels > 0 ? track.channels : '未声明') : '不适用',
     ])) : element('p', metrics.sdp_available ? 'SDP 未声明可识别的媒体轨道。' : '未取得可解析 SDP，不能据此确认轨道或编码。', 'timing-note muted'));
-    node('rtsp-received-tracks').replaceChildren(tracks.length ? renderTable(['轨道', '接收状态', 'RTP 包', 'RTP 字节', '首个 RTP 到达', '末个 RTP 到达', '最大包到达间隔', '分析范围'], tracks.map((track) => [
-        `#${track.id}`, track.received ? '已收到 RTP' : '未收到对应 RTP', track.rtp_packets ?? '未观测', track.rtp_bytes ?? '未观测', videoObservedTime(track.first_rtp_ms), videoObservedTime(track.last_rtp_ms),
-        track.rtp_packets > 1 ? videoObservedTime(track.max_arrival_gap_ms) : '未观测', track.analysis_limited ? '达到分析上限' : '按已保存窗口统计',
-    ])) : element('p', '没有可对应到声明轨道的 RTP 接收记录。', 'timing-note muted'));
-    node('rtsp-sequence-table').replaceChildren(tracks.length ? renderTable(['轨道', '序号缺口次数', '估计缺失包', '乱序包', '重复包', 'SSRC 变化', '序号跳变/重置候选', 'RTP 时间戳回退'], tracks.map((track) => [
-        `#${track.id}`, ...['sequence_gaps', 'missing_sequence_packets', 'out_of_order_packets', 'duplicate_packets', 'ssrc_changes', 'sequence_resets', 'timestamp_regressions'].map((key) => rtspObservedCounter(track, track[key])),
-    ])) : element('p', '轨道序号统计未观测。', 'timing-note muted'));
+    const packetReport = report.rtsp_packets;
+    const headerByTrack = new Map((packetReport?.tracks || []).map((t) => [t.track_id, t]));
+    const fmtSSRC = (value) => value == null ? '未观测' : hexLabel(value, 8);
+    const fmtRange = (first, last) => first == null || last == null ? '未观测' : `${first} → ${last}`;
+    node('rtsp-received-tracks').replaceChildren(tracks.length ? renderTable(['轨道', '接收状态', 'SSRC', 'RTP 包', 'Marker 包', 'RTP 序号范围', 'RTP 时间戳范围', 'RTP 字节', '首个 RTP 到达', '末个 RTP 到达', '最大包到达间隔', '分析范围'], tracks.map((track) => {
+        const hdr = headerByTrack.get(track.id);
+        return [
+            `#${track.id}`, track.received ? '已收到 RTP' : '未收到对应 RTP', fmtSSRC(hdr?.ssrc), track.rtp_packets ?? '未观测', track.received ? (hdr?.marker_packets ?? '未观测') : '未观测',
+            fmtRange(hdr?.first_sequence, hdr?.last_sequence), fmtRange(hdr?.first_rtp_timestamp, hdr?.last_rtp_timestamp),
+            track.rtp_bytes ?? '未观测', videoObservedTime(track.first_rtp_ms), videoObservedTime(track.last_rtp_ms),
+            track.rtp_packets > 1 ? videoObservedTime(track.max_arrival_gap_ms) : '未观测', track.analysis_limited ? '达到分析上限' : '按已保存窗口统计',
+        ];
+    })) : element('p', '没有可对应到声明轨道的 RTP 接收记录。', 'timing-note muted'));
+    node('rtsp-sequence-table').replaceChildren(tracks.length ? renderTable(['轨道', 'SSRC', '序号范围', '时间戳范围', '序号缺口次数', '估计缺失包', '乱序包', '重复包', 'SSRC 变化', '序号跳变/重置候选', 'RTP 时间戳回退'], tracks.map((track) => {
+        const hdr = headerByTrack.get(track.id);
+        return [
+            `#${track.id}`, fmtSSRC(hdr?.ssrc), fmtRange(hdr?.first_sequence, hdr?.last_sequence), fmtRange(hdr?.first_rtp_timestamp, hdr?.last_rtp_timestamp),
+            ...['sequence_gaps', 'missing_sequence_packets', 'out_of_order_packets', 'duplicate_packets', 'ssrc_changes', 'sequence_resets', 'timestamp_regressions'].map((key) => rtspObservedCounter(track, track[key])),
+        ];
+    })) : element('p', '轨道序号统计未观测。', 'timing-note muted'));
+    renderRTSPPacketSamples(packetReport);
     for (const table of node('rtsp-report').querySelectorAll('.scroll')) { table.tabIndex = 0; table.setAttribute('role', 'region'); table.setAttribute('aria-label', 'RTSP 与 RTP 证据表，可横向滚动'); }
 }
-const playerSources = { same_capture: '同一采样流', independent_pull: '独立 HLS 拉流' };
+
+const rtspAnomalyLabels = { seq_gap: '序号缺口', out_of_order: '乱序', duplicate: '重复', seq_reset: '序号重置', ts_regression: '时间戳回退', ssrc_change: 'SSRC 变化' };
+let rtspPacketFilter = 'all';
+
+function renderRTSPDeltaChart(samples) {
+    const points = samples.filter((pkt) => pkt.timestamp_delta_ms != null);
+    if (points.length < 2) return null;
+    const figure = element('figure', '', 'player-buffer-chart');
+    figure.append(element('figcaption', `RTP 时间戳步进 ΔTS (ms) · 共 ${points.length} 包（异常包以红/橙点标出）`));
+    const svgEl = (tag, attrs, text) => {
+        const part = document.createElementNS('http://www.w3.org/2000/svg', tag);
+        for (const [k, v] of Object.entries(attrs)) part.setAttribute(k, v);
+        if (text != null) part.textContent = text;
+        return part;
+    };
+    const vals = points.map((p) => p.timestamp_delta_ms);
+    const minVal = Math.min(0, ...vals);
+    const maxVal = Math.max(40, ...vals);
+    const span = Math.max(1, maxVal - minVal);
+    const x = (i) => 48 + (536 * i) / Math.max(1, points.length - 1);
+    const y = (v) => 108 - (86 * (v - minVal)) / span;
+    const svg = svgEl('svg', { viewBox: '0 0 615 138', role: 'img', 'aria-label': 'RTP 报文时间戳步进 ΔTS 曲线' });
+    for (const tick of [minVal, (minVal + maxVal) / 2, maxVal]) {
+        svg.append(
+            svgEl('line', { x1: 48, y1: y(tick), x2: 584, y2: y(tick), class: 'grid' }),
+            svgEl('text', { x: 42, y: y(tick) + 4, 'text-anchor': 'end' }, `${tick.toFixed(0)}ms`)
+        );
+    }
+    svg.append(svgEl('polyline', {
+        points: points.map((p, i) => `${x(i).toFixed(1)},${y(p.timestamp_delta_ms).toFixed(1)}`).join(' '),
+        class: 'line',
+    }));
+    points.forEach((p, i) => {
+        if (!p.anomaly) return;
+        const fill = (p.anomaly === 'seq_gap' || p.anomaly === 'seq_reset') ? 'var(--danger-dot)' : 'var(--warn-dot)';
+        const dot = svgEl('circle', { cx: x(i).toFixed(1), cy: y(p.timestamp_delta_ms).toFixed(1), r: 3.5, fill });
+        dot.append(svgEl('title', `#${p.index} Seq=${p.sequence} ΔTS=${p.timestamp_delta_ms.toFixed(1)}ms (${rtspAnomalyLabels[p.anomaly] || p.anomaly})`));
+        svg.append(dot);
+    });
+    svg.append(
+        svgEl('text', { x: 48, y: 128, 'text-anchor': 'start' }, `#${points[0].index}`),
+        svgEl('text', { x: 316, y: 128, 'text-anchor': 'middle' }, 'RTP 报文序'),
+        svgEl('text', { x: 584, y: 128, 'text-anchor': 'end' }, `#${points[points.length - 1].index}`)
+    );
+    figure.append(svg);
+    return figure;
+}
+
+function renderRTSPPacketSamples(packetReport) {
+    const section = node('rtsp-packets-section');
+    if (!section) return;
+    const samples = packetReport?.samples || [];
+    section.hidden = !samples.length;
+    if (!samples.length) {
+        node('rtsp-packet-filters').replaceChildren();
+        node('rtsp-packet-table').replaceChildren();
+        return;
+    }
+    const anomalyCount = samples.filter((item) => Boolean(item.anomaly)).length;
+    const videoCount = samples.filter((item) => item.kind === 'video').length;
+    const audioCount = samples.filter((item) => item.kind === 'audio').length;
+    node('rtsp-packets-summary').textContent = `RTP 报文序号与时间戳明细（${samples.length} 条${anomalyCount ? ` · ${anomalyCount} 条异常` : ''}）`;
+    const noteParts = ['展示采样前缀与异常 RTP 报文的头字段（SSRC、PT、Sequence Number、RTP Timestamp 及相邻增量）。'];
+    if (packetReport.truncated > 0) noteParts.push(`另有 ${packetReport.truncated.toLocaleString()} 个 RTP 包未在此展开，已全部计入轨道统计。`);
+    node('rtsp-packets-note').textContent = noteParts.join(' ');
+
+    const options = [
+        ['all', `全部 (${samples.length})`],
+        ...(videoCount ? [['video', `视频 (${videoCount})`]] : []),
+        ...(audioCount ? [['audio', `音频 (${audioCount})`]] : []),
+        ...(anomalyCount ? [['anomaly', `仅异常 (${anomalyCount})`]] : []),
+    ];
+    if (!options.some(([key]) => key === rtspPacketFilter)) rtspPacketFilter = 'all';
+
+    const exportCSV = (rows) => {
+        const header = 'index,track_id,kind,codec,ssrc,pt,sequence,seq_delta,timestamp,ts_delta,ts_delta_ms,marker,arrival_ms,payload_bytes,packet_bytes,anomaly';
+        const body = rows.map((p) => [
+            p.index, p.track_id, p.kind || '', p.codec || '', hexLabel(p.ssrc, 8), p.payload_type,
+            p.sequence, p.sequence_delta ?? '', p.timestamp, p.timestamp_delta ?? '',
+            p.timestamp_delta_ms ?? '', p.marker ? 1 : 0, p.arrival_ms, p.payload_bytes, p.packet_bytes, p.anomaly || '',
+        ].join(','));
+        const blob = new Blob([[header, ...body].join('\n')], { type: 'text/csv;charset=utf-8' });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `rtsp-packets-${currentID || 'sample'}.csv`;
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    };
+
+    const draw = () => {
+        const filtered = samples.filter((item) => {
+            if (rtspPacketFilter === 'video') return item.kind === 'video';
+            if (rtspPacketFilter === 'audio') return item.kind === 'audio';
+            if (rtspPacketFilter === 'anomaly') return Boolean(item.anomaly);
+            return true;
+        });
+        const filterButtons = options.map(([key, label]) => {
+            const btn = element('button', label, key === rtspPacketFilter ? '' : 'secondary');
+            btn.type = 'button';
+            btn.setAttribute('aria-pressed', String(key === rtspPacketFilter));
+            btn.addEventListener('click', () => { rtspPacketFilter = key; draw(); });
+            return btn;
+        });
+        const csvBtn = element('button', '导出 CSV', 'secondary');
+        csvBtn.type = 'button';
+        csvBtn.disabled = !filtered.length;
+        csvBtn.addEventListener('click', () => exportCSV(filtered));
+        node('rtsp-packet-filters').replaceChildren(...filterButtons, csvBtn);
+        const chartHost = node('rtsp-packet-chart');
+        if (chartHost) {
+            const chartEl = renderRTSPDeltaChart(filtered);
+            chartHost.replaceChildren(...(chartEl ? [chartEl] : []));
+        }
+        node('rtsp-packet-table').replaceChildren(filtered.length ? renderTable(
+            ['包序', '轨道', '编码', 'SSRC', 'PT', 'RTP 序号 (Seq)', 'ΔSeq', 'RTP 时间戳 (TS)', 'ΔTS (ticks / ms)', 'M', '到达偏移 (ms)', '载荷字节', '状态'],
+            filtered.map((pkt) => {
+                const dSeq = pkt.sequence_delta == null ? '—' : (pkt.sequence_delta > 0 ? `+${pkt.sequence_delta}` : String(pkt.sequence_delta));
+                const dTS = pkt.timestamp_delta == null ? '—' : `${pkt.timestamp_delta > 0 ? '+' : ''}${pkt.timestamp_delta}${pkt.timestamp_delta_ms == null ? '' : ` (${pkt.timestamp_delta_ms.toFixed(1)} ms)`}`;
+                const stateText = pkt.anomaly ? (rtspAnomalyLabels[pkt.anomaly] || pkt.anomaly) : '正常';
+                const stateEl = pkt.anomaly ? element('span', stateText, 'severity') : stateText;
+                if (pkt.anomaly) stateEl.dataset.severity = pkt.anomaly === 'seq_gap' || pkt.anomaly === 'seq_reset' ? 'error' : 'warn';
+                return [
+                    `#${pkt.index}`, `#${pkt.track_id} · ${rtspKindLabels[pkt.kind] || pkt.kind || '其他'}`, pkt.codec || '—',
+                    hexLabel(pkt.ssrc, 8), pkt.payload_type, pkt.sequence, dSeq, pkt.timestamp, dTS,
+                    pkt.marker ? '1' : '0', pkt.arrival_ms, pkt.payload_bytes, stateEl,
+                ];
+            })
+        ) : element('p', '当前筛选条件下没有 RTP 报文。', 'timing-note muted'));
+    };
+    draw();
+}
+const playerSources = { same_capture: '同一采样流', independent_pull: '独立拉流' };
 const playerStates = {
     awaiting: '等待播放器数据', recording: '采集中', complete: '采集完成',
     unsupported: '当前环境不支持该播放格式', autoplay_blocked: '自动播放受限', error: '播放失败',
@@ -210,6 +363,7 @@ const severityLabels = { error: '错误', warn: '警告', info: '提示' };
 const tagLabels = {
     video: '视频', audio: '音频', invalid_audio: '音频标签异常', invalid_video: '视频标签异常', invalid_tag_size: '标签长度异常',
     hls_playlist: '播放列表', hls_init: '初始化段', hls_segment: '媒体分片', hls_gap: '标记缺失的分片',
+    dash_init: 'DASH 初始化段', dash_segment: 'DASH 媒体分片',
     ts_packet: 'TS 包', ts_sync_loss: 'TS 同步丢失', rtp_datagram: 'RTP 数据报',
     player_stall: '播放器卡顿',
 };
@@ -531,8 +685,8 @@ function renderEvidence(protocol, events) {
             events.map((event) => [kind(event), event.arrival_ms, event.arrival_ms + (event.duration_ms ?? 0), event.duration_ms, event.artifact]));
     }
     if (protocols[protocol]?.nativeRTSP) {
-        return renderTable(['对象', '轨道', 'SDP 编码', 'RTP 序号', '到达偏移 (ms)', '原始条目', '偏移（字节）', '长度（字节）'], events.map((event) => [
-            ['rtp_packet', 'video_rtp', 'audio_rtp'].includes(event.kind) ? 'RTP 包' : '协议字节', event.track > 0 ? `#${event.track}` : '未记录', event.codec || '未声明', event.rtp_sequence == null ? '未观测' : String(event.rtp_sequence), event.arrival_ms, rtspEvidenceArtifact(event.artifact), event.offset, event.size,
+        return renderTable(['对象', '轨道', 'SDP 编码', 'RTP 序号', 'RTP 时间戳', '到达偏移 (ms)', '原始条目', '偏移（字节）', '长度（字节）'], events.map((event) => [
+            ['rtp_packet', 'video_rtp', 'audio_rtp'].includes(event.kind) ? 'RTP 包' : '协议字节', event.track > 0 ? `#${event.track}` : '未记录', event.codec || '未声明', event.rtp_sequence == null ? '未观测' : String(event.rtp_sequence), event.rtp_timestamp == null ? '未观测' : String(event.rtp_timestamp), event.arrival_ms, rtspEvidenceArtifact(event.artifact), event.offset, event.size,
         ]));
     }
     if (protocol === 'hls') {
@@ -978,6 +1132,148 @@ function renderPlayerScheduling(scheduling, stall, intervalKind = 'buffering') {
     return block;
 }
 
+function renderPlayerWebRTC(w) {
+    const container = node('player-webrtc-report');
+    if (!container) return;
+    if (!w) { container.replaceChildren(); return; }
+    const box = element('div', '');
+    box.append(element('h4', '浏览器 WebRTC 实时统计（RTCPeerConnection.getStats）'));
+    const dl = element('dl', '', 'metrics');
+    const pair = [w.selected_candidate_type, w.selected_remote_type].filter(Boolean).join(' ↔ ') + (w.selected_protocol ? ` (${w.selected_protocol})` : '');
+    const items = [
+        ['ICE / Peer 状态', `${w.ice_state || '未记录'} / ${w.connection_state || '未记录'}`],
+        ['候选路径', pair || '未记录'],
+        ['当前 RTT', w.current_rtt_ms != null ? `${w.current_rtt_ms.toFixed(1)} ms` : '未观测'],
+        ['视频 / 音频编码', `${w.video_codec || '无'} / ${w.audio_codec || '无'}`],
+        ['收包 / 丢包', `${w.packets_received || 0} / ${w.packets_lost || 0}`],
+        ['RTP 抖动 / JitterBuffer', `${(w.jitter_ms || 0).toFixed(2)} ms / ${(w.jitter_buffer_avg_ms || 0).toFixed(1)} ms`],
+        ['解码帧 / 丢帧', `${w.frames_decoded || 0} / ${w.frames_dropped || 0}`],
+        ['画面冻结', `${w.freeze_count || 0} 次（累计 ${w.total_freezes_duration_ms || 0} ms）`],
+        ['PLI / NACK / FIR', `${w.pli_count || 0} / ${w.nack_count || 0} / ${w.fir_count || 0}`],
+        ['接收码率', `${(w.bitrate_kbps || 0).toFixed(1)} kbps`],
+    ];
+    for (const [label, value] of items) {
+        const div = element('div', '');
+        div.append(element('dt', label), element('dd', String(value)));
+        dl.append(div);
+    }
+    box.append(dl);
+    container.replaceChildren(box);
+}
+
+function renderWHEPReport(report) {
+    const section = node('whep-report');
+    if (!section) return;
+    const w = report?.whep;
+    section.hidden = !w;
+    if (!w) return;
+    const noteParts = [
+        w.boundary || '服务端 Pion WebRTC 探针记录 WHEP HTTP 信令、ICE/DTLS 握手与已解密 RTP/RTCP 原始证据包（stream.whep.zip）。',
+    ];
+    if (w.link_ice_servers?.length) noteParts.push(`服务端通过 Link 头下发了 ${w.link_ice_servers.length} 个 ICE Server。`);
+    if (w.delete_status > 0) noteParts.push(`采样结束已执行 DELETE 会话清理（HTTP ${w.delete_status}）。`);
+    node('whep-note').textContent = noteParts.join(' ');
+
+    const pair = w.selected_pair
+        ? `${w.selected_pair.local_type || '?'} ↔ ${w.selected_pair.remote_type || '?'} (${w.selected_pair.local_protocol || w.selected_pair.remote_protocol || 'udp'})`
+        : '未建立';
+    const codecs = [
+        ...(w.answer_sdp?.video_codecs || []),
+        ...(w.answer_sdp?.audio_codecs || []),
+    ].join(', ') || '未协商';
+    const tracks = w.tracks || [];
+    const totalPLI = tracks.reduce((sum, t) => sum + (t.pli_count || 0), 0);
+    const totalSR = tracks.reduce((sum, t) => sum + (t.rtcp_sr_count || 0), 0);
+    const totalRR = tracks.reduce((sum, t) => sum + (t.rtcp_rr_count || 0), 0);
+    const pliRecovered = tracks.find((t) => t.pli_first_recovery_ms != null)?.pli_first_recovery_ms;
+    const values = [
+        ['信令 HTTP 状态', w.http_status ? `HTTP ${w.http_status}` : '未完成'],
+        ['ICE 策略 / 状态', `${w.ice_transport_policy || 'all'} · ${w.ice_state || 'new'}${w.ice_connect_ms != null ? ` (${time(w.ice_connect_ms)})` : ''}`],
+        ['DTLS / Peer 状态', `${w.dtls_state || 'new'}${w.dtls_connect_ms != null ? ` (${time(w.dtls_connect_ms)})` : ''} / ${w.peer_state || 'new'}`],
+        ['Selected Candidate Pair', pair],
+        ['本地 / 远端候选数', `${w.local_candidates || w.offer_sdp?.candidate_count || 0} / ${w.remote_candidates || w.answer_sdp?.candidate_count || 0}`],
+        ['协商编解码', codecs],
+        ['会话 Location', w.location_recorded ? (w.delete_status > 0 ? `已返回并已 DELETE（${w.delete_status}）` : '已返回') : '未返回'],
+        ['PLI 请求 / 恢复', `${totalPLI} 次${pliRecovered != null ? ` · 首次恢复 ${time(pliRecovered)}` : ''}`],
+        ['RTCP SR / RR', `${totalSR} / ${totalRR}`],
+        ['最大断流间隔', w.media_stopped_gap_ms > 0 ? time(w.media_stopped_gap_ms) : '无明显断流'],
+    ];
+    renderMetrics('whep-metrics', values);
+
+    if (!tracks.length) {
+        node('whep-tracks-table').replaceChildren(element('p', '未收到任何 RTP 媒体轨道。', 'muted'));
+        return;
+    }
+    const table = element('table', '', 'timing-table');
+    const thead = element('thead', '');
+    const hr = element('tr', '');
+    for (const h of ['轨道 / 编码', 'SSRC / PT', '收包 / 字节', '缺口丢包 / 失序 / 重复', 'RTP Jitter', '帧 / 关键帧 / 最大 GOP', '平均码率']) {
+        hr.append(element('th', h));
+    }
+    thead.append(hr);
+    const tbody = element('tbody', '');
+    for (const t of tracks) {
+        const tr = element('tr', '');
+        const lossText = `${t.missing_sequence_packets || 0} (${(t.loss_rate_pct || 0).toFixed(2)}%) / ${t.out_of_order_packets || 0} / ${t.duplicate_packets || 0}`;
+        const frameText = t.kind === 'video'
+            ? `${t.frames || 0} / ${t.keyframes || 0} / ${t.max_gop_ms > 0 ? `${t.max_gop_ms} ms` : '—'}`
+            : `${t.frames || 0} 包`;
+        for (const cell of [
+            `${t.kind || '?'} · ${t.codec || '?'} (${t.clock_rate || 0}Hz)`,
+            `${t.ssrc} / PT=${t.payload_type}`,
+            `${t.packets || 0} · ${bytes(t.bytes || 0)}`,
+            lossText,
+            `${(t.jitter_ms || 0).toFixed(2)} ms (max ${(t.max_jitter_ms || 0).toFixed(2)})`,
+            frameText,
+            `${(t.bitrate_kbps || 0).toFixed(1)} kbps`,
+        ]) {
+            tr.append(element('td', cell));
+        }
+        tbody.append(tr);
+    }
+    table.append(thead, tbody);
+    node('whep-tracks-table').replaceChildren(element('h4', '媒体轨道 RTP / 帧质量'), table);
+}
+
+function renderDASHReport(report) {
+    const section = node('dash-report');
+    if (!section) return;
+    const d = report?.dash;
+    section.hidden = !d;
+    if (!d) return;
+    const noteParts = ['纯 Go 解析 ISO/IEC 23009-1 MPD 清单，抽样拉取主视频与音频初始化段及媒体分片并归档于 stream.dash.zip。'];
+    if (d.drm_systems?.length) noteParts.push(`检测到 DRM 保护：${d.drm_systems.join(', ')}。`);
+    node('dash-note').textContent = noteParts.join(' ');
+    renderMetrics('dash-metrics', [
+        ['MPD 类型', d.mpd_type || '未知'],
+        ['Period / AdaptationSet / Rep', `${d.periods || 0} / ${d.adaptation_sets || 0} / ${d.representations_count || 0}`],
+        ['清单快照 / 失败', `${d.manifests_captured || 0} / ${d.manifest_failures || 0}`],
+        ['初始化段 / 失败', `${d.init_segments_captured || 0} / ${d.init_segments_failed || 0}`],
+        ['媒体分片 / 失败', `${d.segments_captured || 0} / ${d.segments_failed || 0}`],
+        ['SegmentTimeline 缺口', d.timeline_gaps ?? 0],
+        ['最长分片下载', d.segments_captured ? time(d.max_segment_download_ms || 0) : '未测得'],
+        ['采集媒体数据', bytes(d.media_bytes || 0)],
+        ['DRM 保护', d.drm_systems?.length ? d.drm_systems.join(', ') : '无'],
+    ]);
+    const reps = d.representations || [];
+    node('dash-reps-table').replaceChildren(...(reps.length ? [
+        element('h4', `码率档位（Representations · ${reps.length}）`),
+        renderTable(['ID', '类型', '码率', '编码', '分辨率 / 帧率', '时间线缺口', '采样'], reps.map((r) => [
+            r.id || '—', r.content_type || '—', `${((r.bandwidth || 0) / 1000).toFixed(1)} kbps`, r.codecs || '—',
+            (r.width && r.height ? `${r.width}×${r.height}` : '—') + (r.frame_rate ? ` @ ${r.frame_rate}` : ''),
+            r.timeline_gaps ?? 0, r.sampled ? '已采样' : '—',
+        ])),
+    ] : []));
+    const segs = d.sampled_segments || [];
+    node('dash-segments-table').replaceChildren(...(segs.length ? [
+        element('h4', `采样分片明细（${segs.length}）`),
+        renderTable(['类型', '档位', '序号', 'HTTP', '到达 (ms)', '下载耗时 (ms)', '字节', '状态'], segs.map((s) => [
+            `${s.kind} (${s.content_type || '—'})`, s.representation_id || '—', s.number ? `#${s.number}` : 'init',
+            s.http_status || '—', s.arrival_ms, s.download_ms, bytes(s.bytes || 0), s.error || 'OK',
+        ])),
+    ] : []));
+}
+
 function renderPlayerReport(player, elapsed) {
     node('player-report').hidden = !player;
     if (!player) return;
@@ -1003,6 +1299,7 @@ function renderPlayerReport(player, elapsed) {
     renderPlayerVideo(player.video);
     node('player-presentation-report').replaceChildren(renderPresentationReport(player.presentation, true));
     node('player-scheduling-report').replaceChildren(renderPlayerScheduling(player.scheduling));
+    renderPlayerWebRTC(player.webrtc);
     const stalls = player.stalls || [];
     const samples = player.buffer_samples || [];
     node('player-buffer').replaceChildren(...(samples.length ? [renderBufferChart(samples, stalls, elapsed)] : []));
@@ -1848,16 +2145,60 @@ function renderRTMPControl(control) {
     node('rtmp-control-boundary').textContent = control.boundary;
 }
 
+function renderThroughputChart(throughput) {
+    const samples = throughput?.samples || [];
+    if (samples.length < 2) return null;
+    const figure = element('figure', '', 'player-buffer-chart');
+    figure.append(element('figcaption', `每秒网络吞吐曲线 (kb/s) · 均值 ${throughput.average_network_kbps.toFixed(1)} kb/s`));
+    const svgEl = (tag, attrs, text) => {
+        const part = document.createElementNS('http://www.w3.org/2000/svg', tag);
+        for (const [k, v] of Object.entries(attrs)) part.setAttribute(k, v);
+        if (text != null) part.textContent = text;
+        return part;
+    };
+    const maxKbps = Math.max(10, throughput.maximum_network_kbps * 1.15);
+    const x = (i) => 52 + (532 * i) / Math.max(1, samples.length - 1);
+    const y = (v) => 108 - (86 * v) / maxKbps;
+    const svg = svgEl('svg', { viewBox: '0 0 615 138', role: 'img', 'aria-label': '每秒网络吞吐曲线' });
+    for (const tick of [0, maxKbps / 2, maxKbps]) {
+        svg.append(
+            svgEl('line', { x1: 52, y1: y(tick), x2: 584, y2: y(tick), class: 'grid' }),
+            svgEl('text', { x: 46, y: y(tick) + 4, 'text-anchor': 'end' }, `${Math.round(tick)}`)
+        );
+    }
+    const avgY = y(throughput.average_network_kbps);
+    svg.append(svgEl('line', { x1: 52, y1: avgY, x2: 584, y2: avgY, stroke: 'var(--muted)', 'stroke-dasharray': '4 3', 'stroke-width': 1 }));
+    svg.append(svgEl('polyline', {
+        points: samples.map((s, i) => `${x(i).toFixed(1)},${y(s.network_kbps).toFixed(1)}`).join(' '),
+        class: 'line',
+    }));
+    svg.append(
+        svgEl('text', { x: 52, y: 128, 'text-anchor': 'start' }, `${samples[0].second}s`),
+        svgEl('text', { x: 318, y: 128, 'text-anchor': 'middle' }, '采样秒'),
+        svgEl('text', { x: 584, y: 128, 'text-anchor': 'end' }, `${samples[samples.length - 1].second}s`)
+    );
+    figure.append(svg);
+    return figure;
+}
+
 function renderThroughput(report) {
     const throughput = report.throughput;
     node('throughput-report').hidden = !throughput;
-    if (!throughput) return;
+    if (!throughput) {
+        node('throughput-chart')?.replaceChildren();
+        return;
+    }
     renderMetrics('throughput-metrics', [
         ['平均网络吞吐', throughput.average_network_kbps.toFixed(1) + ' kb/s'],
         ['平均媒体码率', throughput.average_media_kbps.toFixed(1) + ' kb/s'],
         ['视频 / 音频媒体码率', `${throughput.average_video_kbps.toFixed(1)} / ${throughput.average_audio_kbps.toFixed(1)} kb/s`],
         ['每秒吞吐最低 / 最高', `${throughput.minimum_network_kbps.toFixed(1)} / ${throughput.maximum_network_kbps.toFixed(1)} kb/s`],
     ]);
+    const chartHost = node('throughput-chart');
+    if (chartHost) {
+        const chartEl = renderThroughputChart(throughput);
+        chartHost.replaceChildren(...(chartEl ? [chartEl] : []));
+    }
     node('throughput-samples').replaceChildren(renderTable(['秒', '有效时长', '网络字节', '媒体字节', '视频字节', '音频字节', '网络吞吐'],
         (throughput.samples || []).map(sample => [sample.second, time(sample.duration_ms), bytes(sample.network_bytes), bytes(sample.media_bytes), bytes(sample.video_bytes), bytes(sample.audio_bytes), sample.network_kbps.toFixed(1) + ' kb/s'])));
     node('throughput-boundary').textContent = throughput.boundary;
@@ -1930,6 +2271,14 @@ function renderReport(report) {
             ['采样变体带宽', bandwidth],
             ['媒体数据', bytes(hls.media_bytes ?? 0)],
         );
+    } else if (protocol === 'dash') {
+        const d = report.dash || {};
+        values.push(
+            ['MPD 类型', d.mpd_type || '—'],
+            ['采集分片 / 失败', `${d.segments_captured ?? 0} / ${d.segments_failed ?? 0}`],
+            ['时间线缺口', d.timeline_gaps ?? 0],
+            ['最长分片下载', time(d.segments_captured ? d.max_segment_download_ms ?? 0 : null)],
+        );
     } else if (!protocols[protocol]?.mpegTS && !protocols[protocol]?.nativeRTSP) {
         values.push(
             ['视频帧 / 音频帧', `${m.video_frames} / ${m.audio_frames}`],
@@ -1960,6 +2309,8 @@ function renderReport(report) {
     renderAutomaticInvestigation(report);
     renderSamplingTiming(report, requests);
     renderRTSPReport(report);
+    renderWHEPReport(report);
+    renderDASHReport(report);
     renderPlayerReport(report.player, observed.elapsed_ms);
     renderPlayerNetwork(report);
     renderStallInvestigations(report);
@@ -2235,6 +2586,8 @@ function bindForm(id, submit) {
 
 function updateAutomaticOption() { const playback = node('analyze-playback'); node('auto-investigate').disabled = playback.disabled || !playback.checked; }
 node('analyze-playback').addEventListener('change', updateAutomaticOption);
+const reconnectProtocols = new Set(['http-flv', 'http-ts', 'rtmp', 'rtsp', 'rtsps', 'whep', 'dash']);
+const rollingProtocols = new Set([...reconnectProtocols, 'hls']);
 const segmentSecondsInput = node('segment-seconds');
 const rollingSegmentsInput = node('rolling-segments');
 function updateRollingOptions() {
@@ -2250,18 +2603,26 @@ node('protocol').addEventListener('change', () => {
     node('url').placeholder = selected.example;
     node('url-label').textContent = selected.receive ? '监听地址' : '播放地址';
     const hint = node('url-hint');
-    hint.hidden = !selected.receive && !selected.nativeRTSP;
-    hint.textContent = selected.nativeRTSP ? '填写摄像头或 NVR 的播放地址，支持 URL 用户信息认证。采用 TCP 交织传输；RTSPS 使用 TLS 并校验服务端证书。报告仅显示协议和主机。' : selected.receive ? `填写本机 IPv4 和端口。组播示例 ${protocol.split('-')[0]}://239.1.1.1:5000?interface=en0` : '';
+    hint.hidden = !selected.receive && !selected.nativeRTSP && !selected.nativeWHEP;
+    hint.textContent = selected.nativeRTSP
+        ? '填写摄像头或 NVR 的播放地址，支持 URL 用户信息认证。采用 TCP 交织传输；RTSPS 使用 TLS 并校验服务端证书。报告仅显示协议和主机。'
+        : selected.nativeWHEP
+            ? '填写 WHEP HTTP/HTTPS 拉流端点（如 MediaMTX / SRS / LiveKit / Cloudflare Stream）。支持在“请求头”填写 Authorization: Bearer <token>，并可同步开启浏览器原生 WebRTC 实播采集 getStats()。'
+            : selected.receive
+                ? `填写本机 IPv4 和端口。组播示例 ${protocol.split('-')[0]}://239.1.1.1:5000?interface=en0`
+                : '';
     const playback = node('analyze-playback');
     playback.disabled = false;
     node('playback-capability-note').hidden = !selected.nativeRTSP;
-    const httpAccess = ['http-flv', 'hls', 'http-ts'].includes(protocol);
+    const httpAccess = ['http-flv', 'hls', 'http-ts', 'whep', 'dash'].includes(protocol);
     node('http-access-options').hidden = !httpAccess && !['rtmp', 'rtsps'].includes(protocol);
-    node('reconnect-options').hidden = !['http-flv', 'rtmp'].includes(protocol);
+    node('whep-options').hidden = protocol !== 'whep';
+    const supportsReconnect = reconnectProtocols.has(protocol);
+    const supportsRolling = rollingProtocols.has(protocol);
+    node('reconnect-options').hidden = !supportsReconnect;
     node('hls-variant-option').hidden = protocol !== 'hls';
-    const supportsRolling = ['http-flv', 'rtmp', 'hls'].includes(protocol);
     node('rolling-options').hidden = !supportsRolling;
-    node('session-options').hidden = !supportsRolling;
+    node('session-options').hidden = !supportsReconnect && !supportsRolling;
     for (const id of ['http-headers', 'http-proxy-url']) {
         node(id).hidden = !httpAccess;
         document.querySelector(`label[for="${id}"]`).hidden = !httpAccess;
@@ -2270,8 +2631,7 @@ node('protocol').addEventListener('change', () => {
     updateAutomaticOption();
 });
 node('rtsp-transport').addEventListener('change', updateRTSPTransport);
-updateRTSPTransport();
-updateAutomaticOption();
+node('protocol').dispatchEvent(new Event('change'));
 const launchOptions = new URLSearchParams(location.search);
 const simulatedHLS = launchOptions.get('hls_simulator');
 let simulatorURL = '';
@@ -2281,6 +2641,16 @@ if (simulatedHLS && /^[a-f0-9-]{36}$/.test(simulatedHLS)) {
     simulatorURL = new URL('/api/simulators/hls/stream/' + simulatedHLS + '/playlist.m3u8', location.origin).href;
     node('url').value = simulatorURL;
     node('seconds').value = '30';
+    node('analyze-playback').checked = true;
+    updateAutomaticOption();
+}
+
+const simulatedWHEP = launchOptions.get('whep_simulator');
+if (simulatedWHEP && /^[a-f0-9-]{36}$/.test(simulatedWHEP)) {
+    node('protocol').value = 'whep';
+    node('protocol').dispatchEvent(new Event('change'));
+    node('url').value = new URL('/api/simulators/whep/stream/' + simulatedWHEP, location.origin).href;
+    node('seconds').value = '15';
     node('analyze-playback').checked = true;
     updateAutomaticOption();
 }
@@ -2311,6 +2681,15 @@ if (launchOptions.get('rtmp_simulator') === '1') {
         node('protocol').dispatchEvent(new Event('change'));
         node('url').value = source.url;
         node('seconds').value = '10';
+    }).catch(() => {});
+}
+if (launchOptions.get('rtsp_simulator') === '1') {
+    void fetch('/api/simulators/rtsp', {cache: 'no-store'}).then(response => response.json()).then(source => {
+        if (!source.active || !/^rtsps?:\/\/(?:[^@/\s]+@)?127\.0\.0\.1:\d+\/live\/test$/.test(source.url)) return;
+        node('protocol').value = source.url.startsWith('rtsps://') ? 'rtsps' : 'rtsp';
+        node('protocol').dispatchEvent(new Event('change'));
+        node('url').value = source.url;
+        node('seconds').value = '12';
     }).catch(() => {});
 }
 node('flv-replay').addEventListener('click', () => {
@@ -2353,7 +2732,7 @@ async function changeRTSPReplay(start) {
 node('rtsp-replay').addEventListener('click', () => { void changeRTSPReplay(true); });
 node('rtsp-replay-stop').addEventListener('click', () => { void changeRTSPReplay(false); });
 function captureAccessOptions(protocol) {
-    const httpAccess = ['http-flv', 'hls', 'http-ts'].includes(protocol);
+    const httpAccess = ['http-flv', 'hls', 'http-ts', 'whep', 'dash'].includes(protocol);
     const tlsAccess = httpAccess || ['rtmp', 'rtsps'].includes(protocol);
     if (!tlsAccess) return {};
     const headers = {};
@@ -2485,14 +2864,15 @@ bindForm('sample', async () => {
     const hlsABR = localSimulator && launchOptions.get('hls_abr') === '1';
     const hlsLowLatency = localSimulator && launchOptions.get('hls_ll') === '1';
     const protocol = node('protocol').value;
-    const supportsReconnect = ['http-flv', 'rtmp'].includes(protocol);
-    const segmentSeconds = supportsReconnect || protocol === 'hls' ? segmentSecondsInput.valueAsNumber : 0;
+    const supportsReconnect = reconnectProtocols.has(protocol);
+    const segmentSeconds = rollingProtocols.has(protocol) ? segmentSecondsInput.valueAsNumber || 0 : 0;
     const profile = node('analysis-profile').value;
     const run = await api('/runs', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
             protocol,
             transport: protocols[protocol]?.nativeRTSP ? node('rtsp-transport').value : undefined,
+            ice_transport_policy: protocol === 'whep' ? node('whep-ice-policy').value : undefined,
             url, seconds, playback,
             auto_investigate: autoInvestigate,
             reconnect_attempts: supportsReconnect ? node('reconnect-attempts').valueAsNumber : 0,

@@ -288,13 +288,22 @@ func (s *Service) Start(req SampleRequest) (Run, error) {
 	if seconds < 1 || seconds > maxSeconds {
 		return Run{}, fmt.Errorf("%w: 采样时长须为 1 至 %d 秒", ErrInvalid, maxSeconds)
 	}
-	httpAccess := protocol == ProtocolHTTPFLV || protocol == ProtocolHLS || protocol == ProtocolHTTPTS
+	httpAccess := protocol == ProtocolHTTPFLV || protocol == ProtocolHLS || protocol == ProtocolHTTPTS || protocol == ProtocolWHEP || protocol == ProtocolDASH
 	tlsAccess := httpAccess || protocol == ProtocolRTMP && target.Scheme == "rtmps" || protocol == ProtocolRTSPS
 	if !httpAccess && (len(req.Headers) > 0 || req.ProxyURL != "") {
-		return Run{}, fmt.Errorf("%w: 自定义请求头和代理仅适用于 HTTP-FLV、HLS 与 HTTP MPEG-TS", ErrInvalid)
+		return Run{}, fmt.Errorf("%w: 自定义请求头和代理仅适用于 HTTP-FLV、HLS、MPEG-DASH、HTTP MPEG-TS 与 WHEP", ErrInvalid)
 	}
 	if req.CACertificate != "" && !tlsAccess {
 		return Run{}, fmt.Errorf("%w: 自定义 CA 仅适用于 HTTPS、RTMPS 与 RTSPS", ErrInvalid)
+	}
+	if req.ICETransportPolicy != "" && protocol != ProtocolWHEP {
+		return Run{}, fmt.Errorf("%w: ice_transport_policy 仅适用于 WHEP", ErrInvalid)
+	}
+	if req.ICETransportPolicy != "" && req.ICETransportPolicy != "all" && req.ICETransportPolicy != "relay" {
+		return Run{}, fmt.Errorf("%w: ice_transport_policy 仅支持 all 或 relay", ErrInvalid)
+	}
+	if len(req.ICEServers) > 0 && protocol != ProtocolWHEP {
+		return Run{}, fmt.Errorf("%w: ice_servers 仅适用于 WHEP", ErrInvalid)
 	}
 	access, err := prepareCaptureAccess(s.client, req)
 	if err != nil {
@@ -340,6 +349,9 @@ func (s *Service) Start(req SampleRequest) (Run, error) {
 			session.hls.headers = access.headers
 			session.hls.network.setOrigin(run.CreatedAt)
 		}
+		if session.whep != nil {
+			session.whep.headers = access.headers
+		}
 		player = session
 		s.prunePlayersLocked()
 		state := &playerSessionState{session: session, token: rand.Text(), created: run.CreatedAt}
@@ -365,10 +377,13 @@ func (s *Service) Start(req SampleRequest) (Run, error) {
 			}
 		}()
 
-		if player != nil && player.Transport() != "hls" {
+		if player != nil && player.Transport() != "hls" && player.Transport() != "whep" {
 			player.WaitForSubscriber(ctx, 500*time.Millisecond)
 		}
-		report, err := s.sampleProtocolWithTransport(ctx, dir, target, seconds, run.Protocol, transport)
+		report, err := s.sampleProtocolWithOptions(ctx, dir, target, seconds, run.Protocol, transport, whepSampleOptions{
+			ICETransportPolicy: req.ICETransportPolicy,
+			ICEServers:         req.ICEServers,
+		})
 		if err == nil {
 			report.Manifest.StreamLimitBytes = s.streamLimitBytes
 			s.persistence.Lock()
@@ -385,6 +400,9 @@ func (s *Service) Start(req SampleRequest) (Run, error) {
 			}
 			if err == nil {
 				report.Throughput, err = buildThroughput(dir, report)
+			}
+			if err == nil {
+				report.RTSPPackets, err = buildRTSPPacketReport(dir, report)
 			}
 			if err == nil {
 				report.HLSABR = buildHLSABR(report)
@@ -439,6 +457,10 @@ func sampleTransport(protocol, requested string) (string, error) {
 }
 
 func (s *Service) sampleProtocolWithTransport(ctx context.Context, dir string, target *url.URL, seconds int, protocol, transport string) (Report, error) {
+	return s.sampleProtocolWithOptions(ctx, dir, target, seconds, protocol, transport, whepSampleOptions{})
+}
+
+func (s *Service) sampleProtocolWithOptions(ctx context.Context, dir string, target *url.URL, seconds int, protocol, transport string, whepOpts whepSampleOptions) (Report, error) {
 	switch protocol {
 	case ProtocolHTTPFLV:
 		return sample(ctx, captureHTTPClient(ctx, s.client), dir, target, seconds)
@@ -450,6 +472,10 @@ func (s *Service) sampleProtocolWithTransport(ctx context.Context, dir string, t
 		return sampleTS(ctx, captureHTTPClient(ctx, s.client), dir, target, seconds, protocol)
 	case ProtocolRTSP, ProtocolRTSPS:
 		return sampleRTSPTransportWithTLS(ctx, dir, target, seconds, protocol, transport, captureTLSConfig(ctx))
+	case ProtocolWHEP:
+		return sampleWHEP(ctx, captureHTTPClient(ctx, s.client), dir, target, seconds, whepOpts)
+	case ProtocolDASH:
+		return sampleDASH(ctx, captureHTTPClient(ctx, s.client), dir, target, seconds)
 	default:
 		return Report{}, fmt.Errorf("%w: 不支持的采样协议", ErrInvalid)
 	}
@@ -791,11 +817,22 @@ func reportStatus(report Report) string {
 	if report.RTSP != nil {
 		samples = report.RTSP.RTPPackets
 	}
+	if report.WHEP != nil {
+		samples = report.WHEP.TotalPackets
+	}
+	if report.DASH != nil {
+		samples = report.DASH.SegmentsCaptured + report.DASH.ManifestsCaptured
+	}
 	if samples == 0 {
 		return "failed"
 	}
 	if hls := report.HLS; hls != nil {
 		if hls.SegmentsFailed+hls.InitSegmentsFailed+hls.PlaylistFailures > 0 {
+			return "partial"
+		}
+	}
+	if dm := report.DASH; dm != nil {
+		if dm.SegmentsFailed+dm.InitSegmentsFailed+dm.ManifestFailures > 0 {
 			return "partial"
 		}
 	}

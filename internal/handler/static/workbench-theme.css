@@ -4,31 +4,43 @@
     --surface: #fff;
     --surface-inset: #f5f7fc;
     --surface-hover: #eef2fa;
+    --surface-active: #e4ebf8;
     --border: #dce3ef;
     --border-strong: #c4cee0;
     --text: #1b2741;
+    --text-secondary: #40516d;
     --muted: #53617a;
     --text-muted: var(--muted);
     --primary: #254fd4;
     --primary-hover: #1e3faa;
+    --primary-ink: #fff;
     --accent: #254fd4;
     --accent-hover: #173da9;
     --accent-light: #e9efff;
     --accent-border: #cad7ff;
+    --accent-ink: #fff;
     --media-bg: #14203a;
     --media-border: #354a75;
     --media-text: #e7eeff;
     --media-muted: #bdcbe8;
     --signal: #8fb5ff;
+    --code-bg: #14203a;
+    --code-text: #e7eeff;
+    --code-muted: #9aacca;
+    --code-border: rgb(255 255 255 / 0.1);
     --success: #166747;
     --success-bg: #e8f7ee;
     --success-border: #bde2cb;
+    --success-dot: #24825c;
     --warn: #865810;
     --warn-bg: #fff6df;
     --warn-border: #efd9a6;
+    --warning: var(--warn);
+    --warn-dot: #b87a19;
     --danger: #a52734;
     --danger-bg: #fff0f1;
     --danger-border: #f0c5c9;
+    --danger-dot: #c23048;
     --radius: 0.85rem;
     --radius-sm: 0.55rem;
     --radius-xs: 0.375rem;
@@ -40,6 +52,51 @@
     --rail: 14rem;
     --gutter: clamp(1.25rem, 3vw, 2.75rem);
     --content: 96rem;
+    --ease: cubic-bezier(0.2, 0, 0, 1);
+    --dur-fast: 140ms;
+    --dur-base: 200ms;
+}
+
+:root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg: #0f1318;
+    --surface: #161b22;
+    --surface-inset: #11161c;
+    --surface-hover: #1e252f;
+    --surface-active: #252e3a;
+    --border: rgb(255 255 255 / 0.08);
+    --border-strong: rgb(255 255 255 / 0.16);
+    --text: #e6ebf1;
+    --text-secondary: #a2adba;
+    --muted: #a0acbc;
+    --text-muted: var(--muted);
+    --primary: #3861d8;
+    --primary-hover: #3156c6;
+    --accent: #9bb5ff;
+    --accent-hover: #b6c9ff;
+    --accent-light: rgb(139 169 255 / 0.15);
+    --accent-border: rgb(139 169 255 / 0.38);
+    --accent-ink: #14203a;
+    --success: #4ade80;
+    --success-bg: rgb(31 138 76 / 0.14);
+    --success-border: rgb(31 138 76 / 0.36);
+    --success-dot: #34d399;
+    --warn: #fbbf24;
+    --warning: var(--warn);
+    --warn-bg: rgb(201 122 22 / 0.14);
+    --warn-border: rgb(201 122 22 / 0.36);
+    --warn-dot: #f59e0b;
+    --danger: #fb7185;
+    --danger-bg: rgb(200 35 72 / 0.16);
+    --danger-border: rgb(200 35 72 / 0.38);
+    --danger-dot: #f43f5e;
+    --code-bg: #0b0e12;
+    --code-text: #d6dce4;
+    --code-muted: #7b8694;
+    --code-border: rgb(255 255 255 / 0.08);
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.28);
+    --shadow-md: 0 12px 32px -8px rgb(0 0 0 / 0.55), 0 2px 6px -2px rgb(0 0 0 / 0.35);
+    --ring: 0 0 0 3px rgb(139 169 255 / 0.27);
 }
 
 html {
@@ -123,8 +180,14 @@ body {
 }
 .workbench-tab[aria-current] svg { color: var(--accent); }
 
-.workbench-header .workbench-setting {
+.workbench-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
     margin-top: auto;
+    padding-top: 1rem;
+}
+.workbench-header .workbench-setting {
     border-color: var(--border);
     text-align: start;
 }
@@ -222,7 +285,7 @@ body {
 }
 .skip:focus { transform: translateY(0); }
 
-a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, summary:focus-visible {
+a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible {
     outline: 2px solid var(--accent);
     outline-offset: 2px;
 }
@@ -261,7 +324,14 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
         font-size: 0.81rem;
     }
     .workbench-tab svg, .workbench-setting svg { width: 0.97rem; height: 0.97rem; }
-    .workbench-header .workbench-setting { margin: 0; }
+    .workbench-actions {
+        grid-column: 2;
+        grid-row: 1;
+        flex-direction: row;
+        justify-content: flex-end;
+        margin: 0;
+        padding: 0;
+    }
     .workbench-tab { justify-content: center; white-space: nowrap; padding-inline: 0.32rem; }
 
     .workbench-context { min-height: 3rem; }
@@ -270,6 +340,13 @@ a:focus-visible, button:focus-visible, input:focus-visible, select:focus-visible
     .workbench-tool-page > .container { margin-top: 1.1rem; }
 }
 
+@media (max-width: 28rem) {
+    .workbench-actions:has(#model-settings:not([hidden])) {
+        grid-column: 1 / -1;
+        grid-row: 3;
+        justify-content: flex-start;
+    }
+}
 @media (max-width: 25rem) {
     .workbench-tab svg { width: 0.8rem; height: 0.8rem; }
     .workbench-tab { font-size: 0.76rem; gap: 0.22rem; padding-inline: 0.2rem; }

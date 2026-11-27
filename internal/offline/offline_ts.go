@@ -10,12 +10,14 @@ import (
 	"sort"
 	"strings"
 
+	"streamanalyzer/internal/codec"
 	"streamanalyzer/internal/models"
 
 	"github.com/asticode/go-astits"
 )
 
 func (m *Manager) runTS(task *models.OfflineTask, taskDir string, summary *models.OfflineSummary) error {
+	ctx := m.taskContext(task.ID)
 	outDir := filepath.Join(taskDir, "ts")
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		return err
@@ -27,19 +29,41 @@ func (m *Manager) runTS(task *models.OfflineTask, taskDir string, summary *model
 	}
 	defer in.Close()
 
-	ctx := context.Background()
-	dmx := astits.NewDemuxer(ctx, in)
+	var totalSize int64
+	if st, err := in.Stat(); err == nil {
+		totalSize = st.Size()
+	}
+	m.updateProgress(task.ID, "解复用 TS PAT/PMT/PES", 0, totalSize)
+
+	pr := newProgressReader(ctx, in, totalSize, func(read int64) {
+		// Reserve 0..80% for demuxing and 80..98% for TS packet health scan
+		if totalSize > 0 {
+			pct := float64(read) * 80.0 / float64(totalSize)
+			m.setProgressPercent(task.ID, "解复用 TS PAT/PMT/PES", pct, read)
+		}
+	})
+
+	dmx := astits.NewDemuxer(ctx, pr)
 
 	type streamOut struct {
 		programNumber uint16
 		pid           uint16
 		streamType    astits.StreamType
 		category      string
+		codecName     string
+		hevc          bool
 		artifactRel   string
 		file          *os.File
 		size          int64
 		pesCount      int
 		naluCount     int
+
+		curVPS    [][]byte
+		curSPS    [][]byte
+		curPPS    [][]byte
+		paramHash string
+		width     int
+		height    int
 	}
 
 	streams := make(map[uint16]*streamOut)
@@ -62,10 +86,24 @@ func (m *Manager) runTS(task *models.OfflineTask, taskDir string, summary *model
 		maxNALUBriefPerPES = 48
 	)
 	pesDetails := make([]models.OfflinePESDetail, 0, 1024)
+	frameDetails := make([]models.OfflineFrameDetail, 0, 1024)
 	var pesSeq int
+	var samples []timedSample
+	dtsClocks := map[uint16]*ptsClock{}
+	ptsClocks := map[uint16]*ptsClock{}
+	naluHist := map[string]int{}
+	var videoMeta *codec.VideoMeta
+	var spsHEVC bool
+	var audioRate, audioChannels int
 
 	for {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		d, err := dmx.NextData()
+		if errors.Is(err, context.Canceled) || ctx.Err() != nil {
+			return context.Canceled
+		}
 		if errors.Is(err, io.EOF) || errors.Is(err, astits.ErrNoMorePackets) {
 			break
 		}
@@ -84,14 +122,27 @@ func (m *Manager) runTS(task *models.OfflineTask, taskDir string, summary *model
 		if d.PMT != nil {
 			pmtTotal++
 			for _, es := range d.PMT.ElementaryStreams {
-				if streams[es.ElementaryPID] != nil {
+				if es == nil {
+					continue
+				}
+				info := describeES(es)
+				if existing := streams[es.ElementaryPID]; existing != nil {
+					if existing.streamType == 0 {
+						existing.streamType = es.StreamType
+						existing.category = info.category
+						existing.codecName = info.codec
+						existing.hevc = info.hevc
+						existing.programNumber = d.PMT.ProgramNumber
+					}
 					continue
 				}
 				st := &streamOut{
 					programNumber: d.PMT.ProgramNumber,
 					pid:           es.ElementaryPID,
 					streamType:    es.StreamType,
-					category:      streamCategory(es.StreamType),
+					category:      info.category,
+					codecName:     info.codec,
+					hevc:          info.hevc,
 				}
 				name := fmt.Sprintf("pid_%d_%s.es", st.pid, safeName(es.StreamType.String()))
 				st.artifactRel = filepath.ToSlash(filepath.Join("ts", name))
@@ -128,6 +179,7 @@ func (m *Manager) runTS(task *models.OfflineTask, taskDir string, summary *model
 			streams[d.PID] = st
 		}
 
+		pesOffset := st.size
 		n, writeErr := st.file.Write(d.PES.Data)
 		if writeErr != nil {
 			return writeErr
@@ -137,6 +189,10 @@ func (m *Manager) runTS(task *models.OfflineTask, taskDir string, summary *model
 		payloadLen := len(d.PES.Data)
 		var naluThisPES int
 		var naluBriefs []models.OfflineNALUBrief
+		var hasVPS, hasSPS, hasPPS, hasKeyNAL bool
+		var frameType string
+
+		hevcNAL := st.hevc || st.streamType == astits.StreamTypeH265Video
 		if st.streamType == astits.StreamTypeH264Video || st.streamType == astits.StreamTypeH265Video || st.category == "video" {
 			nalus := splitAnnexBNALUs(d.PES.Data)
 			naluThisPES = len(nalus)
@@ -148,30 +204,191 @@ func (m *Manager) runTS(task *models.OfflineTask, taskDir string, summary *model
 					continue
 				}
 				idx++
-				if len(naluBriefs) >= maxNALUBriefPerPES {
-					break
+				if meta := codec.VideoMetaFromNAL(nalu); meta != nil {
+					if videoMeta == nil {
+						videoMeta = meta
+						spsHEVC = hevcNAL || int((nalu[0]>>1)&0x3f) == 33
+					}
+					if meta.Width > 0 && meta.Height > 0 {
+						st.width = meta.Width
+						st.height = meta.Height
+					}
 				}
-				if st.streamType == astits.StreamTypeH265Video {
+				if hevcNAL {
 					typ := h265NALUType(nalu)
-					naluBriefs = append(naluBriefs, models.OfflineNALUBrief{
-						Index:    idx,
-						Codec:    "H265",
-						Type:     int(typ),
-						TypeName: fmt.Sprintf("nalu_t%d", typ),
-						Len:      len(nalu),
-						Key:      isH265KeyNALUType(typ),
-					})
+					tName := codec.NALUTypeName(int(typ), true)
+					naluHist[tName]++
+					isK := isH265KeyNALUType(typ)
+					if isK {
+						hasKeyNAL = true
+						frameType = "I"
+					}
+					switch typ {
+					case 32:
+						hasVPS = true
+						st.curVPS = [][]byte{nalu}
+					case 33:
+						hasSPS = true
+						st.curSPS = [][]byte{nalu}
+					case 34:
+						hasPPS = true
+						st.curPPS = [][]byte{nalu}
+					}
+					if len(naluBriefs) < maxNALUBriefPerPES {
+						naluBriefs = append(naluBriefs, models.OfflineNALUBrief{
+							Index:    idx,
+							Codec:    "H265",
+							Type:     int(typ),
+							TypeName: tName,
+							Len:      len(nalu),
+							Key:      isK,
+						})
+					}
 				} else {
 					typ := h264NALUType(nalu)
-					naluBriefs = append(naluBriefs, models.OfflineNALUBrief{
-						Index:    idx,
-						Codec:    "H264",
-						Type:     int(typ),
-						TypeName: h264TypeName(typ),
-						Len:      len(nalu),
-						Key:      typ == 5,
-					})
+					tName := codec.NALUTypeName(int(typ), false)
+					naluHist[tName]++
+					isK := typ == 5
+					if isK {
+						hasKeyNAL = true
+						frameType = "I"
+					} else if typ == 1 {
+						sliceT := codec.H264SliceType(nalu)
+						if sliceT == "B" {
+							frameType = "B"
+						} else if sliceT == "P" && frameType != "B" && frameType != "I" {
+							frameType = "P"
+						} else if sliceT == "I" && frameType == "" {
+							frameType = "I"
+						}
+					}
+					switch typ {
+					case 7:
+						hasSPS = true
+						st.curSPS = [][]byte{nalu}
+					case 8:
+						hasPPS = true
+						st.curPPS = [][]byte{nalu}
+					}
+					if len(naluBriefs) < maxNALUBriefPerPES {
+						naluBriefs = append(naluBriefs, models.OfflineNALUBrief{
+							Index:    idx,
+							Codec:    "H264",
+							Type:     int(typ),
+							TypeName: tName,
+							Len:      len(nalu),
+							Key:      isK,
+						})
+					}
 				}
+			}
+			if hasVPS || hasSPS || hasPPS {
+				if hevcNAL {
+					st.paramHash = hashNALSlices(st.curVPS, st.curSPS, st.curPPS)
+				} else {
+					st.paramHash = hashNALSlices(st.curSPS, st.curPPS)
+				}
+			}
+			if frameType == "" && naluThisPES > 0 {
+				if hasKeyNAL {
+					frameType = "I"
+				} else {
+					frameType = "P"
+				}
+			}
+		}
+
+		var pesAudioSR, pesAudioCh int
+		if st.category == "audio" {
+			if st.codecName == "aac" || st.streamType == astits.StreamTypeAACAudio {
+				if rate, channels, ok := adtsLayout(d.PES.Data); ok {
+					pesAudioSR, pesAudioCh = rate, channels
+					if audioRate == 0 {
+						audioRate, audioChannels = rate, channels
+					}
+				}
+			} else if hdr, ok := codec.ParseAudioFrameHeader(d.PES.Data, st.codecName); ok {
+				pesAudioSR, pesAudioCh = hdr.SampleRate, hdr.Channels
+				if audioRate == 0 {
+					audioRate, audioChannels = hdr.SampleRate, hdr.Channels
+				}
+			}
+		}
+
+		var frameIdxPtr *int
+		if st.category == "video" || st.category == "audio" {
+			dtsTick, ptsTick, ok := pesTicks(d.PES)
+			if ok {
+				dc := dtsClocks[st.pid]
+				if dc == nil {
+					dc = &ptsClock{}
+					dtsClocks[st.pid] = dc
+				}
+				pc := ptsClocks[st.pid]
+				if pc == nil {
+					pc = &ptsClock{}
+					ptsClocks[st.pid] = pc
+				}
+				dtsMs := ptsToMs(dc.push(dtsTick))
+				ptsMs := ptsToMs(pc.push(ptsTick))
+				key := hasKeyNAL
+				if !key {
+					for _, brief := range naluBriefs {
+						if brief.Key {
+							key = true
+							break
+						}
+					}
+				}
+				ft := "-"
+				if st.category == "video" {
+					if frameType != "" {
+						ft = frameType
+					} else if key {
+						ft = "I"
+					} else {
+						ft = "P"
+					}
+				}
+				inbandOK := false
+				if st.category == "video" {
+					if hevcNAL {
+						inbandOK = hasVPS && hasSPS && hasPPS
+					} else {
+						inbandOK = hasSPS && hasPPS
+					}
+				}
+				fIdx := len(frameDetails)
+				frameIdxPtr = intPtr(fIdx)
+				frameDetails = append(frameDetails, models.OfflineFrameDetail{
+					MediaType:    st.category,
+					DTS:          dtsMs,
+					PTS:          ptsMs,
+					CTS:          ptsMs - dtsMs,
+					FrameLen:     payloadLen,
+					FrameType:    ft,
+					StreamSource: fmt.Sprintf("pid:%d", st.pid),
+					StreamOffset: pesOffset,
+					StreamLen:    payloadLen,
+				})
+				samples = append(samples, timedSample{
+					pid:             int(st.pid),
+					frameIndex:      fIdx,
+					media:           st.category,
+					dts:             dtsMs,
+					pts:             ptsMs,
+					cts:             ptsMs - dtsMs,
+					size:            payloadLen,
+					key:             key,
+					b:               isBFrame(ft),
+					sliceKnown:      !hevcNAL && isExplicitSliceType(ft),
+					hasInbandParams: inbandOK,
+					paramHash:       st.paramHash,
+					videoWidth:      st.width,
+					videoHeight:     st.height,
+					audioSampleRate: pesAudioSR,
+					audioChannels:   pesAudioCh,
+				})
 			}
 		}
 
@@ -185,6 +402,9 @@ func (m *Manager) runTS(task *models.OfflineTask, taskDir string, summary *model
 				PayloadLen:    payloadLen,
 				NALUCount:     naluThisPES,
 				NALUs:         naluBriefs,
+				StreamOffset:  pesOffset,
+				StreamLen:     payloadLen,
+				FrameIndex:    frameIdxPtr,
 			}
 			if d.PES.Header != nil {
 				detail.StreamID = d.PES.Header.StreamID
@@ -218,6 +438,7 @@ func (m *Manager) runTS(task *models.OfflineTask, taskDir string, summary *model
 
 	videoPIDCount := 0
 	audioPIDCount := 0
+	var primaryVideoPID, primaryAudioPID uint16
 	pids := make([]int, 0, len(streams))
 	for pid := range streams {
 		pids = append(pids, int(pid))
@@ -228,10 +449,13 @@ func (m *Manager) runTS(task *models.OfflineTask, taskDir string, summary *model
 		flow.PayloadBytes += int(s.size)
 		if flow.VideoPath == "" && s.category == "video" {
 			flow.VideoPath = filepath.Join(taskDir, s.artifactRel)
-			flow.VideoCodec = s.streamType.String()
+			flow.VideoCodec = firstNonEmpty(s.codecName, s.streamType.String())
+			primaryVideoPID = s.pid
 		}
 		if flow.AudioPath == "" && s.category == "audio" {
 			flow.AudioPath = filepath.Join(taskDir, s.artifactRel)
+			flow.AudioCodec = firstNonEmpty(s.codecName, s.streamType.String())
+			primaryAudioPID = s.pid
 		}
 		if s.category == "video" {
 			videoPIDCount++
@@ -243,18 +467,42 @@ func (m *Manager) runTS(task *models.OfflineTask, taskDir string, summary *model
 	flow.VideoPIDCount = videoPIDCount
 	flow.AudioPIDCount = audioPIDCount
 
+	// Normalize StreamSource for primary video/audio PIDs to "video"/"audio".
+	vTag := fmt.Sprintf("pid:%d", primaryVideoPID)
+	aTag := fmt.Sprintf("pid:%d", primaryAudioPID)
+	for i := range frameDetails {
+		if primaryVideoPID != 0 && frameDetails[i].StreamSource == vTag {
+			frameDetails[i].StreamSource = "video"
+		} else if primaryAudioPID != 0 && frameDetails[i].StreamSource == aTag {
+			frameDetails[i].StreamSource = "audio"
+		}
+	}
+
+	m.setProgressPercent(task.ID, "扫描 TS 传输层 CC/TEI/PCR 健康度", 85, totalSize)
+	tsScan, scanErr := scanTSPacketsContext(ctx, task.InputPath)
+	if scanErr != nil {
+		return scanErr
+	}
+
 	flow.PIDDetails = make([]models.OfflinePIDDetail, 0, len(pids))
 	for _, pid := range pids {
 		s := streams[uint16(pid)]
-		flow.PIDDetails = append(flow.PIDDetails, models.OfflinePIDDetail{
+		detail := models.OfflinePIDDetail{
 			PID:        s.pid,
 			StreamType: s.streamType.String(),
+			Codec:      s.codecName,
 			Category:   s.category,
 			PESCount:   s.pesCount,
 			NALUCount:  s.naluCount,
 			Bytes:      s.size,
 			OutputPath: filepath.Join(taskDir, s.artifactRel),
-		})
+		}
+		if ps := tsScan.pids[s.pid]; ps != nil {
+			detail.PacketCount = ps.packets
+			detail.CCErrors = ps.ccErrors
+			detail.PCRCount = ps.pcrCount
+		}
+		flow.PIDDetails = append(flow.PIDDetails, detail)
 	}
 
 	if len(programToPMTPID) == 0 && pesTotal == 0 {
@@ -267,6 +515,40 @@ func (m *Manager) runTS(task *models.OfflineTask, taskDir string, summary *model
 	flow.PESDetailTotal = pesTotal
 	flow.PESDetails = pesDetails
 	flow.PESDetailsTruncated = pesTotal > len(pesDetails)
+	seed := profileFromVideoMeta(videoMeta, spsHEVC || flow.VideoCodec == "h265")
+	seed.VideoCodec = flow.VideoCodec
+	seed.AudioCodec = flow.AudioCodec
+	seed.AudioSampleRate = audioRate
+	seed.AudioChannels = audioChannels
+	seed.TSPacketCount = tsScan.packets
+	seed.TSSyncErrors = tsScan.syncErrors
+	seed.TSTEIErrors = tsScan.teiErrors
+	seed.TSCCErrors = tsScan.ccErrors
+	seed.PCRCount = tsScan.pcrCount
+	seed.PCRMaxGapMS = tsScan.pcrMaxGapMS
+	if len(naluHist) > 0 {
+		seed.NALUHistogram = naluHist
+	}
+	if tsScan.ccErrors > 0 {
+		seed.Warnings = append(seed.Warnings, fmt.Sprintf("TS 检测到 %d 次连续计数 (CC) 跳变，存在丢包或乱序", tsScan.ccErrors))
+	}
+	if tsScan.teiErrors > 0 {
+		seed.Warnings = append(seed.Warnings, fmt.Sprintf("TS 检测到 %d 个传输错误包 (TEI=1)", tsScan.teiErrors))
+	}
+	if tsScan.syncErrors > 0 {
+		seed.Warnings = append(seed.Warnings, fmt.Sprintf("TS 检测到 %d 次同步字节 (0x47) 丢失", tsScan.syncErrors))
+	}
+	if tsScan.pcrMaxGapMS > 100 {
+		seed.Warnings = append(seed.Warnings, fmt.Sprintf("TS PCR 最大间隔达到 %d ms（超过 100 ms 规范上限）", tsScan.pcrMaxGapMS))
+	}
+
+	hctx := healthContext{
+		Mode:                  models.OfflineModeTS,
+		IsHEVC:                spsHEVC || flow.VideoCodec == "h265",
+		HasContainerSeqHeader: false,
+		CheckIDRParams:        flow.VideoCodec == "h264" || flow.VideoCodec == "h265",
+	}
+	attachMediaProfileWithSamples(&flow, frameDetails, samples, seed, hctx)
 
 	summary.Flows = append(summary.Flows, flow)
 	return nil
@@ -290,34 +572,311 @@ func isH265KeyNALUType(t uint8) bool {
 	return (t >= 16 && t <= 21) || t == 19 || t == 20
 }
 
-func h264TypeName(t uint8) string {
+func streamCategory(t astits.StreamType) string {
+	if t.IsVideo() {
+		return "video"
+	}
+	if t.IsAudio() {
+		return "audio"
+	}
+	return "other"
+}
+
+type esIdentity struct {
+	category string
+	codec    string
+	hevc     bool
+}
+
+func describeES(es *astits.PMTElementaryStream) esIdentity {
+	video, audio := tsCodecName(es.StreamType)
+	if video == "" && audio == "" {
+		video, audio = codecFromDescriptors(es.ElementaryStreamDescriptors)
+	}
+	identity := esIdentity{category: streamCategory(es.StreamType), hevc: es.StreamType == astits.StreamTypeH265Video}
+	if es.StreamType.IsVideo() || (video != "" && !es.StreamType.IsAudio()) {
+		identity.category = "video"
+		identity.codec = video
+	} else if es.StreamType.IsAudio() || audio != "" {
+		identity.category = "audio"
+		identity.codec = audio
+	}
+	return identity
+}
+
+func tsCodecName(t astits.StreamType) (video string, audio string) {
 	switch t {
-	case 1:
-		return "non-IDR"
-	case 5:
-		return "IDR"
-	case 6:
-		return "SEI"
-	case 7:
-		return "SPS"
-	case 8:
-		return "PPS"
-	case 9:
-		return "AUD"
+	case astits.StreamTypeH264Video:
+		return "h264", ""
+	case astits.StreamTypeH265Video:
+		return "h265", ""
+	case astits.StreamTypeMPEG1Video:
+		return "mpeg1", ""
+	case astits.StreamTypeMPEG2Video:
+		return "mpeg2", ""
+	case astits.StreamTypeMPEG4Video:
+		return "mpeg4", ""
+	case astits.StreamTypeVC1Video:
+		return "vc1", ""
+	case astits.StreamTypeDIRACVideo:
+		return "dirac", ""
+	case astits.StreamTypeCAVSVideo:
+		return "cavs", ""
+	case astits.StreamTypeAACAudio, astits.StreamTypeAACLATMAudio:
+		return "", "aac"
+	case astits.StreamTypeMPEG1Audio, astits.StreamTypeMPEG2Audio:
+		return "", "mp2"
+	case astits.StreamTypeAC3Audio:
+		return "", "ac3"
+	case astits.StreamTypeEAC3Audio:
+		return "", "eac3"
+	case astits.StreamTypeDTSAudio:
+		return "", "dts"
+	case astits.StreamTypeTRUEHDAudio:
+		return "", "truehd"
 	default:
-		return "other"
+		return "", ""
 	}
 }
 
-func streamCategory(t astits.StreamType) string {
-	switch t {
-	case astits.StreamTypeH264Video, astits.StreamTypeH265Video, astits.StreamTypeMPEG1Video, astits.StreamTypeMPEG2Video:
-		return "video"
-	case astits.StreamTypeAACAudio, astits.StreamTypeMPEG1Audio, astits.StreamTypeMPEG2Audio:
-		return "audio"
-	default:
-		return "other"
+func codecFromDescriptors(list []*astits.Descriptor) (video string, audio string) {
+	for _, d := range list {
+		if d == nil {
+			continue
+		}
+		switch d.Tag {
+		case astits.DescriptorTagAC3:
+			return "", "ac3"
+		case astits.DescriptorTagEnhancedAC3:
+			return "", "eac3"
+		case astits.DescriptorTagRegistration:
+			if d.Registration == nil {
+				continue
+			}
+			switch d.Registration.FormatIdentifier {
+			case 0x41432d33: // "AC-3"
+				return "", "ac3"
+			case 0x45414333: // "EAC3"
+				return "", "eac3"
+			}
+		}
 	}
+	return "", ""
+}
+
+type ptsClock struct {
+	has       bool
+	lastRaw   int64
+	unwrapped int64
+}
+
+func (c *ptsClock) push(raw int64) int64 {
+	if !c.has {
+		c.has = true
+		c.lastRaw = raw
+		c.unwrapped = raw
+		return raw
+	}
+	delta := raw - c.lastRaw
+	const mod = int64(1) << 33
+	if delta < -mod/2 {
+		delta += mod
+	} else if delta > mod/2 {
+		delta -= mod
+	}
+	c.lastRaw = raw
+	c.unwrapped += delta
+	return c.unwrapped
+}
+
+func pesTicks(pes *astits.PESData) (dts int64, pts int64, ok bool) {
+	if pes == nil || pes.Header == nil || pes.Header.OptionalHeader == nil {
+		return 0, 0, false
+	}
+	header := pes.Header.OptionalHeader
+	switch {
+	case header.DTS != nil && header.PTS != nil:
+		return header.DTS.Base, header.PTS.Base, true
+	case header.DTS != nil:
+		return header.DTS.Base, header.DTS.Base, true
+	case header.PTS != nil:
+		return header.PTS.Base, header.PTS.Base, true
+	default:
+		return 0, 0, false
+	}
+}
+
+type tsPIDScan struct {
+	packets   int
+	ccErrors  int
+	pcrCount  int
+	hasCC     bool
+	lastCC    uint8
+	dupCount  int
+	pcrClock  ptsClock
+	hasPCR    bool
+	lastPCRMs int64
+}
+
+type tsScanResult struct {
+	packets     int
+	syncErrors  int
+	teiErrors   int
+	ccErrors    int
+	pcrCount    int
+	pcrMaxGapMS int64
+	pids        map[uint16]*tsPIDScan
+}
+
+func scanTSPackets(path string) tsScanResult {
+	res, _ := scanTSPacketsContext(context.Background(), path)
+	return res
+}
+
+func scanTSPacketsContext(ctx context.Context, path string) (tsScanResult, error) {
+	res := tsScanResult{pids: map[uint16]*tsPIDScan{}}
+	data, err := os.ReadFile(path)
+	if err != nil || len(data) < 188 {
+		return res, nil
+	}
+	stride, off := detectTSSync(data)
+	if stride == 0 {
+		stride = 188
+		off = 0
+	}
+
+	pos := off
+	iter := 0
+	for pos+188 <= len(data) {
+		iter++
+		if iter%1024 == 0 && ctx != nil && ctx.Err() != nil {
+			return res, ctx.Err()
+		}
+		if data[pos] != 0x47 {
+			res.syncErrors++
+			next := -1
+			for j := pos + 1; j+stride < len(data); j++ {
+				if data[j] == 0x47 && data[j+stride] == 0x47 {
+					next = j
+					break
+				}
+			}
+			if next < 0 {
+				break
+			}
+			pos = next
+			continue
+		}
+
+		pkt := data[pos : pos+188]
+		pos += stride
+		res.packets++
+
+		if (pkt[1] & 0x80) != 0 {
+			res.teiErrors++
+			continue
+		}
+		pid := uint16(pkt[1]&0x1F)<<8 | uint16(pkt[2])
+		if pid == 0x1FFF {
+			continue
+		}
+
+		ps := res.pids[pid]
+		if ps == nil {
+			ps = &tsPIDScan{}
+			res.pids[pid] = ps
+		}
+		ps.packets++
+
+		afc := (pkt[3] >> 4) & 0x03
+		cc := pkt[3] & 0x0F
+		hasAdapt := afc == 2 || afc == 3
+		hasPayload := afc == 1 || afc == 3
+		discontinuity := false
+
+		if hasAdapt {
+			afLen := int(pkt[4])
+			if afLen >= 1 && 5+afLen <= 188 {
+				flags := pkt[5]
+				discontinuity = (flags & 0x80) != 0
+				hasPCR := (flags & 0x10) != 0
+				if hasPCR && afLen >= 7 {
+					pcrBase := (int64(pkt[6]) << 25) |
+						(int64(pkt[7]) << 17) |
+						(int64(pkt[8]) << 9) |
+						(int64(pkt[9]) << 1) |
+						(int64(pkt[10]) >> 7)
+					pcrMs := ptsToMs(ps.pcrClock.push(pcrBase))
+					ps.pcrCount++
+					res.pcrCount++
+					if ps.hasPCR && !discontinuity {
+						gap := pcrMs - ps.lastPCRMs
+						if gap > res.pcrMaxGapMS {
+							res.pcrMaxGapMS = gap
+						}
+					}
+					ps.lastPCRMs = pcrMs
+					ps.hasPCR = true
+				}
+			}
+		}
+
+		if discontinuity {
+			ps.hasCC = false
+			ps.dupCount = 0
+		}
+		if hasPayload {
+			if !ps.hasCC {
+				ps.hasCC = true
+				ps.lastCC = cc
+				ps.dupCount = 0
+			} else if cc == ps.lastCC {
+				ps.dupCount++
+				if ps.dupCount > 1 {
+					ps.ccErrors++
+					res.ccErrors++
+				}
+			} else if cc == ((ps.lastCC + 1) & 0x0F) {
+				ps.lastCC = cc
+				ps.dupCount = 0
+			} else {
+				ps.ccErrors++
+				res.ccErrors++
+				ps.lastCC = cc
+				ps.dupCount = 0
+			}
+		}
+	}
+	return res, nil
+}
+
+func ptsToMs(ticks int64) int64 {
+	return ticks * 1000 / 90000
+}
+
+func adtsLayout(b []byte) (rate int, channels int, ok bool) {
+	rates := []int{96000, 88200, 64000, 48000, 44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350}
+	for i := 0; i+7 <= len(b) && i < 16; i++ {
+		if b[i] != 0xFF || b[i+1]&0xF0 != 0xF0 {
+			continue
+		}
+		freqIdx := int((b[i+2] & 0x3C) >> 2)
+		channels = int((b[i+2]&0x01)<<2 | (b[i+3] >> 6))
+		if freqIdx < len(rates) {
+			rate = rates[freqIdx]
+		}
+		return rate, channels, rate > 0 && channels > 0
+	}
+	return 0, 0, false
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" && value != "Unknown" {
+			return value
+		}
+	}
+	return ""
 }
 
 func splitAnnexBNALUs(b []byte) [][]byte {
